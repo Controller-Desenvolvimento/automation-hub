@@ -1,4 +1,4 @@
-import { ArrowRight, Search } from 'lucide-react';
+import { ArrowRight, Search, Star } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { AppIcon } from '../components/app-icon';
@@ -9,12 +9,17 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../co
 import { Input } from '../components/ui/input';
 import { useAuth } from '../contexts/auth-context';
 import { useHub } from '../contexts/hub-context';
+import { api } from '../lib/api';
 
 export function RobotsPage() {
   const { user } = useAuth();
-  const { hub, hubError, refreshHub } = useHub();
+  const { hub, hubError, notify, refreshHub } = useHub();
   const [searchParams, setSearchParams] = useSearchParams();
   const [query, setQuery] = useState('');
+  const [favoriteOverrides, setFavoriteOverrides] = useState<Record<string, boolean>>({});
+  const [pendingFavoriteIds, setPendingFavoriteIds] = useState<Set<string>>(
+    () => new Set(),
+  );
   const categoryFilter = searchParams.get('category') ?? '';
 
   const robots = hub?.robots ?? [];
@@ -34,17 +39,60 @@ export function RobotsPage() {
 
   const filtered = useMemo(
     () =>
-      robots.filter((robot) => {
-        const term = query.trim().toLowerCase();
-        const matchesSearch =
-          !term ||
-          robot.name.toLowerCase().includes(term) ||
-          (robot.summary ?? '').toLowerCase().includes(term);
-        const matchesCategory = !categoryFilter || (robot.category ?? '') === categoryFilter;
-        return matchesSearch && matchesCategory;
-      }),
-    [robots, query, categoryFilter],
+      robots
+        .filter((robot) => {
+          const term = query.trim().toLowerCase();
+          const matchesSearch =
+            !term ||
+            robot.name.toLowerCase().includes(term) ||
+            (robot.summary ?? '').toLowerCase().includes(term);
+          const matchesCategory = !categoryFilter || (robot.category ?? '') === categoryFilter;
+          return matchesSearch && matchesCategory;
+        })
+        .sort((left, right) => {
+          const leftFavorite = favoriteOverrides[left.id] ?? Boolean(left.isFavorite);
+          const rightFavorite = favoriteOverrides[right.id] ?? Boolean(right.isFavorite);
+          if (leftFavorite !== rightFavorite) return rightFavorite ? 1 : -1;
+          return (
+            (left.category ?? '').localeCompare(right.category ?? '', 'pt-BR') ||
+            left.name.localeCompare(right.name, 'pt-BR')
+          );
+        }),
+    [robots, query, categoryFilter, favoriteOverrides],
   );
+
+  async function toggleFavorite(robotId: string, currentValue: boolean) {
+    if (pendingFavoriteIds.has(robotId)) return;
+
+    const nextValue = !currentValue;
+    setFavoriteOverrides((current) => ({ ...current, [robotId]: nextValue }));
+    setPendingFavoriteIds((current) => new Set(current).add(robotId));
+
+    try {
+      await api(`/robots/${robotId}/favorite`, {
+        method: nextValue ? 'POST' : 'DELETE',
+      });
+      await refreshHub();
+      setFavoriteOverrides((current) => {
+        const next = { ...current };
+        delete next[robotId];
+        return next;
+      });
+    } catch (error) {
+      setFavoriteOverrides((current) => {
+        const next = { ...current };
+        delete next[robotId];
+        return next;
+      });
+      notify(error instanceof Error ? error.message : 'Não foi possível atualizar o favorito.');
+    } finally {
+      setPendingFavoriteIds((current) => {
+        const next = new Set(current);
+        next.delete(robotId);
+        return next;
+      });
+    }
+  }
 
   if (!hub && hubError) {
     return (
@@ -119,14 +167,40 @@ export function RobotsPage() {
       </div>
 
       <div className="grid grid-cols-1 gap-5 xl:grid-cols-3">
-        {filtered.map((robot) => (
-          <Card key={robot.id} className="flex flex-col rounded-3xl">
+        {filtered.map((robot) => {
+          const isFavorite =
+            favoriteOverrides[robot.id] ?? Boolean(robot.isFavorite);
+          const isPending = pendingFavoriteIds.has(robot.id);
+
+          return (
+            <Card key={robot.id} className="flex flex-col rounded-3xl">
             <CardHeader className="flex-1 space-y-4">
               <div className="flex items-start justify-between gap-4">
                 <AppIcon icon={robot.icon} />
-                <Badge variant={robot.isActive ? 'success' : 'muted'}>
-                  {robot.isActive ? 'Disponível' : 'Manutenção'}
-                </Badge>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    aria-label={
+                      isFavorite
+                        ? `Remover ${robot.name} dos favoritos`
+                        : `Adicionar ${robot.name} aos favoritos`
+                    }
+                    title={isFavorite ? 'Remover dos favoritos' : 'Adicionar aos favoritos'}
+                    disabled={isPending}
+                    onClick={() => void toggleFavorite(robot.id, isFavorite)}
+                    className={[
+                      'grid h-9 w-9 place-items-center rounded-xl border transition disabled:cursor-wait disabled:opacity-60',
+                      isFavorite
+                        ? 'border-amber-300 bg-amber-50 text-amber-500 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-400'
+                        : 'border-slate-200 text-slate-400 hover:border-amber-300 hover:bg-amber-50 hover:text-amber-500 dark:border-[#2b2b31] dark:text-zinc-500 dark:hover:border-amber-500/40 dark:hover:bg-amber-500/10 dark:hover:text-amber-400',
+                    ].join(' ')}
+                  >
+                    <Star className="h-4 w-4" fill={isFavorite ? 'currentColor' : 'none'} />
+                  </button>
+                  <Badge variant={robot.isActive ? 'success' : 'muted'}>
+                    {robot.isActive ? 'Disponível' : 'Manutenção'}
+                  </Badge>
+                </div>
               </div>
               <div className="space-y-2">
                 <CardTitle className="text-2xl">{robot.name}</CardTitle>
@@ -154,8 +228,9 @@ export function RobotsPage() {
                 </Link>
               </Button>
             </CardContent>
-          </Card>
-        ))}
+            </Card>
+          );
+        })}
 
         {filtered.length === 0 ? (
           <div className="xl:col-span-3">

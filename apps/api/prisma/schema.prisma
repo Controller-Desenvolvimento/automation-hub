@@ -193,6 +193,7 @@ model Robot {
   executions     Execution[]
   scheduledTasks ScheduledTask[]
   inputExamples  RobotInputExample[]
+  favorites      RobotFavorite[]
 }
 
 model User {
@@ -212,6 +213,18 @@ model User {
   scheduledTasks ScheduledTask[]
   automationRequests AutomationRequest[]
   notifications  Notification[]
+  robotFavorites RobotFavorite[]
+}
+
+model RobotFavorite {
+  userId    String
+  robotId   String
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  robot     Robot    @relation(fields: [robotId], references: [id], onDelete: Cascade)
+
+  @@id([userId, robotId])
+  @@index([robotId])
 }
 
 model ExternalIdentity {

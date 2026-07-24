@@ -1,4 +1,9 @@
-import { BadRequestException, ConflictException, Injectable } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { Prisma, type Robot, type User } from '@prisma/client';
 import { access, mkdir, rm, writeFile } from 'node:fs/promises';
 import { execSync, spawn } from 'node:child_process';
@@ -48,7 +53,13 @@ export class RobotsService {
   async getHubOverview(user: User) {
     const executionScope = buildExecutionScope(user);
 
-    const [robots, executions, runningExecutions, successfulExecutions] = await Promise.all([
+    const [
+      robots,
+      executions,
+      runningExecutions,
+      successfulExecutions,
+      favoriteRows,
+    ] = await Promise.all([
       this.prisma.robot.findMany({
         orderBy: [{ category: 'asc' }, { name: 'asc' }],
         include: {
@@ -93,7 +104,12 @@ export class RobotsService {
       this.prisma.execution.count({
         where: { ...(executionScope ?? {}), status: 'success' },
       }),
+      this.prisma.robotFavorite.findMany({
+        where: { userId: user.id },
+        select: { robotId: true },
+      }),
     ]);
+    const favoriteRobotIds = new Set(favoriteRows.map((item) => item.robotId));
 
     const visibleRobots = robots.filter((robot) => canAccessRobot(user, robot));
     const visibleRobotIds = new Set(visibleRobots.map((robot) => robot.id));
@@ -111,6 +127,7 @@ export class RobotsService {
       },
       robots: visibleRobots.map((robot) => ({
         ...sanitizeRobot(robot),
+        isFavorite: favoriteRobotIds.has(robot.id),
         inputExamples: robot.inputExamples.map((item) => ({
           ...item,
           downloadUrl: `/storage/${item.storagePath}`,
@@ -123,24 +140,71 @@ export class RobotsService {
   }
 
   async findAll(user: User) {
-    const robots = await this.prisma.robot.findMany({
-      orderBy: [{ category: 'asc' }, { name: 'asc' }],
-      include: {
-        inputExamples: {
-          orderBy: { createdAt: 'desc' },
+    const [robots, favoriteRows] = await Promise.all([
+      this.prisma.robot.findMany({
+        orderBy: [{ category: 'asc' }, { name: 'asc' }],
+        include: {
+          inputExamples: {
+            orderBy: { createdAt: 'desc' },
+          },
         },
-      },
-    });
+      }),
+      this.prisma.robotFavorite.findMany({
+        where: { userId: user.id },
+        select: { robotId: true },
+      }),
+    ]);
+    const favoriteRobotIds = new Set(favoriteRows.map((item) => item.robotId));
 
     return robots
       .filter((robot) => canAccessRobot(user, robot))
       .map((robot) => ({
         ...sanitizeRobot(robot),
+        isFavorite: favoriteRobotIds.has(robot.id),
         inputExamples: robot.inputExamples.map((item) => ({
           ...item,
           downloadUrl: `/storage/${item.storagePath}`,
         })),
       }));
+  }
+
+  async favoriteRobot(robotId: string, user: User) {
+    await this.requireAccessibleRobot(robotId, user);
+    await this.prisma.robotFavorite.upsert({
+      where: {
+        userId_robotId: {
+          userId: user.id,
+          robotId,
+        },
+      },
+      create: {
+        userId: user.id,
+        robotId,
+      },
+      update: {},
+    });
+
+    return { robotId, isFavorite: true };
+  }
+
+  async unfavoriteRobot(robotId: string, user: User) {
+    await this.requireAccessibleRobot(robotId, user);
+    await this.prisma.robotFavorite.deleteMany({
+      where: {
+        userId: user.id,
+        robotId,
+      },
+    });
+
+    return { robotId, isFavorite: false };
+  }
+
+  private async requireAccessibleRobot(robotId: string, user: User) {
+    const robot = await this.prisma.robot.findUnique({ where: { id: robotId } });
+    if (!robot || !canAccessRobot(user, robot)) {
+      throw new NotFoundException('Automação não encontrada.');
+    }
+    return robot;
   }
 
   async findOne(idOrSlug: string, user: User) {

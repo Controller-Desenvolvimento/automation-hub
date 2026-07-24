@@ -116,6 +116,7 @@ export type Robot = {
   command?: string | null;
   workingDirectory?: string | null;
   isExternal?: boolean;
+  isFavorite?: boolean;
   hasApiKey?: boolean;
   scriptFileName?: string | null;
   allowedDepartments: Department[];

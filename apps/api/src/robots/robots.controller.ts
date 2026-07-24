@@ -189,6 +189,18 @@ export class RobotsController {
     return this.robotsService.generateApiKey(id);
   }
 
+  @Post(':id/favorite')
+  async favoriteRobot(@Param('id') id: string, @Req() request: Request) {
+    const user = await this.authService.requireUser(request);
+    return this.robotsService.favoriteRobot(id, user);
+  }
+
+  @Delete(':id/favorite')
+  async unfavoriteRobot(@Param('id') id: string, @Req() request: Request) {
+    const user = await this.authService.requireUser(request);
+    return this.robotsService.unfavoriteRobot(id, user);
+  }
+
   @Delete(':id/api-key')
   async revokeApiKey(@Param('id') id: string, @Req() request: Request) {
     const user = await this.authService.requireUser(request);
