@@ -23,6 +23,8 @@ export type SiteUpsertInput = {
   powerbiScheduledTimes?: string[];
   powerbiShowRefresh?: boolean;
   ssoEnabled?: boolean;
+  // undefined = não alterar; null = desvincular.
+  linkedDashboardId?: string | null;
 };
 
 type UploadedFile = {
@@ -101,6 +103,25 @@ export class SitesService {
       powerbiShowRefresh: input.powerbiShowRefresh !== false,
       ssoEnabled: input.ssoEnabled === true,
     };
+
+    if (input.linkedDashboardId !== undefined) {
+      if (input.linkedDashboardId !== null) {
+        if (payload.category !== SiteCategory.bi) {
+          throw new BadRequestException('Só BIs podem ser vinculados a um painel.');
+        }
+        const dashboard = await this.prisma.dashboard.findUnique({
+          where: { id: input.linkedDashboardId },
+          select: { id: true, type: true },
+        });
+        if (!dashboard) {
+          throw new BadRequestException('Painel vinculado não encontrado.');
+        }
+        if (dashboard.type !== 'server') {
+          throw new BadRequestException('Só painéis do tipo servidor (com chat de IA próprio) podem ser vinculados.');
+        }
+      }
+      payload.linkedDashboardId = input.linkedDashboardId;
+    }
 
     let wasUnderMaintenance = false;
     if (input.id) {

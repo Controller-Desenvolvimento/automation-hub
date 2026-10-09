@@ -855,7 +855,7 @@ Deixe o array vazio (`[]`) para liberar a automação para toda a empresa.
 
 ## 13. Repositório de scripts — fluxo com GitHub
 
-Os scripts de todos os robôs ficam no repositório privado **[InovController/hub-robots](https://github.com/InovController/hub-robots)**. O hub monitora esse repositório e aplica atualizações automaticamente — sem precisar fazer upload de zip ou reiniciar o servidor.
+Os scripts de todos os robôs ficam no repositório privado **[Controller-Desenvolvimento/hub-robots](https://github.com/Controller-Desenvolvimento/hub-robots)**. O hub monitora esse repositório e aplica atualizações automaticamente — sem precisar fazer upload de zip ou reiniciar o servidor.
 
 ---
 
@@ -902,7 +902,7 @@ O campo **Pasta de execução** no cadastro do robô no hub deve apontar para a 
 
 ```bash
 # 1. Clonar o repositório (fazer apenas uma vez)
-git clone https://github.com/InovController/hub-robots.git
+git clone https://github.com/Controller-Desenvolvimento/hub-robots.git
 cd hub-robots
 
 # 2. Abrir no VS Code
@@ -977,9 +977,9 @@ O repositório é **privado**. Quem tem acesso atualmente:
 
 | Conta | Permissão |
 |---|---|
-| `InovController` | Owner (dono) |
+| Organização `Controller-Desenvolvimento` | Dona do repositório (membros: `davi-baptista`, `InovController` etc.) |
 | `christiansousadev` | Write (leitura e escrita) |
 | `matheusbng` | Write (leitura e escrita) |
 | `MatheusBrunoMB` | Write (leitura e escrita) |
 
-Para adicionar ou remover colaboradores: acessar [github.com/InovController/hub-robots/settings/access](https://github.com/InovController/hub-robots/settings/access) com a conta `InovController`.
+Para adicionar ou remover colaboradores: acessar [github.com/Controller-Desenvolvimento/hub-robots/settings/access](https://github.com/Controller-Desenvolvimento/hub-robots/settings/access) com uma conta Owner da organização.

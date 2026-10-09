@@ -1,5 +1,20 @@
 export type UserRole = 'admin' | 'manager' | 'employee';
 
+export type DevDoc = {
+  id: string;
+  title: string;
+  category: string;
+  summary: string;
+  howToUse: string;
+  codeExample: string | null;
+  language: string | null;
+  endpoint: string | null;
+  tags: string[];
+  order: number;
+  createdAt: string;
+  updatedAt: string;
+};
+
 export type Department = string;
 
 export type DepartmentConfig = {
@@ -17,11 +32,13 @@ export type User = {
   email: string;
   role: UserRole;
   departments: Department[];
+  mascotSkin: string;
 };
 
 export type ManagedUser = User & {
   isActive: boolean;
   createdAt: string;
+  athenasLogin: string | null;
 };
 
 export type UnlinkedExternalIdentity = {
@@ -31,6 +48,15 @@ export type UnlinkedExternalIdentity = {
   savedSeconds: number;
   firstSeenAt: string;
   lastSeenAt: string;
+};
+
+export type IgnoredIdentity = {
+  login: string;
+  name: string;
+  department: string | null;
+  ignored: boolean;
+  createdAt: string;
+  updatedAt: string;
 };
 
 export type SessionResponse = {
@@ -227,53 +253,183 @@ export type HubOverview = {
   recentExecutions: Execution[];
 };
 
+export type TimeSavingsGranularity = 'day' | 'week' | 'month';
+export type TimeSavingsOriginFilter = 'hub' | 'external';
+// hub = robô rodado pelo hub; external = integração externa (tempo informado
+// pelo próprio sistema); external_metric = métrica externa legada.
+export type TimeSavingsOrigin = 'hub' | 'external' | 'external_metric';
+
+export type TimeSavingsDelta = {
+  previous: number;
+  pct: number | null;
+  direction: 'up' | 'down' | 'flat' | 'new';
+};
+
+export type TimeSavingsTotals = {
+  // Execuções concluídas (status success), com ou sem ganho.
+  executions: number;
+  // Execuções com savedSeconds > 0.
+  executionsWithSavings: number;
+  executionsWithoutSavings: number;
+  automationsWithSavings: number;
+  // Pessoas distintas que receberam crédito por economia > 0.
+  beneficiaries: number;
+  savedSeconds: number;
+  unitsProcessed: number;
+  // Calculadas só sobre execuções com ganho.
+  medianSavedSeconds: number | null;
+  averageSavedSeconds: number | null;
+  // savedSeconds ÷ (dias úteis do período × jornada). null sem dias úteis.
+  capacityFte: number | null;
+};
+
+export type TimeSavingsConcentration = {
+  count: number;
+  top1Name: string | null;
+  top1Pct: number;
+  top3Pct: number;
+};
+
+export type TimeSavingsBucket = {
+  key: string;
+  label: string;
+  from: string;
+  to: string;
+  savedSeconds: number;
+  executions: number;
+  previousSavedSeconds: number | null;
+  previousExecutions: number | null;
+  weekend: boolean;
+};
+
+export type TimeSavingsRunRate = {
+  estimate: number;
+  lowerBound: number;
+  upperBound: number;
+  sampleDays: number;
+  activeDays: number;
+  windowFrom: string;
+  windowTo: string;
+  blockDays: number;
+  method: string;
+};
+
 export type TimeSavingsReport = {
-  totals: {
-    executions: number;
-    savedSeconds: number;
-    manualEstimatedSeconds: number;
-    unitsProcessed: number;
+  timezone: string;
+  generatedAt: string;
+  config: {
+    workdayHours: number;
+    outlierPercentile: number;
+    runRateWindowDays: number;
+    runRateMinSampleDays: number;
+  };
+  range: { from: string; to: string; days: number; businessDays: number } | null;
+  // comparable = false quando o período anterior começa antes do primeiro dado
+  // da base (não há como comparar um período cheio com um parcial).
+  previousRange: { from: string; to: string; days: number; businessDays: number; comparable: boolean } | null;
+  totals: TimeSavingsTotals;
+  previousTotals: TimeSavingsTotals | null;
+  deltas: {
+    savedSeconds: TimeSavingsDelta | null;
+    executionsWithSavings: TimeSavingsDelta | null;
+    capacityFte: TimeSavingsDelta | null;
+    beneficiaries: TimeSavingsDelta | null;
+  } | null;
+  concentration: {
+    byRobot: TimeSavingsConcentration;
+    byDepartment: TimeSavingsConcentration;
   };
   byRobot: Array<{
     robotId: string;
     robotName: string;
     executions: number;
     savedSeconds: number;
-    manualEstimatedSeconds: number;
-    unitsProcessed: number;
+    sharePct: number;
   }>;
   byUser: Array<{
     userId: string;
     userName: string;
     executions: number;
     savedSeconds: number;
-    manualEstimatedSeconds: number;
-    unitsProcessed: number;
+    sharePct: number;
   }>;
   byDepartment: Array<{
     department: string;
     executions: number;
     savedSeconds: number;
-    manualEstimatedSeconds: number;
-    unitsProcessed: number;
+    sharePct: number;
   }>;
-  trend: Array<{
-    day: string;
+  granularity: TimeSavingsGranularity;
+  autoGranularity: TimeSavingsGranularity;
+  series: TimeSavingsBucket[];
+  // Ritmo anual estimado: independente do período filtrado. null quando não há
+  // amostra suficiente (ver runRateUnavailableReason).
+  runRate: TimeSavingsRunRate | null;
+  runRateUnavailableReason: 'no_data' | 'insufficient_sample' | null;
+  outliers: {
+    percentile: number;
+    minSample: number;
+    sampleSize: number;
+    threshold: number | null;
+    count: number;
     savedSeconds: number;
-    executions: number;
-  }>;
-  executions: Array<{
-    id: string;
-    createdAt: string;
-    robotId: string;
-    robotName: string;
-    userId: string | null;
-    userName: string;
-    unitsProcessed: number;
-    unitLabel: string;
-    manualEstimatedSeconds: number;
-    savedSeconds: number;
-  }>;
+    sharePct: number;
+    top: Array<{
+      id: string;
+      robotName: string;
+      userName: string;
+      savedSeconds: number;
+      sharePct: number;
+      at: string;
+      origin: TimeSavingsOrigin;
+    }>;
+  };
+  quality: {
+    completedExecutions: number;
+    executionsWithSavings: number;
+    executionsWithoutSavings: number;
+    automationsWithoutRate: {
+      count: number;
+      items: Array<{ robotId: string; robotName: string; executions: number }>;
+    };
+    missingUnits: { count: number; pct: number };
+    assumedUnits: { count: number; savedSeconds: number; sharePct: number };
+    byOrigin: Array<{
+      origin: TimeSavingsOrigin;
+      executions: number;
+      executionsWithSavings: number;
+      savedSeconds: number;
+      sharePct: number;
+    }>;
+  };
+};
+
+export type TimeSavingsExecutionRow = {
+  id: string;
+  at: string;
+  day: string;
+  robotId: string;
+  robotName: string;
+  userId: string | null;
+  userName: string;
+  department: string;
+  unitsProcessed: number;
+  unitsMissing: boolean;
+  unitsAssumed: boolean;
+  unitLabel: string;
+  savedSeconds: number;
+  origin: TimeSavingsOrigin;
+  isOutlier: boolean;
+};
+
+export type TimeSavingsExecutionsPage = {
+  page: number;
+  pageSize: number;
+  total: number;
+  totalPages: number;
+  savedSeconds: number;
+  outlierThreshold: number | null;
+  items: TimeSavingsExecutionRow[];
 };
 
 export type SiteStatus = 'online' | 'maintenance' | 'down';
@@ -311,6 +467,7 @@ export type Site = {
   powerbiScheduledTimes?: string[];
   powerbiShowRefresh?: boolean;
   ssoEnabled?: boolean;
+  linkedDashboardId?: string | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -332,6 +489,37 @@ export type SharedCredential = {
 export type AutomationRequestStatus = 'pending' | 'review' | 'approved' | 'in_progress' | 'done' | 'rejected';
 export type AutomationRequestUrgency = 'low' | 'normal' | 'high' | 'urgent';
 export type AutomationRequestCadence = 'once' | 'daily' | 'weekly' | 'monthly';
+
+export type DashboardType = 'html' | 'streamlit' | 'server';
+
+export type Dashboard = {
+  id: string;
+  slug: string;
+  name: string;
+  description?: string | null;
+  type: DashboardType;
+  isActive: boolean;
+  allowedDepartments: string[];
+  minRole: UserRole;
+  allowedUserIds: string[];
+  mainFile: string;
+  streamlitPort?: number | null;
+  streamlitStatus?: string | null;
+  streamlitRunning?: boolean | null;
+  serverCommand?: string | null;
+  serverWorkingDirectory?: string | null;
+  updatePath?: string | null;
+  warmupPaths?: string[];
+  warmupMode: 'disabled' | 'manual' | 'auto';
+  updateFrequency?: string | null;
+  updateTimesOfDay?: string[];
+  updateDayOfWeek?: number | null;
+  updateDayOfMonth?: number | null;
+  lastUpdateAt?: string | null;
+  lastUpdateStatus?: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
 
 export type AutomationRequest = {
   id: string;

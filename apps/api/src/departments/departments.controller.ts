@@ -1,8 +1,11 @@
 import { Body, Controller, Delete, Get, Param, Patch, Post, Req } from '@nestjs/common';
+import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import type { Request } from 'express';
 import { AuthService } from '../auth/auth.service';
 import { DepartmentsService } from './departments.service';
 
+@ApiTags('Departamentos')
+@ApiBearerAuth()
 @Controller('departments')
 export class DepartmentsController {
   constructor(

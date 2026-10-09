@@ -138,10 +138,16 @@ model Site {
   powerbiScheduledTimes   String[]     @default([])
   powerbiShowRefresh      Boolean      @default(true)
   ssoEnabled              Boolean      @default(false)
+  // Painel (Dashboard) cujo chat de IA responde as perguntas feitas no chat do
+  // hub enquanto este BI está aberto em "Ver". Vazio = chat normal do hub.
+  linkedDashboardId       String?
   createdAt              DateTime     @default(now())
   updatedAt           DateTime     @updatedAt
 
-  refreshLogs PowerBIRefreshLog[]
+  refreshLogs     PowerBIRefreshLog[]
+  linkedDashboard Dashboard?          @relation(fields: [linkedDashboardId], references: [id], onDelete: SetNull)
+
+  @@index([linkedDashboardId])
 }
 
 model PowerBIRefreshLog {
@@ -205,6 +211,7 @@ model User {
   role         UserRole     @default(employee)
   departments  String[]     @default([])
   isActive     Boolean      @default(true)
+  mascotSkin   String       @default("midas")
   createdAt    DateTime     @default(now())
   updatedAt    DateTime     @updatedAt
 
@@ -214,6 +221,27 @@ model User {
   automationRequests AutomationRequest[]
   notifications  Notification[]
   robotFavorites RobotFavorite[]
+  siteChatMessages SiteChatMessage[]
+}
+
+model SiteChatMessage {
+  id               String   @id @default(cuid())
+  userId           String
+  role             String
+  content          String
+  promptTokens     Int?
+  completionTokens Int?
+  attachmentPath   String?
+  attachmentName   String?
+  // Conversa a que a mensagem pertence: "hub" (chat do hub) ou "dash:<id do
+  // painel>" (conversa com o chat de IA de um painel/BI) — cada uma tem o seu histórico.
+  scope            String   @default("hub")
+  createdAt        DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@index([userId, scope, createdAt])
 }
 
 model RobotFavorite {
@@ -231,6 +259,7 @@ model ExternalIdentity {
   login      String   @id
   name       String
   department String?
+  ignored    Boolean  @default(false)
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 
@@ -380,4 +409,83 @@ model RobotInputExample {
   createdAt     DateTime @default(now())
 
   @@index([robotId, createdAt])
+}
+
+model ExternalMetric {
+  id                     String   @id @default(cuid())
+  createdAt              DateTime @default(now())
+
+  // Identificação da fonte
+  source                 String   // identificador de máquina, ex: "bi_dre_contabil"
+  sourceName             String?  // nome de exibição, ex: "DRE Contábil"
+  action                 String   // ex: "baixar_empresa"
+  label                  String?  // descrição do registro, ex: "Empresa X"
+  unitLabel              String   @default("empresa")
+
+  // Atribuição de usuário
+  userName               String?
+  userEmail              String?
+  department             String?
+
+  // Métricas
+  unitsProcessed         Int      @default(1)
+  manualSecondsPerUnit   Int      @default(0)
+  manualEstimatedSeconds Int      @default(0)
+
+  @@index([createdAt])
+  @@index([source, createdAt])
+  @@index([userEmail, createdAt])
+}
+
+enum DashboardType {
+  html
+  streamlit
+  server
+}
+
+model Dashboard {
+  id                    String        @id @default(cuid())
+  slug                  String        @unique
+  name                  String
+  description           String?
+  type                  DashboardType @default(html)
+  isActive              Boolean       @default(true)
+  allowedDepartments    String[]      @default([])
+  minRole               UserRole      @default(employee)
+  allowedUserIds        String[]      @default([])
+  mainFile              String        @default("index.html")
+  streamlitPort         Int?
+  streamlitStatus       String?
+  serverCommand         String?
+  serverWorkingDirectory String?
+  updatePath            String?
+  warmupPaths           String[]      @default([])
+  warmupMode            String        @default("manual")
+  updateFrequency       String?
+  updateTimesOfDay      String[]      @default([])
+  updateDayOfWeek       Int?
+  updateDayOfMonth      Int?
+  lastUpdateAt          DateTime?
+  lastUpdateStatus      String?
+  createdAt             DateTime      @default(now())
+  updatedAt             DateTime      @updatedAt
+
+  linkedSites Site[]
+
+  @@index([slug])
+}
+
+model DevDoc {
+  id          String   @id @default(cuid())
+  title       String
+  category    String
+  summary     String   @db.Text
+  howToUse    String   @db.Text
+  codeExample String?  @db.Text
+  language    String?
+  endpoint    String?
+  tags        String[]
+  order       Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 }

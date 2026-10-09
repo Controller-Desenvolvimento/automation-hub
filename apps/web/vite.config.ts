@@ -9,6 +9,7 @@ export default defineConfig({
     proxy: {
       '/api': 'http://localhost:3000',
       '/storage': 'http://localhost:3000',
+      '/d': { target: 'http://localhost:3000', ws: true },
     },
   },
 });

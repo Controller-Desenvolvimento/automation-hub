@@ -2,10 +2,9 @@ import { Download, FileDown, Inbox } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { PageHeader } from '../components/page-header';
-import { Badge } from '../components/ui/badge';
 import { useHub } from '../contexts/hub-context';
 import { api, downloadWithFeedback } from '../lib/api';
-import type { Notification } from '../lib/types';
+import type { Execution } from '../lib/types';
 import { cn } from '../lib/utils';
 
 type DateFilter = 'today' | 'yesterday' | 'week' | 'all';
@@ -25,19 +24,19 @@ function toDateKey(date: Date): string {
   return date.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' });
 }
 
-function groupByDate(notifications: Notification[]) {
+function groupByDate(executions: Execution[]) {
   const todayStr = toDateKey(new Date());
   const yesterdayStr = toDateKey(new Date(Date.now() - 86_400_000));
 
-  const map = new Map<string, { items: Notification[]; dateMs: number }>();
-  for (const n of notifications) {
-    const d = new Date(n.createdAt);
+  const map = new Map<string, { items: Execution[]; dateMs: number }>();
+  for (const ex of executions) {
+    const d = new Date(ex.finishedAt ?? ex.createdAt);
     const key = toDateKey(d);
     if (!map.has(key)) {
       const startOfDay = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
       map.set(key, { items: [], dateMs: startOfDay });
     }
-    map.get(key)!.items.push(n);
+    map.get(key)!.items.push(ex);
   }
 
   return Array.from(map.entries()).map(([key, { items, dateMs }]) => {
@@ -46,10 +45,7 @@ function groupByDate(notifications: Notification[]) {
   });
 }
 
-function applyFilter(
-  groups: ReturnType<typeof groupByDate>,
-  filter: DateFilter,
-) {
+function applyFilter(groups: ReturnType<typeof groupByDate>, filter: DateFilter) {
   const todayStr = toDateKey(new Date());
   const yesterdayStr = toDateKey(new Date(Date.now() - 86_400_000));
   const weekAgoMs = Date.now() - 7 * 86_400_000;
@@ -62,7 +58,7 @@ function applyFilter(
 
 export function ResultsPage() {
   const { notify } = useHub();
-  const [notifications, setNotifications] = useState<Notification[]>([]);
+  const [executions, setExecutions] = useState<Execution[]>([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<DateFilter>('today');
 
@@ -73,8 +69,8 @@ export function ResultsPage() {
   async function load() {
     try {
       setLoading(true);
-      const data = await api<Notification[]>('/notifications');
-      setNotifications(data);
+      const data = await api<Execution[]>('/executions/results');
+      setExecutions(data);
     } catch (error) {
       notify(error instanceof Error ? error.message : 'Não foi possível carregar os resultados.');
     } finally {
@@ -82,21 +78,16 @@ export function ResultsPage() {
     }
   }
 
-  const withFiles = notifications.filter(
-    (n) => n.execution?.files && n.execution.files.length > 0,
-  );
-
-  const allGroups = groupByDate(withFiles);
+  const allGroups = groupByDate(executions);
   const groups = applyFilter(allGroups, filter);
 
   return (
     <div className="grid grid-cols-1 gap-5">
       <PageHeader
-        title={<>Resultados <span className="text-sky-600 dark:text-sky-400">recebidos</span></>}
-        description="Arquivos de saída de agendamentos enviados para você. Download direto sem precisar abrir a execução."
+        title={<>Resultados <span className="text-sky-600 dark:text-sky-400">de execuções</span></>}
+        description="Arquivos gerados por execuções bem-sucedidas. Download direto sem precisar abrir o histórico."
       />
 
-      {/* Filtro de período */}
       <div className="flex gap-1 rounded-2xl border border-slate-200 bg-slate-50 p-1 dark:border-[#27272a] dark:bg-[#111113]">
         {FILTERS.map(({ key, label }) => {
           const count = applyFilter(allGroups, key).reduce((sum, g) => sum + g.items.length, 0);
@@ -140,7 +131,7 @@ export function ResultsPage() {
           <Inbox className="mx-auto mb-4 h-10 w-10 text-slate-300 dark:text-zinc-600" />
           <p className="text-sm text-slate-500">Nenhum resultado neste período.</p>
           <p className="mt-1 text-xs text-slate-400">
-            Tente selecionar um período maior ou aguarde novos agendamentos.
+            Tente selecionar um período maior ou aguarde execuções com arquivos de saída.
           </p>
         </div>
       ) : (
@@ -154,8 +145,8 @@ export function ResultsPage() {
                 <div className="h-px flex-1 bg-slate-200 dark:bg-[#27272a]" />
               </div>
               <div className="divide-y divide-slate-100 dark:divide-[#27272a]">
-                {items.map((notification) => (
-                  <ResultRow key={notification.id} notification={notification} />
+                {items.map((execution) => (
+                  <ResultRow key={execution.id} execution={execution} />
                 ))}
               </div>
             </div>
@@ -166,57 +157,48 @@ export function ResultsPage() {
   );
 }
 
-function ResultRow({ notification }: { notification: Notification }) {
+function ResultRow({ execution }: { execution: Execution }) {
   const { notify } = useHub();
-  const files = notification.execution?.files ?? [];
-  const robotName = notification.execution?.robot.name ?? '—';
-  const isError = notification.type === 'execution_error';
+  const outputFiles = execution.files.filter((f) => f.kind === 'output' || !f.kind);
+  const finishedAt = execution.finishedAt ?? execution.createdAt;
 
   return (
     <div className="flex items-start gap-4 py-4 first:pt-0">
-      <div
-        className={cn(
-          'mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full',
-          isError ? 'bg-red-50 dark:bg-red-900/20' : 'bg-emerald-50 dark:bg-emerald-900/20',
-        )}
-      >
-        <FileDown className={cn('h-4 w-4', isError ? 'text-red-500' : 'text-emerald-500')} />
+      <div className={cn('mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-emerald-50 dark:bg-emerald-900/20')}>
+        <FileDown className="h-4 w-4 text-emerald-500" />
       </div>
 
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
-          <span className="text-sm font-semibold text-slate-900 dark:text-white">{robotName}</span>
-          <Badge variant={isError ? 'error' : 'success'} className="text-xs">
-            {isError ? 'Erro' : 'Sucesso'}
-          </Badge>
-          <span className="text-xs text-slate-400">{formatTime(notification.createdAt)}</span>
+          <span className="text-sm font-semibold text-slate-900 dark:text-white">{execution.robot.name}</span>
+          {execution.requestedByName && (
+            <span className="text-xs text-slate-400 dark:text-zinc-500">por {execution.requestedByName}</span>
+          )}
+          <span className="text-xs text-slate-400 dark:text-zinc-500">{formatTime(finishedAt)}</span>
         </div>
-        <p className="mt-0.5 text-xs text-slate-500 dark:text-zinc-400">{notification.title}</p>
 
-        {files.length > 0 && (
+        {outputFiles.length > 0 && (
           <div className="mt-2.5 flex flex-col gap-1.5">
-            {files.map((file) => (
+            {outputFiles.map((file) => (
               <button
                 key={file.id}
                 type="button"
                 onClick={() => void downloadWithFeedback(file.downloadUrl, file.downloadName ?? 'arquivo', notify)}
                 className="flex w-full max-w-sm items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700 transition hover:bg-slate-100 dark:border-[#2b2b31] dark:bg-[#111113] dark:text-zinc-200 dark:hover:bg-[#18181b]"
               >
-                <span className="min-w-0 flex-1 truncate text-left text-xs font-medium">{file.downloadName ?? 'arquivo'}</span>
+                <span className="min-w-0 flex-1 truncate text-left text-xs font-medium">{file.downloadName ?? file.filename}</span>
                 <Download className="h-3.5 w-3.5 shrink-0 text-slate-400" />
               </button>
             ))}
           </div>
         )}
 
-        {notification.executionId ? (
-          <Link
-            to={`/executions/${notification.executionId}`}
-            className="mt-2 inline-block text-xs text-slate-400 transition hover:text-slate-600 dark:text-zinc-500 dark:hover:text-zinc-300"
-          >
-            Ver execução completa →
-          </Link>
-        ) : null}
+        <Link
+          to={`/executions/${execution.id}`}
+          className="mt-2 inline-block text-xs text-slate-400 transition hover:text-slate-600 dark:text-zinc-500 dark:hover:text-zinc-300"
+        >
+          Ver execução completa →
+        </Link>
       </div>
     </div>
   );

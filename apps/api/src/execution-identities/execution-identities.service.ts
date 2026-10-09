@@ -86,24 +86,31 @@ export class ExecutionIdentitiesService {
   }
 
   async listUnlinkedIdentities() {
-    const executions = await this.prisma.execution.findMany({
-      where: {
-        userId: null,
-        robot: { isExternal: true },
-        OR: [
-          { requestedByName: { not: null } },
-          { requestedByEmail: { not: null } },
-        ],
-      },
-      orderBy: { createdAt: 'asc' },
-      select: {
-        requestedByName: true,
-        requestedByEmail: true,
-        manualEstimatedSeconds: true,
-        createdAt: true,
-        finishedAt: true,
-      },
-    });
+    const [executions, ignored] = await Promise.all([
+      this.prisma.execution.findMany({
+        where: {
+          userId: null,
+          robot: { isExternal: true },
+          OR: [
+            { requestedByName: { not: null } },
+            { requestedByEmail: { not: null } },
+          ],
+        },
+        orderBy: { createdAt: 'asc' },
+        select: {
+          requestedByName: true,
+          requestedByEmail: true,
+          manualEstimatedSeconds: true,
+          createdAt: true,
+          finishedAt: true,
+        },
+      }),
+      this.prisma.externalIdentity.findMany({
+        where: { ignored: true },
+        select: { login: true },
+      }),
+    ]);
+    const ignoredLogins = new Set(ignored.map((identity) => identity.login));
 
     const grouped = new Map<
       string,
@@ -121,7 +128,7 @@ export class ExecutionIdentitiesService {
       const login = normalizeExternalLogin(
         execution.requestedByEmail ?? execution.requestedByName ?? '',
       );
-      if (!login) continue;
+      if (!login || ignoredLogins.has(login)) continue;
 
       const occurredAt = execution.finishedAt ?? execution.createdAt;
       const receivedName = execution.requestedByName?.trim() || login;
@@ -148,6 +155,42 @@ export class ExecutionIdentitiesService {
     return [...grouped.values()].sort(
       (left, right) => right.lastSeenAt.getTime() - left.lastSeenAt.getTime(),
     );
+  }
+
+  async ignoreIdentity(loginValue: string, name?: string) {
+    const login = normalizeExternalLogin(loginValue);
+    if (!login) {
+      throw new BadRequestException('Informe o login da identidade.');
+    }
+
+    await this.prisma.externalIdentity.upsert({
+      where: { login },
+      create: { login, name: name?.trim() || login, ignored: true },
+      update: { ignored: true },
+    });
+
+    return { login, ignored: true };
+  }
+
+  async unignoreIdentity(loginValue: string) {
+    const login = normalizeExternalLogin(loginValue);
+    if (!login) {
+      throw new BadRequestException('Informe o login da identidade.');
+    }
+
+    await this.prisma.externalIdentity.updateMany({
+      where: { login },
+      data: { ignored: false },
+    });
+
+    return { login, ignored: false };
+  }
+
+  async listIgnoredIdentities() {
+    return this.prisma.externalIdentity.findMany({
+      where: { ignored: true },
+      orderBy: { updatedAt: 'desc' },
+    });
   }
 
   async linkIdentity(loginValue: string, userId: string) {

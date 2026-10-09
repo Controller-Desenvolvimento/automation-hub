@@ -3,9 +3,15 @@ import { join } from 'node:path';
 
 export const storageRoot = join(process.cwd(), 'storage');
 export const executionsRoot = join(storageRoot, 'executions');
+export const dashboardsRoot = join(storageRoot, 'dashboards');
+
+export function dashboardRoot(dashboardId: string) {
+  return join(dashboardsRoot, dashboardId);
+}
 export const schedulesRoot = join(storageRoot, 'schedules');
 export const robotsRoot = join(storageRoot, 'robots');
 export const sitesRoot = join(storageRoot, 'sites');
+export const siteChatAttachmentsRoot = join(storageRoot, 'site-chat-attachments');
 
 export function executionRoot(executionId: string) {
   return join(executionsRoot, executionId);

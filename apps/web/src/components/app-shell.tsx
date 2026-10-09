@@ -1,7 +1,10 @@
 import {
   Bell,
   BarChart3,
+  BookOpen,
+  Bot,
   CheckCheck,
+  ChevronDown,
   Download,
   ExternalLink,
   Globe,
@@ -26,8 +29,10 @@ import { useTheme } from '../contexts/theme-context';
 import { ROLE_LABELS } from '../lib/constants';
 import { cn, initialsFor, timeAgo } from '../lib/utils';
 import { api } from '../lib/api';
+import { MASCOT_SKINS, mascotSkinOrDefault } from '../lib/mascot-skins';
 import type { Notification, Site } from '../lib/types';
 import { AppIcon } from './app-icon';
+import { SiteChatWidget } from './site-chat-widget';
 import { SiteFavicon } from './site-favicon';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
@@ -36,11 +41,13 @@ import { Separator } from './ui/separator';
 export function AppShell() {
   const location = useLocation();
   const navigate = useNavigate();
-  const { user, logout } = useAuth();
+  const { user, logout, updateUser } = useAuth();
   const { theme, toggleTheme } = useTheme();
-  const { hub, unreadNotifications, refreshUnreadCount } = useHub();
+  const { hub, unreadNotifications, refreshUnreadCount, notify } = useHub();
   const [search, setSearch] = useState('');
   const [profileOpen, setProfileOpen] = useState(false);
+  const [mascotPickerOpen, setMascotPickerOpen] = useState(false);
+  const [savingMascot, setSavingMascot] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
@@ -54,9 +61,34 @@ export function AppShell() {
   useEffect(() => {
     setMobileNavOpen(false);
     setProfileOpen(false);
+    setMascotPickerOpen(false);
     setSearchOpen(false);
     setNotifOpen(false);
   }, [location.pathname]);
+
+  async function handlePickMascot(skinId: string) {
+    if (savingMascot) return;
+    if (mascotSkinOrDefault(user?.mascotSkin) === skinId) {
+      setMascotPickerOpen(false);
+      setProfileOpen(false);
+      return;
+    }
+    setSavingMascot(true);
+    try {
+      await api('/auth/mascot-skin', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ skin: skinId }),
+      });
+      updateUser({ mascotSkin: skinId });
+      setMascotPickerOpen(false);
+      setProfileOpen(false);
+    } catch (error) {
+      notify(error instanceof Error ? error.message : 'Não foi possível trocar o mascote.');
+    } finally {
+      setSavingMascot(false);
+    }
+  }
 
   useEffect(() => {
     if (!user) return;
@@ -143,7 +175,7 @@ export function AppShell() {
           {
             label: 'Administração',
             items: [
-              ...(user?.role === 'admin' ? [{ to: '/settings', label: 'Configurações', icon: Settings }] : []),
+              ...(user?.role === 'admin' ? [{ to: '/settings', label: 'Configurações', icon: Settings }, { to: '/docs', label: 'Dev Docs', icon: BookOpen }] : []),
               { to: '/admin/quadro', label: 'Quadro', icon: CheckCheck },
             ],
           },
@@ -579,7 +611,7 @@ export function AppShell() {
                         className="fixed inset-0 z-40"
                         onClick={() => setProfileOpen(false)}
                       />
-                      <div className="absolute right-0 top-[calc(100%+6px)] z-50 w-52 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-xl dark:border-[#2b2b31] dark:bg-[#111113]">
+                      <div className="absolute right-0 top-[calc(100%+6px)] z-50 w-64 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-xl dark:border-[#2b2b31] dark:bg-[#111113]">
                         <div className="border-b border-slate-100 px-4 py-3 dark:border-white/[0.06]">
                           <div className="truncate text-sm font-semibold text-slate-900 dark:text-white">
                             {user?.name ?? 'Usuário'}
@@ -595,6 +627,46 @@ export function AppShell() {
                           <UserCircle className="h-4 w-4" />
                           Meu perfil
                         </Link>
+                        <button
+                          type="button"
+                          onClick={() => setMascotPickerOpen((current) => !current)}
+                          className="flex w-full items-center justify-between gap-3 px-4 py-3 text-sm font-medium text-slate-700 transition hover:bg-slate-50 dark:text-zinc-200 dark:hover:bg-[#18181b]"
+                        >
+                          <span className="flex items-center gap-3">
+                            <Bot className="h-4 w-4" />
+                            Mascote
+                          </span>
+                          <ChevronDown className={cn('h-3.5 w-3.5 text-slate-400 transition-transform', mascotPickerOpen && 'rotate-180')} />
+                        </button>
+                        {mascotPickerOpen ? (
+                          <div className="grid grid-cols-5 gap-2 px-4 pb-3">
+                            {MASCOT_SKINS.map((skin) => {
+                              const isSelected = mascotSkinOrDefault(user?.mascotSkin) === skin.id;
+                              return (
+                                <button
+                                  key={skin.id}
+                                  type="button"
+                                  title={skin.label}
+                                  disabled={savingMascot}
+                                  onClick={() => void handlePickMascot(skin.id)}
+                                  className={cn(
+                                    'flex aspect-square items-center justify-center overflow-hidden rounded-xl border p-1 transition hover:border-sky-300 hover:bg-sky-50 disabled:opacity-60 dark:hover:bg-sky-950/20',
+                                    isSelected
+                                      ? 'border-sky-400 bg-sky-50 dark:border-sky-500 dark:bg-sky-950/30'
+                                      : 'border-slate-200 dark:border-[#2b2b31]',
+                                  )}
+                                >
+                                  <img
+                                    src={`/mascots/${skin.id}/mascot-idle-0.png`}
+                                    alt={skin.label}
+                                    draggable={false}
+                                    className="h-full w-full object-contain"
+                                  />
+                                </button>
+                              );
+                            })}
+                          </div>
+                        ) : null}
                         <div className="mx-4 border-t border-slate-100 dark:border-white/[0.06]" />
                         <button
                           type="button"
@@ -620,6 +692,8 @@ export function AppShell() {
           </main>
         </div>
       </div>
+
+      <SiteChatWidget />
     </div>
   );
 }

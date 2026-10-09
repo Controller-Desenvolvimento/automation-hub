@@ -14,7 +14,8 @@ import {
   departmentsForAthenasLogin,
   formatAthenasPersonName,
 } from '../shared/athenas-identity';
-import { hashToken } from '../shared/crypto';
+import { hashPassword, hashToken } from '../shared/crypto';
+import { isValidMascotSkin } from '../shared/mascot-skins';
 import { AthenasService } from './athenas.service';
 
 const SESSION_TTL_DAYS = 7;
@@ -94,11 +95,16 @@ export class AuthService {
     }
 
     // Athenas path: logins sem @ (ex: JOAO.SILVA) quando integração está ligada
+    // Exceção: contas locais sem athenasLogin (ex: admins criados manualmente) usam auth local
     if (!rawLogin.includes('@') && this.athenas.isEnabled()) {
-      const result = await this.athenas.authenticate(rawLogin, password);
-      if (!result.ok) {
-        throw new UnauthorizedException('Credenciais inválidas.');
-      }
+      const localOnly = await this.prisma.user.findFirst({
+        where: { email: rawLogin.toLowerCase(), athenasLogin: null },
+      });
+      if (!localOnly) {
+        const result = await this.athenas.authenticate(rawLogin, password);
+        if (!result.ok) {
+          throw new UnauthorizedException('Credenciais inválidas.');
+        }
 
       const athenasLogin = rawLogin.toUpperCase();
       const departments = departmentsForAthenasLogin(athenasLogin);
@@ -141,9 +147,10 @@ export class AuthService {
 
       await this.identities.reconcileUser(user.id);
       return this.createSession(user.id);
+      } // end if (!localOnly) — cai aqui se for conta local sem athenasLogin
     }
 
-    // Local path: contas com email (ex: admin@empresa.com)
+    // Local path: contas com email (ex: admin@empresa.com) ou contas locais sem @
     const email = rawLogin.toLowerCase();
     const user = await this.prisma.user.findUnique({ where: { email } });
     // Sempre roda o scrypt (com hash dummy se não existe) para não revelar
@@ -195,6 +202,19 @@ export class AuthService {
     return session.user;
   }
 
+  async updateMascotSkin(userId: string, skin: unknown) {
+    if (!isValidMascotSkin(skin)) {
+      throw new BadRequestException('Mascote inválido.');
+    }
+
+    const user = await this.prisma.user.update({
+      where: { id: userId },
+      data: { mascotSkin: skin },
+    });
+
+    return sanitizeUser(user);
+  }
+
   ensureAdmin(user: { id: string; role: UserRole; departments: string[] }) {
     if (!isAdmin(user)) {
       throw new ForbiddenException('Apenas administradores podem executar esta ação.');
@@ -242,12 +262,6 @@ export class AuthService {
   }
 }
 
-function hashPassword(password: string) {
-  const salt = randomBytes(16).toString('hex');
-  const derived = scryptSync(password, salt, 64).toString('hex');
-  return `${salt}:${derived}`;
-}
-
 const DUMMY_PASSWORD_HASH = hashPassword(randomBytes(16).toString('hex'));
 
 function verifyPassword(password: string, storedHash: string) {
@@ -280,6 +294,7 @@ function sanitizeUser(user: {
   email: string;
   role: UserRole;
   departments: string[];
+  mascotSkin: string;
 }) {
   return {
     id: user.id,
@@ -287,5 +302,6 @@ function sanitizeUser(user: {
     email: user.email,
     role: effectiveRole(user),
     departments: user.departments,
+    mascotSkin: user.mascotSkin,
   };
 }

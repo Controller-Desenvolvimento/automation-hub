@@ -15,6 +15,7 @@ type AuthContextValue = {
   bootstrapping: boolean;
   login: (payload: { login: string; password: string }) => Promise<void>;
   logout: () => Promise<void>;
+  updateUser: (patch: Partial<User>) => void;
 };
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -65,9 +66,13 @@ export function AuthProvider({ children }: PropsWithChildren) {
     }
   }, []);
 
+  const updateUser = useCallback((patch: Partial<User>) => {
+    setUser((prev) => (prev ? { ...prev, ...patch } : prev));
+  }, []);
+
   const value = useMemo(
-    () => ({ user, bootstrapping, login, logout }),
-    [bootstrapping, login, logout, user],
+    () => ({ user, bootstrapping, login, logout, updateUser }),
+    [bootstrapping, login, logout, updateUser, user],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

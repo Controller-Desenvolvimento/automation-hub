@@ -8,8 +8,8 @@ import { ExecutionStatus, Prisma, type User } from '@prisma/client';
 import { copyFile, rename, unlink, writeFile } from 'node:fs/promises';
 import { join, relative } from 'node:path';
 import { PrismaService } from '../prisma/prisma.service';
-import { buildExecutionScope, canAccessExecution, canAccessRobot } from '../shared/access';
-import { toUserFileName, uniqueStoredFileName } from '../shared/files';
+import { buildExecutionScope, canAccessExecution, canAccessRobot, isAdmin } from '../shared/access';
+import { fixMulterFilename, toUserFileName, uniqueStoredFileName } from '../shared/files';
 import { ensureExecutionDirs, inputDir, storageRoot } from '../shared/storage';
 
 type UploadFile = {
@@ -74,7 +74,8 @@ export class ExecutionsService {
     if (uploadedFiles.length > 0) {
       const inputFiles = await Promise.all(
         uploadedFiles.map(async (file) => {
-          const storedName = uniqueStoredFileName(file.originalname ?? 'arquivo');
+          const originalname = fixMulterFilename(file.originalname ?? 'arquivo');
+          const storedName = uniqueStoredFileName(originalname);
           const absolutePath = join(inputDir(execution.id), storedName);
 
           if (file.path) {
@@ -91,7 +92,7 @@ export class ExecutionsService {
             throw new InternalServerErrorException('Uploaded file buffer is empty');
           }
 
-          const userFileName = toUserFileName(file.originalname ?? storedName);
+          const userFileName = toUserFileName(originalname);
           return {
             executionId: execution.id,
             kind: 'input',
@@ -124,8 +125,8 @@ export class ExecutionsService {
       throw new NotFoundException('Execution not found');
     }
 
-    if (original.status !== ExecutionStatus.error) {
-      throw new BadRequestException('Só é possível reiniciar execuções com falha.');
+    if (original.status !== ExecutionStatus.error && original.status !== ExecutionStatus.canceled) {
+      throw new BadRequestException('Só é possível reiniciar execuções com falha ou canceladas.');
     }
 
     if (original.cleanedAt) {
@@ -204,6 +205,54 @@ export class ExecutionsService {
       (execution) =>
         canAccessExecution(user, execution) && canAccessRobot(user, execution.robot),
     );
+  }
+
+  async listResults(user: User) {
+    const adminUser = isAdmin(user);
+    const executions = await this.prisma.execution.findMany({
+      where: {
+        ...(adminUser ? {} : buildExecutionScope(user)),
+        status: ExecutionStatus.success,
+        files: { some: { kind: 'output' } },
+      },
+      orderBy: { finishedAt: 'desc' },
+      include: {
+        robot: { select: { id: true, name: true, slug: true, category: true, icon: true, allowedDepartments: true } },
+        files: { where: { kind: 'output' }, orderBy: { createdAt: 'asc' } },
+        user: { select: { id: true, departments: true } },
+      },
+      take: 300,
+    });
+
+    // Buscar dados de destinatários das tarefas agendadas (sem relação no schema)
+    const taskIds = [...new Set(executions.map((e) => e.scheduledTaskId).filter(Boolean))] as string[];
+    const tasks = taskIds.length > 0
+      ? await this.prisma.scheduledTask.findMany({
+          where: { id: { in: taskIds } },
+          select: { id: true, recipientScope: true, recipientDepartments: true, recipientUserIds: true },
+        })
+      : [];
+    const taskMap = new Map(tasks.map((t) => [t.id, t]));
+
+    return executions.filter((e) => {
+      if (!canAccessRobot(user, e.robot as Parameters<typeof canAccessRobot>[1])) return false;
+      if (adminUser) return true;
+
+      // Execução manual: regra normal de acesso por dono / departamento
+      if (!e.scheduledTaskId) {
+        return canAccessExecution(user, e);
+      }
+
+      // Execução agendada: checar se o usuário é destinatário configurado na tarefa
+      const task = taskMap.get(e.scheduledTaskId);
+      if (!task) return false;
+      if (task.recipientScope === 'all') return true;
+      if (task.recipientScope === 'departments') {
+        return user.departments.some((d) => task.recipientDepartments.includes(d));
+      }
+      // 'specific'
+      return task.recipientUserIds.includes(user.id);
+    });
   }
 
   async getExecution(id: string, user?: User) {
@@ -374,6 +423,18 @@ export class ExecutionsService {
         currentStep: 'Falha na execução',
         finishedAt: new Date(),
       },
+    });
+  }
+
+  // Execuções que ficam com status "running" quando o processo do hub é
+  // reiniciado (deploy, crash) nunca mais são atualizadas — o Map em memória
+  // que rastreia processos filhos começa vazio a cada boot, então nenhum
+  // código volta a olhar pra essas linhas. Usado pela reconciliação de
+  // ExecutionRunnerService.onModuleInit para encontrá-las.
+  async findRunningOrphans() {
+    return this.prisma.execution.findMany({
+      where: { status: ExecutionStatus.running },
+      include: { robot: true },
     });
   }
 

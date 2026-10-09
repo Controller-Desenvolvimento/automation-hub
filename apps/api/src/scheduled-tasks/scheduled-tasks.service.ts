@@ -10,7 +10,7 @@ import { Prisma, RecipientScope, ScheduleFrequency, type ScheduledTask, type Use
 import { PrismaService } from '../prisma/prisma.service';
 import { canAccessRobot, isAdmin, isManager } from '../shared/access';
 import { ExecutionsService } from '../executions/executions.service';
-import { listFilesRecursively, sanitizeFileName, uniqueStoredFileName } from '../shared/files';
+import { fixMulterFilename, listFilesRecursively, sanitizeFileName, uniqueStoredFileName } from '../shared/files';
 import { ensureScheduleDirs, scheduleInputDir, scheduleRoot } from '../shared/storage';
 import { computeNextRunAt, computeNextRunAtMultiple, parseTimeOfDay } from './schedule-utils';
 
@@ -417,7 +417,7 @@ export class ScheduledTasksService {
           return;
         }
 
-        const storedName = uniqueStoredFileName(file.originalname ?? 'arquivo');
+        const storedName = uniqueStoredFileName(fixMulterFilename(file.originalname ?? 'arquivo'));
         const absolutePath = join(scheduleInputDir(taskId), storedName);
         await writeFile(absolutePath, file.buffer);
       }),

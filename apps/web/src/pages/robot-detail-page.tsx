@@ -1,4 +1,4 @@
-import { BookOpen, FileDown, FileText, LifeBuoy } from 'lucide-react';
+import { BookOpen, ExternalLink, FileDown, FileText, LifeBuoy } from 'lucide-react';
 import { useEffect, useState, type ReactNode } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { Field } from '../components/field';
@@ -101,8 +101,18 @@ export function RobotDetailPage() {
           {robot.isExternal ? (
             <CardContent>
               <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-8 text-center text-sm text-slate-600 dark:border-slate-800 dark:bg-slate-900/40 dark:text-zinc-300">
-                Essa automação não é executada por aqui — ela roda em outro sistema e reporta o tempo economizado
-                automaticamente para este hub assim que cada execução termina. Não há disparo manual.
+                <p>
+                  Essa automação não é executada por aqui — ela roda em outro sistema e reporta o tempo economizado
+                  automaticamente para este hub assim que cada execução termina. Não há disparo manual.
+                </p>
+                {robot.documentationUrl ? (
+                  <Button asChild size="sm" className="mt-4">
+                    <a href={robot.documentationUrl} target="_blank" rel="noopener noreferrer">
+                      {robot.documentationLabel || 'Acessar'}
+                      <ExternalLink className="ml-1.5 h-3.5 w-3.5" />
+                    </a>
+                  </Button>
+                ) : null}
               </div>
             </CardContent>
           ) : (
@@ -122,6 +132,12 @@ export function RobotDetailPage() {
                 formData.append('priority', '0');
 
                 for (const field of fields) {
+                  if (field.type === 'checkbox-group') {
+                    payload[field.name] = Array.from(
+                      form.querySelectorAll<HTMLInputElement>(`input[type="checkbox"][name="${field.name}"]:checked`),
+                    ).map((element) => element.value);
+                    continue;
+                  }
                   const element = form.elements.namedItem(field.name);
                   if (field.type === 'checkbox' && element instanceof HTMLInputElement) {
                     payload[field.name] = element.checked;
@@ -287,7 +303,26 @@ function ResourceItem({ icon, label, value }: { icon: ReactNode; label: string; 
 }
 
 function FieldRenderer({ field }: { field: RobotSchemaField }) {
-  const className = field.type === 'textarea' || field.type === 'radio' || field.type === 'checkbox' ? 'md:col-span-2' : '';
+  const className =
+    field.type === 'textarea' || field.type === 'radio' || field.type === 'checkbox' || field.type === 'checkbox-group'
+      ? 'md:col-span-2'
+      : '';
+
+  if (field.type === 'checkbox-group') {
+    const defaultValues = (field.defaultValue ?? '').split(',').map((value) => value.trim()).filter(Boolean);
+    return (
+      <Field className={className} label={field.label}>
+        <div className="flex flex-wrap gap-3">
+          {(field.options ?? []).map((option) => (
+            <label key={option} className="flex items-center gap-2 rounded-xl border border-slate-200 px-4 py-3 text-sm dark:border-slate-700">
+              <input type="checkbox" name={field.name} value={option} defaultChecked={defaultValues.includes(option)} />
+              {option}
+            </label>
+          ))}
+        </div>
+      </Field>
+    );
+  }
 
   if (field.type === 'textarea') {
     return (
@@ -334,7 +369,7 @@ function FieldRenderer({ field }: { field: RobotSchemaField }) {
     return (
       <Field className={className} label={field.label}>
         <label className="flex items-center gap-3 rounded-xl border border-slate-200 px-4 py-3 text-sm dark:border-slate-700">
-          <input type="checkbox" name={field.name} />
+          <input type="checkbox" name={field.name} defaultChecked={field.defaultValue === 'true'} />
           Ativar
         </label>
       </Field>

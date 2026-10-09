@@ -7,7 +7,7 @@ APP_DIR="/opt/automation-hub"
 DB_USER="hub"
 DB_PASS="hub_prod_$(openssl rand -hex 8)"
 DB_NAME="hub"
-REPO="https://github.com/InovController/automation-hub.git"
+REPO="https://github.com/Controller-Desenvolvimento/automation-hub.git"
 
 echo "=============================="
 echo " Automation Hub - Setup Oracle"

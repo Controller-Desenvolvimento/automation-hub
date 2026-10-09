@@ -9,6 +9,7 @@ import {
   UseInterceptors,
 } from '@nestjs/common';
 import { AnyFilesInterceptor } from '@nestjs/platform-express';
+import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import type { Request } from 'express';
 import { AuthService } from '../auth/auth.service';
 import { isAdmin } from '../shared/access';
@@ -24,6 +25,8 @@ type UploadedFile = {
   path?: string;
 };
 
+@ApiTags('Execuções')
+@ApiBearerAuth()
 @Controller('executions')
 export class ExecutionsController {
   constructor(
@@ -36,6 +39,12 @@ export class ExecutionsController {
   async listExecutions(@Req() request: Request) {
     const user = await this.authService.requireUser(request);
     return this.executionsService.listExecutions(user);
+  }
+
+  @Get('results')
+  async listResults(@Req() request: Request) {
+    const user = await this.authService.requireUser(request);
+    return this.executionsService.listResults(user);
   }
 
   @Get(':id')

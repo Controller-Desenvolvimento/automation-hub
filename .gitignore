@@ -33,3 +33,9 @@ apps/api/data/
 
 # Claude
 .claude/
+
+# Notas internas (caminhos/IPs da VM, dados de clientes) - nao publicar
+PROMPT_NOVO_DASHBOARD.md
+LOGIN_ATHENAS_REFERENCIA.md
+relatorio-bug-pgfn-veri.md
+CLAUDE.local.md

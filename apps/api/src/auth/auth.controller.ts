@@ -1,4 +1,5 @@
-import { Body, Controller, Get, HttpException, Post, Query, Req, UnauthorizedException } from '@nestjs/common';
+import { Body, Controller, Get, HttpException, Patch, Post, Query, Req, UnauthorizedException } from '@nestjs/common';
+import { ApiTags } from '@nestjs/swagger';
 import type { Request } from 'express';
 import { effectiveRole } from '../shared/access';
 import { AuthService } from './auth.service';
@@ -31,6 +32,7 @@ function checkRateLimit(ip: string): boolean {
   return true;
 }
 
+@ApiTags('Autenticação')
 @Controller('auth')
 export class AuthController {
   constructor(private readonly authService: AuthService) {}
@@ -71,7 +73,14 @@ export class AuthController {
       email: user.email,
       role: effectiveRole(user),
       departments: user.departments,
+      mascotSkin: user.mascotSkin,
     };
+  }
+
+  @Patch('mascot-skin')
+  async updateMascotSkin(@Req() request: Request, @Body() body: { skin?: string }) {
+    const user = await this.authService.requireUser(request);
+    return this.authService.updateMascotSkin(user.id, body?.skin);
   }
 
   @Post('logout')

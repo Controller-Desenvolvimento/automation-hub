@@ -1,4 +1,5 @@
 import {
+  type Dashboard,
   type Execution,
   Prisma,
   type Robot,
@@ -10,6 +11,7 @@ import {
 type MinimalUser = Pick<User, 'id' | 'role' | 'departments'>;
 type MinimalRobot = Pick<Robot, 'allowedDepartments'>;
 type MinimalSite = Pick<Site, 'allowedDepartments' | 'minRole'>;
+type MinimalDashboard = Pick<Dashboard, 'allowedDepartments' | 'minRole' | 'allowedUserIds'>;
 type MinimalExecution = Pick<Execution, 'userId' | 'scheduledTaskId'> & {
   user?: Pick<User, 'departments'> | null;
 };
@@ -54,6 +56,24 @@ export function canAccessSite(user: MinimalUser, site: MinimalSite) {
   if (site.allowedDepartments.length === 0) return true;
 
   return site.allowedDepartments.some((department) =>
+    user.departments.includes(department),
+  );
+}
+
+export function canAccessDashboard(user: MinimalUser, dashboard: MinimalDashboard) {
+  if (isAdmin(user)) return true;
+
+  // Lista de usuários específicos é um modo alternativo — quando preenchida,
+  // hierarquia/departamento deixam de valer para esse painel.
+  if (dashboard.allowedUserIds.length > 0) {
+    return dashboard.allowedUserIds.includes(user.id);
+  }
+
+  if (dashboard.minRole === UserRole.manager && !isManager(user)) return false;
+
+  if (dashboard.allowedDepartments.length === 0) return true;
+
+  return dashboard.allowedDepartments.some((department) =>
     user.departments.includes(department),
   );
 }

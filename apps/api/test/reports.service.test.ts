@@ -10,6 +10,8 @@ const admin = {
   departments: [],
 };
 
+const NOW = new Date('2026-10-05T15:00:00.000Z');
+
 function externalExecution(id: string, login: string) {
   const now = new Date('2026-07-22T12:00:00.000Z');
   return {
@@ -22,7 +24,7 @@ function externalExecution(id: string, login: string) {
     unitsProcessed: null,
     manualEstimatedSeconds: 600,
     requestedByName: login,
-    requestedByEmail: null,
+    requestedByEmail: null as string | null,
     robot: {
       name: 'Robo externo',
       unitLabel: 'item',
@@ -43,9 +45,9 @@ function createService(
     departments: string[];
   }> = [],
   athenasNames: Record<string, string> = {},
+  options: { firstDataAt?: Date } = {},
 ) {
-  let executionQuery: Record<string, unknown> | undefined;
-  let page = 0;
+  const queries: Array<Record<string, unknown>> = [];
   const prisma = {
     scheduledTask: { findMany: async () => [] },
     user: { findMany: async () => users },
@@ -59,15 +61,23 @@ function createService(
     },
     execution: {
       findMany: async (query: Record<string, unknown>) => {
-        executionQuery = query;
-        return page++ === 0 ? executions : [];
+        queries.push(query);
+        return query.cursor ? [] : executions;
       },
+      findFirst: async () =>
+        options.firstDataAt
+          ? { finishedAt: options.firstDataAt, createdAt: options.firstDataAt }
+          : null,
     },
+    externalMetric: { findMany: async () => [], findFirst: async () => null },
   };
 
+  const service = new ReportsService(prisma as never);
+  service.clock = () => NOW;
+
   return {
-    service: new ReportsService(prisma as never),
-    getExecutionQuery: () => executionQuery,
+    service,
+    getExecutionQuery: () => queries[0],
   };
 }
 
@@ -128,17 +138,25 @@ test('traduz o filtro virtual externo para o login recebido pela API', async () 
   ]);
 
   await service.getTimeSavingsReport(admin as never, {
-    userId: 'external:maria.silva',
+    userIds: ['external:maria.silva'],
   });
 
   assert.deepEqual(getExecutionQuery()?.where, {
-    status: ExecutionStatus.success,
     AND: [
-      { userId: null },
+      { status: ExecutionStatus.success },
       {
         OR: [
-          { requestedByName: { equals: 'maria.silva', mode: 'insensitive' } },
-          { requestedByEmail: { equals: 'maria.silva', mode: 'insensitive' } },
+          {
+            AND: [
+              { userId: null },
+              {
+                OR: [
+                  { requestedByName: { equals: 'maria.silva', mode: 'insensitive' } },
+                  { requestedByEmail: { equals: 'maria.silva', mode: 'insensitive' } },
+                ],
+              },
+            ],
+          },
         ],
       },
     ],
@@ -163,7 +181,8 @@ test('atribui execucoes externas antigas pelo login Athenas do usuario', async (
   assert.deepEqual(report.byUser.map((item) => [item.userId, item.userName]), [
     [witney.id, witney.name],
   ]);
-  assert.equal(report.executions[0].userId, witney.id);
+  const details = await service.getTimeSavingsExecutions(admin as never, {});
+  assert.equal(details.items[0].userId, witney.id);
   assert.equal(report.byDepartment[0].department, 'contabil');
 });
 
@@ -180,23 +199,31 @@ test('filtro de usuario inclui execucoes externas antigas pelo login Athenas', a
     [witney],
   );
 
-  await service.getTimeSavingsReport(admin as never, { userId: witney.id });
+  await service.getTimeSavingsReport(admin as never, { userIds: [witney.id] });
 
   assert.deepEqual(getExecutionQuery()?.where, {
-    status: ExecutionStatus.success,
     AND: [
+      { status: ExecutionStatus.success },
       {
         OR: [
-          { userId: witney.id },
           {
             AND: [
-              { userId: null },
               {
                 OR: [
-                  { requestedByName: { equals: witney.athenasLogin, mode: 'insensitive' } },
-                  { requestedByEmail: { equals: witney.athenasLogin, mode: 'insensitive' } },
-                  { requestedByName: { equals: witney.email, mode: 'insensitive' } },
-                  { requestedByEmail: { equals: witney.email, mode: 'insensitive' } },
+                  { userId: witney.id },
+                  {
+                    AND: [
+                      { userId: null },
+                      {
+                        OR: [
+                          { requestedByName: { equals: witney.athenasLogin, mode: 'insensitive' } },
+                          { requestedByEmail: { equals: witney.athenasLogin, mode: 'insensitive' } },
+                          { requestedByName: { equals: witney.email, mode: 'insensitive' } },
+                          { requestedByEmail: { equals: witney.email, mode: 'insensitive' } },
+                        ],
+                      },
+                    ],
+                  },
                 ],
               },
             ],
@@ -207,7 +234,7 @@ test('filtro de usuario inclui execucoes externas antigas pelo login Athenas', a
   });
 });
 
-test('filtro de data cobre o dia inteiro no horario de Sao Paulo', async () => {
+test('filtro de data cobre o dia inteiro (e o periodo anterior) no horario de Sao Paulo', async () => {
   const { service, getExecutionQuery } = createService([
     externalExecution('execution-evening', 'WITNEY.DECON'),
   ]);
@@ -218,22 +245,26 @@ test('filtro de data cobre o dia inteiro no horario de Sao Paulo', async () => {
   });
 
   assert.deepEqual(getExecutionQuery()?.where, {
-    status: ExecutionStatus.success,
-    OR: [
+    AND: [
+      { status: ExecutionStatus.success },
       {
-        finishedAt: {
-          gte: new Date('2026-07-22T03:00:00.000Z'),
-          lte: new Date('2026-07-23T02:59:59.999Z'),
-        },
-      },
-      {
-        AND: [
-          { finishedAt: null },
+        OR: [
           {
-            createdAt: {
-              gte: new Date('2026-07-22T03:00:00.000Z'),
+            finishedAt: {
+              gte: new Date('2026-07-21T03:00:00.000Z'),
               lte: new Date('2026-07-23T02:59:59.999Z'),
             },
+          },
+          {
+            AND: [
+              { finishedAt: null },
+              {
+                createdAt: {
+                  gte: new Date('2026-07-21T03:00:00.000Z'),
+                  lte: new Date('2026-07-23T02:59:59.999Z'),
+                },
+              },
+            ],
           },
         ],
       },

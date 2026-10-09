@@ -9,5 +9,6 @@ import { AutomationRequestsService } from './automation-requests.service';
   imports: [PrismaModule, AuthModule, NotificationsModule],
   controllers: [AutomationRequestsController],
   providers: [AutomationRequestsService],
+  exports: [AutomationRequestsService],
 })
 export class AutomationRequestsModule {}

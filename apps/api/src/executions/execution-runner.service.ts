@@ -7,6 +7,7 @@ import AdmZip from 'adm-zip';
 import { fileURLToPath } from 'node:url';
 import { ExecutionStatus } from '@prisma/client';
 import { ExecutionsService } from './executions.service';
+import { findStalledExecutions, getStallTimeoutMs, stallMessage } from './stall-watchdog';
 import { NotificationsService } from '../notifications/notifications.service';
 import { listFilesRecursively, sanitizeFileName, toUserFileName } from '../shared/files';
 import {
@@ -24,6 +25,9 @@ import {
 type RunningProcess = {
   child: ReturnType<typeof spawn>;
   metrics: Record<string, number>;
+  // Última vez que o robô escreveu algo em stdout/stderr — base do watchdog
+  // de travamento (em memória de propósito: não depende de relógio do banco).
+  lastActivityAt: number;
 };
 
 @Injectable()
@@ -31,6 +35,9 @@ export class ExecutionRunnerService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(ExecutionRunnerService.name);
   private readonly runningProcesses = new Map<string, RunningProcess>();
   private readonly stoppedExecutions = new Set<string>();
+  // Execuções que o watchdog encerrou por falta de atividade → mensagem que
+  // vira o motivo do erro (em vez do genérico "Comando finalizado com codigo").
+  private readonly stalledExecutions = new Map<string, string>();
   private timer?: NodeJS.Timeout;
   private isProcessingQueue = false;
 
@@ -41,10 +48,67 @@ export class ExecutionRunnerService implements OnModuleInit, OnModuleDestroy {
 
   async onModuleInit() {
     await ensureStorageRoot();
+    await this.reconcileOrphanedExecutions();
     await this.processQueue();
     this.timer = setInterval(() => {
       void this.processQueue();
+      void this.cancelStalledExecutions().catch((error) => {
+        this.logger.error(`Watchdog de travamento falhou: ${String(error)}`);
+      });
     }, 3000);
+  }
+
+  // Robôs (ex.: Excel via COM) às vezes travam sem sair nem escrever nada, e a
+  // execução ficaria "running" pra sempre ocupando a vaga do robô. Se passar
+  // EXECUTION_STALL_TIMEOUT_MINUTES (padrão 45, 0 = desligado) sem NENHUMA
+  // saída, encerra a árvore de processos; o fluxo normal de erro do
+  // runExecution marca a execução como erro com a mensagem do travamento.
+  private async cancelStalledExecutions() {
+    const timeoutMs = getStallTimeoutMs();
+    const candidates = Array.from(this.runningProcesses.entries())
+      .filter(([executionId]) => !this.stalledExecutions.has(executionId) && !this.stoppedExecutions.has(executionId))
+      .map(([executionId, running]) => ({ executionId, lastActivityAt: running.lastActivityAt }));
+
+    for (const { executionId, idleMinutes } of findStalledExecutions(candidates, Date.now(), timeoutMs)) {
+      const running = this.runningProcesses.get(executionId);
+      if (!running) continue;
+
+      this.stalledExecutions.set(executionId, stallMessage(idleMinutes));
+      this.logger.warn(`Execucao ${executionId} sem atividade ha ${idleMinutes} min — encerrando por travamento (pid=${running.child.pid}).`);
+      await terminateProcessTree(running.child.pid);
+      // Garante que o evento 'close' dispare mesmo com netos ainda vivos.
+      running.child.stdout?.destroy();
+      running.child.stderr?.destroy();
+    }
+  }
+
+  // Ao reiniciar (deploy, crash), onModuleDestroy mata a árvore de processos
+  // de qualquer execução em andamento, mas o Map de processos em memória
+  // nasce vazio no boot seguinte — nada nunca mais atualiza essas linhas, que
+  // ficam com status "running" pra sempre e bloqueiam a vaga de
+  // maxConcurrency do robô indefinidamente. Aqui a gente resolve isso assim
+  // que o servidor volta: recupera os arquivos de saída que já tiverem sido
+  // gravados em disco (o robô pode ter salvado boa parte do trabalho antes de
+  // ser encerrado) e marca a execução como erro, deixando claro o motivo.
+  private async reconcileOrphanedExecutions() {
+    const orphans = await this.executionsService.findRunningOrphans();
+    for (const execution of orphans) {
+      this.logger.warn(
+        `Execucao orfa apos reinicio: ${execution.id} (${execution.robot.name}) estava "running" — recuperando arquivos e marcando como erro.`,
+      );
+      try {
+        await this.zipOutputDirectory(execution.id);
+        const registered = await this.registerOutputFiles(execution.id);
+        this.logger.log(`registerOutputFiles (reconciliacao): ${registered.length} arquivo(s) registrado(s) para execucao ${execution.id}`);
+      } catch (regError) {
+        this.logger.error(`registerOutputFiles (reconciliacao) falhou para execucao ${execution.id}: ${String(regError)}`);
+      }
+
+      const message = 'Execução interrompida: o servidor do Hub foi reiniciado enquanto esta automação rodava. Se o robô salva progresso incrementalmente, os arquivos de saída já gerados foram recuperados — confira antes de reiniciar do zero.';
+      await this.executionsService.markAsError(execution.id, message);
+      await this.executionsService.log(execution.id, 'error', message);
+      await this.maybeNotify(execution.id, execution.robot.name, 'error');
+    }
   }
 
   onModuleDestroy() {
@@ -257,7 +321,9 @@ export class ExecutionRunnerService implements OnModuleInit, OnModuleDestroy {
       await this.executionsService.log(execution.id, 'info', 'Execucao finalizada com sucesso.');
       await this.maybeNotify(execution.id, execution.robot.name, 'success');
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Falha inesperada durante a execucao';
+      const message =
+        this.stalledExecutions.get(execution.id) ??
+        (error instanceof Error ? error.message : 'Falha inesperada durante a execucao');
       const current = await this.executionsService.getExecution(execution.id);
 
       try {
@@ -276,6 +342,7 @@ export class ExecutionRunnerService implements OnModuleInit, OnModuleDestroy {
     } finally {
       this.runningProcesses.delete(execution.id);
       this.stoppedExecutions.delete(execution.id);
+      this.stalledExecutions.delete(execution.id);
       void this.processQueue();
     }
   }
@@ -346,7 +413,12 @@ export class ExecutionRunnerService implements OnModuleInit, OnModuleDestroy {
       },
     });
 
-    this.runningProcesses.set(executionId, { child, metrics: {} });
+    this.runningProcesses.set(executionId, { child, metrics: {}, lastActivityAt: Date.now() });
+
+    const markActivity = () => {
+      const running = this.runningProcesses.get(executionId);
+      if (running) running.lastActivityAt = Date.now();
+    };
 
     const stdoutReader = createLineReader(async (line) => {
       await this.handleProcessLine(executionId, line, 'info');
@@ -356,10 +428,12 @@ export class ExecutionRunnerService implements OnModuleInit, OnModuleDestroy {
     });
 
     child.stdout.on('data', (chunk) => {
+      markActivity();
       stdoutReader.push(chunk.toString());
     });
 
     child.stderr.on('data', (chunk) => {
+      markActivity();
       stderrReader.push(chunk.toString());
     });
 
@@ -402,8 +476,14 @@ export class ExecutionRunnerService implements OnModuleInit, OnModuleDestroy {
 
     const zip = new AdmZip();
     for (const file of files) {
-      const name = file.split(/[\\/]/).pop() ?? 'arquivo';
-      zip.addLocalFile(file, '', name);
+      // Preserva a estrutura de subpastas do robo dentro do zip (ex:
+      // site/empresa/arquivo.pdf) - sem isso tudo ia pra raiz do zip e
+      // arquivos com o mesmo nome de empresas diferentes se sobrescreviam.
+      const relativePath = relative(outDir, file).replaceAll('\\', '/');
+      const lastSlash = relativePath.lastIndexOf('/');
+      const zipFolder = lastSlash === -1 ? '' : relativePath.slice(0, lastSlash);
+      const name = lastSlash === -1 ? relativePath : relativePath.slice(lastSlash + 1);
+      zip.addLocalFile(file, zipFolder, name);
     }
     zip.writeZip(join(outDir, 'output.zip'));
 

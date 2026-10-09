@@ -5,6 +5,55 @@
     <link rel="icon" type="image/x-icon" href="/favicon.ico" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Automation HUB</title>
+    <script>
+      // F5 com um painel aberto (/sites?...&painel=<slug>): cobre a tela já no primeiro
+      // quadro, senão o menu e o cabeçalho do hub piscam até a página de Sites carregar.
+      // O React tira a cobertura quando a tela cheia do painel está montada
+      // (lib/boot-cover.ts); o timer é só uma segurança caso algo nunca a remova.
+      (function () {
+        try {
+          var url = new URL(window.location.href);
+          if (url.pathname !== '/sites' || !url.searchParams.get('painel')) return;
+          var dark = window.localStorage.getItem('automation-hub-theme') === 'dark';
+          // Mesma estrutura e medidas de components/panel-skeleton.tsx.
+          var bg = dark ? '#0a0a0b' : '#ffffff';
+          var line = dark ? '#2b2b31' : '#e2e8f0';
+          var block = dark ? '#1f1f24' : '#e8edf3';
+          var shape = dark ? '#2e2e35' : '#d9e1ea';
+          var pulse = 'animation:hub-pulse 2s cubic-bezier(.4,0,.6,1) infinite;';
+          var b = function (css) { return '<div style="' + pulse + 'background:' + block + ';border-radius:12px;' + css + '"></div>'; };
+          var s = function (css) { return '<div style="' + pulse + 'background:' + shape + ';border-radius:8px;' + css + '"></div>'; };
+          var itens = '', cards = '', i;
+          for (i = 0; i < 6; i++) itens += b('height:46px;');
+          for (i = 0; i < 4; i++) cards += b('height:88px;border-radius:16px;');
+          var cover = document.createElement('div');
+          cover.id = 'boot-cover';
+          cover.setAttribute('aria-hidden', 'true');
+          cover.style.cssText = 'position:fixed;inset:0;z-index:2147483647;display:flex;flex-direction:column;background:' + bg + ';';
+          cover.innerHTML =
+            '<style>@keyframes hub-pulse{50%{opacity:.5}}#boot-cover *{box-sizing:border-box}' +
+            '@media(max-width:767px){#boot-cover .hub-side{display:none!important}}' +
+            '@media(max-width:1279px){#boot-cover .hub-cards{grid-template-columns:repeat(2,minmax(0,1fr))!important}}</style>' +
+            '<div style="display:flex;align-items:center;gap:12px;height:49px;flex-shrink:0;padding:0 16px;border-bottom:1px solid ' + line + ';">' +
+              s('height:16px;width:224px;') + '<div style="flex:1"></div>' + s('height:24px;width:24px;') +
+            '</div>' +
+            '<div style="display:flex;flex:1;min-height:0;">' +
+              '<div class="hub-side" style="width:198px;flex-shrink:0;padding:12px;border-right:1px solid ' + line + ';">' +
+                b('height:72px;') +
+                '<div style="display:grid;gap:10px;padding-top:28px;">' + itens + '</div>' +
+              '</div>' +
+              '<div style="flex:1;min-width:0;padding:24px;overflow:hidden;display:grid;gap:20px;align-content:start;">' +
+                '<div style="display:grid;gap:8px;">' + s('height:28px;width:320px;max-width:100%;') + s('height:14px;width:112px;') + '</div>' +
+                '<div class="hub-cards" style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:16px;">' + cards + '</div>' +
+                b('height:360px;border-radius:16px;') +
+                b('height:160px;border-radius:16px;') +
+              '</div>' +
+            '</div>';
+          document.documentElement.appendChild(cover);
+          setTimeout(function () { cover.remove(); }, 20000);
+        } catch (e) { /* sem cobertura: só volta a piscar */ }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

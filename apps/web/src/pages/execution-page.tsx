@@ -87,7 +87,8 @@ export function ExecutionPage() {
   }
 
   const isLive = execution.status === 'queued' || execution.status === 'running';
-  const canRetry = execution.status === 'error' && user?.role === 'admin';
+  const canRetry =
+    (execution.status === 'error' || execution.status === 'canceled') && user?.role === 'admin';
   const outputFiles = execution.files.filter((file) => file.kind !== 'input');
   const inputFiles = execution.files.filter((file) => file.kind === 'input');
 

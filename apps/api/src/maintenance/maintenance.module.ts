@@ -5,5 +5,6 @@ import { RetentionService } from './retention.service';
 @Module({
   imports: [PrismaModule],
   providers: [RetentionService],
+  exports: [RetentionService],
 })
 export class MaintenanceModule {}

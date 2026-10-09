@@ -1,8 +1,11 @@
 import { Controller, Get, Param, Patch, Req } from '@nestjs/common';
+import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import type { Request } from 'express';
 import { AuthService } from '../auth/auth.service';
 import { NotificationsService } from './notifications.service';
 
+@ApiTags('Notificações')
+@ApiBearerAuth()
 @Controller('notifications')
 export class NotificationsController {
   constructor(

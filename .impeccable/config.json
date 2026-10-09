@@ -1,7 +1,13 @@
 {
   "detector": {
+    "ignoreRules": [],
     "ignoreFiles": [
-      "apps/api/src/mail/mail.service.ts"
-    ]
+      "apps/api/src/mail/mail.service.ts",
+      "X:/INOVAÇÃO/BI/bi_financeiro/static/*.html",
+      "X:/INOVAÇÃO/BI/bi_dre_contabil/frontend/index.html",
+      "X:/INOVAÇÃO/BI/bi_dre_contabil/frontend/app.js",
+      "X:/INOVAÇÃO/BI/BI_PERFORMANCE_FISCAL/static/*.html"
+    ],
+    "ignoreValues": []
   }
 }

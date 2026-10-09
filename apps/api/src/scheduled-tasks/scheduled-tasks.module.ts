@@ -10,5 +10,6 @@ import { ScheduledTasksService } from './scheduled-tasks.service';
   imports: [PrismaModule, AuthModule, ExecutionsModule],
   controllers: [ScheduledTasksController],
   providers: [ScheduledTasksService, ScheduledTasksSchedulerService],
+  exports: [ScheduledTasksService],
 })
 export class ScheduledTasksModule {}

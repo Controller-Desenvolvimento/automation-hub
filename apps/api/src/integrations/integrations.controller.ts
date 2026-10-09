@@ -1,6 +1,9 @@
 import { Body, Controller, Headers, Post, UnauthorizedException } from '@nestjs/common';
+import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { IntegrationsService } from './integrations.service';
 
+@ApiTags('Integrações (Robôs Externos)')
+@ApiBearerAuth()
 @Controller('integrations')
 export class IntegrationsController {
   constructor(private readonly integrationsService: IntegrationsService) {}

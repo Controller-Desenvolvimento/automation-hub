@@ -59,12 +59,19 @@ npm run build       # gerar dist/ para produção
 ## Variáveis de ambiente (`apps/api/.env`)
 
 ```
-DATABASE_URL=postgresql://hub:hub123@localhost:5433/hub?schema=public
+DATABASE_URL=postgresql://hub:<senha>@localhost:5433/hub?schema=public
 RUNNER_MAX_CONCURRENCY=2
 RUNNER_MEMORY_THRESHOLD_PERCENT=90
 ALLOWED_ORIGIN=http://localhost:5173
 PORT=3000  # opcional
+EXECUTION_RETENTION_DAYS=30  # retenção de arquivos/logs de execuções (0 = nunca limpar)
+EXECUTION_STALL_TIMEOUT_MINUTES=45  # watchdog: cancela como erro uma execução sem NENHUMA saída (stdout/stderr) por esse tempo (0 = desligado)
 ```
+
+Relatório "Tempo ganho" (todas opcionais, valores padrão entre parênteses; ver `apps/api/src/reports/time-savings-metrics.ts`):
+`TIME_SAVINGS_WORKDAY_HOURS` (7, jornada do FTE), `TIME_SAVINGS_OUTLIER_PERCENTILE` (99), `TIME_SAVINGS_OUTLIER_MIN_SAMPLE` (20),
+`TIME_SAVINGS_OUTLIER_MIN_MULTIPLE` (5, × mediana), `TIME_SAVINGS_RUN_RATE_WINDOW_DAYS` (90), `TIME_SAVINGS_RUN_RATE_MIN_DAYS` (28),
+`TIME_SAVINGS_RUN_RATE_MIN_ACTIVE_DAYS` (10).
 
 ## Banco de dados
 
@@ -188,6 +195,13 @@ GET  /storage/*               # arquivos estáticos (requer autenticação)
 - **Logs** não são carregados na listagem de execuções — apenas no detalhe individual
 - `terminateProcessTree` usa `taskkill` no Windows e `process.kill(-pid)` no Linux/Mac
 - O frontend em produção é servido pelo próprio NestJS a partir de `apps/web/dist`
+- **Retenção:** `RetentionService` (`src/maintenance/`) roda a cada 6h e apaga arquivos (`storage/executions/<id>/`) e `ExecutionLog` de execuções finalizadas há mais de `EXECUTION_RETENTION_DAYS` dias (marca `Execution.cleanedAt`; a linha da execução permanece para relatórios). Também purga sessões expiradas.
+- **Uploads** têm limite de 50MB por arquivo e 15 arquivos por request (`shared/upload.ts`) — memory storage do multer sem limite derrubaria a RAM da VM
+- **`/storage`** valida sessão E autorização por recurso (`shared/storage-access.ts`): execuções seguem `canAccessExecution`, exemplos seguem `canAccessRobot`, scripts/pip são admin-only
+- **Chat do hub × chat de IA dos painéis:** um BI (Site `category=bi`) pode ter `Site.linkedDashboardId` apontando pra um painel (Dashboard `type=server`, com `POST /chatkit` próprio). Quando o usuário abre esse BI em "Ver", o chat do hub manda as perguntas direto ao `/chatkit` do painel (`site-chat/bi-chat-bridge.service.ts`; tradução dos eventos em `chatkit-events.ts`, testada em `test/chatkit-events.test.ts`), sem passar por modelo do hub (custo = o do chat do painel). A conversa continua pelo `thread_id` (em memória, 30 min). Exige acesso ao Site (`canAccessSite`) E ao Dashboard (`canAccessDashboard`); sem vínculo/permissão cai no chat normal. Não conhece os filtros que o usuário escolheu no Power BI (só os dados do painel). **Desligar:** desvincular o BI em Sites → editar → "Chat de IA (painel vinculado)", ou `BI_CHAT_BRIDGE_ENABLED=false` no `.env` + reiniciar. Vinculados hoje (2026-10-08): Performance Pessoal → BI PERFORMANCE PESSOAL; Controle de Processos Seletivos RH → BI RH; Indicadores Fiscal → BI INDICADORES FISCAL (painel só para `inovacao`: gestores de fiscal caem no chat normal até esse painel liberar `fiscal`); Performance Comercial → DASHBOARD PERFORMANCE DEPARTAMENTO COMERCIAL; Performance Contábil → BI PERFORMANCE CONTÁBIL; Performance Fiscal → BI PERFORMANCE FISCAL; TOPCERT → TOPCERT. Sem vínculo: Balanços e DRE Contábil (o painel BI DRE Contábil ainda não tem `/chatkit`), Performance Selo, Performance Geral e Relatório Departamento Pessoal (sem painel equivalente confirmado; o BI Financeiro usa marcação `.f` nos filtros, que o leitor `.campo-filtro` do hub não enxerga).
+- **Painel em tela cheia com chat do hub:** na aba Painéis de Sites, o botão "Abrir" (único botão do painel) abre o painel num iframe em tela cheia (`components/dashboard-viewer.tsx`, mesma origem do hub, via `/d/<slug>/`), sem botão de abrir em nova aba. O painel aberto mora na URL (`/sites?tab=paineis&painel=<slug>`): F5 mantém o painel, o voltar do navegador fecha e o avançar reabre; link direto também funciona (slug inexistente/sem acesso limpa o parâmetro). A aba interna do painel (Colaborador, Cliente, Tarefas...) também mora na URL (`&pagina=static/tarefas.html`, atualizada com `replace` a cada página carregada no iframe, validada em `lib/panel-path.ts`), então o F5 reabre na mesma aba; ao abrir numa página interna o visualizador "aquece" o login pela raiz do painel (`?t=` não funciona em caminho de arquivo: o hub redireciona para `.../arquivo.html/`) e só então abre o caminho direto. Os cliques no menu do próprio painel viram `location.replace` (não entram no histórico do navegador), e abrir de novo começa na página inicial. Para o F5 não piscar o menu do hub, o `index.html` cria uma cobertura `#boot-cover` (skeleton, mesma estrutura/medidas de `components/panel-skeleton.tsx` — mexeu num, ajuste o outro) antes do React quando a URL é `/sites?...&painel=`; `lib/boot-cover.ts` a remove quando a tela cheia do painel está montada (`sites-page.tsx`), no login (`app.tsx`) ou após 20s (segurança). Painéis do tipo `server` registram o escopo `{ dashboardId, getScreenContext }` no chat do hub; a cada pergunta o navegador lê a página + filtros do iframe (`lib/panel-screen-context.ts`, mesma lógica do `coletarContextoTela()` do `theme.js` dos painéis: `.campo-filtro`, `_obterSelecionados()`), sanitiza no servidor (`site-chat/screen-context.ts`) e a ponte repassa ao `POST /chatkit?contexto=…` do painel. O chat próprio do painel continua dentro do iframe (o robô do hub fica no mesmo canto de sempre, padronizado). **Conversas separadas:** `SiteChatMessage.scope` = `hub` (chat do hub) ou `dash:<id do painel>` (conversa com o assistente daquele painel; o BI vinculado e o próprio painel compartilham a mesma, pois falam com o mesmo assistente). Histórico, "Limpar conversa" e o contexto do modelo do hub são por escopo (`site-chat/conversation-scope.ts`; `GET/DELETE /site-chat/messages?scope=`); o widget recarrega o histórico ao entrar/sair de um painel. Observação: o painel leva alguns segundos após o último texto para fechar o stream (grava logs/métricas dele), então o evento `done` chega depois do texto aparecer. Painéis novos só precisam da rota `/chatkit` (protocolo ChatKit, `?contexto={pagina,filtros}`) e da mesma estrutura de filtros; outra estrutura = filtros vazios (não quebra).
+- **Registro** cria contas com `isActive: false` — um admin precisa ativar em `/settings` antes do primeiro login (o primeiro usuário do sistema continua virando admin ativo)
+- **Priority** de execução só é aceito de admins (empregados não furam a fila)
 
 ## Integração de novos robôs
 
@@ -203,122 +217,15 @@ Veja o exemplo em `integrations/bot-sintegra-ce/` para referência Python.
 
 ## Infraestrutura e Deploy
 
+Detalhes de infraestrutura (VM de produção, IIS/ARR, HTTPS, Oracle Cloud, IPs, credenciais de dev e comandos de deploy)
+ficam em `CLAUDE.local.md`, que é **ignorado pelo git** (repositório público) e lido automaticamente pelo Claude Code
+nesta máquina. Não copie esses dados para arquivos versionados.
+
 ### Repositório GitHub
-- **URL:** https://github.com/InovController/automation-hub
-- **Organização:** InovController (conta da Controller-RNC)
-- **Visibilidade:** público
+- **URL:** https://github.com/Controller-Desenvolvimento/automation-hub (público)
+- **Organização:** Controller-Desenvolvimento (membros: davi-baptista, InovController e outros)
 - **Branch principal:** `master`
-
-### Autenticação GitHub
-- Autenticado via **GitHub CLI (`gh`)** com a conta `InovController`
-- Para verificar: `gh auth status`
-- Para listar repos: `gh repo list`
-
-### Git — situação importante
-O repositório git local foi inicializado **dentro da pasta `automation-hub/`** (não na raiz do disco).
-- Caminho correto do `.git`: `automation-hub/.git`
-- Anteriormente havia um `.git` aninhado em `apps/api/` que foi removido
-- O `.gitignore` exclui: `node_modules/`, `.env`, `dist/`, `apps/api/data/`, `.claude/`, `tmp/`, `logs/`
-
-### Deploy — Oracle Cloud Free Tier (migração em andamento)
-
-**Decisão (2026-06-26):** Migrar do Railway ($5/mês) para Oracle Cloud Free Tier (gratuito para sempre).
-
-#### Por que Oracle Cloud e não outras alternativas
-- **Render free:** dorme após 15min de inatividade — mata o queue runner de 3s
-- **Fly.io free:** 256MB RAM — insuficiente para Chrome/Playwright
-- **Oracle Cloud:** VM ARM com até 24GB RAM, sempre ligada, genuinamente gratuita para sempre
-- O app precisa de servidor persistente (spawn de processos Python + Chrome)
-
-#### Conta Oracle Cloud — configuração feita
-- **Conta:** inovacao01@controller-rnc.com.br
-- **Região home:** sa-saopaulo-1 (Brazil East — São Paulo)
-- **VCN criada:** `automation-hub-vcn`
-  - Public subnet: `public subnet-automation-hub-vcn`
-  - Subnet OCID: `ocid1.subnet.oc1.sa-saopaulo-1.aaaaaaaaqp7jwln2pbnzqq2icesaaxsivhvtbmrlwhkcmejq74mbbbm325ga`
-- **Tipo de autenticação:** IDCS federado — API key não funciona, usar sempre `oci session authenticate`
-- **OCI CLI instalado em:** `C:\Users\davi.inov\AppData\Roaming\Python\Python313\Scripts\oci.exe`
-- **Config OCI:** `C:\Users\davi.inov\.oci\config` (perfil: `automation-hub`, auth: security_token)
-- **Chave SSH da VM:** `C:\Users\davi.inov\Downloads\ssh-key-2026-06-26.key` (privada) e `.key (1).pub` (pública)
-
-#### Status atual (2026-06-29): aguardando capacidade ARM — possível mudança de plano
-A VM ainda não foi criada — região São Paulo está sem slots disponíveis para `VM.Standard.A1.Flex`.
-Script de retry em `infra/retry-create-instance.ps1` precisa ser rodado manualmente quando necessário (token expira em 1h).
-**Alternativa sendo avaliada:** usar a VM Windows da própria empresa (ver seção abaixo).
-
-**VM alvo:**
-- Shape: `VM.Standard.A1.Flex` — 2 OCPUs, 12GB RAM
-- Imagem: Ubuntu 22.04 ARM (`ocid1.image.oc1.sa-saopaulo-1.aaaaaaaaemf52b7af7ncncxz6pdc6hrlkdmylvwejfzpwnpbuhlfxwhrno6a`)
-- Availability Domain: `Dvuk:SA-SAOPAULO-1-AD-1`
-- Tenancy/Compartment OCID: `ocid1.tenancy.oc1..aaaaaaaayxffp5rs7fca7efucwrxxf4hxtwmlzeqr26by42pmwwiitgp7qnq`
-
-#### Scripts criados em `infra/`
-| Arquivo | Descrição |
-|---|---|
-| `infra/setup.sh` | Roda 1x na VM após criação: instala Node.js, Python, PostgreSQL, Chromium, cria .env, builda o app, instala systemd service |
-| `infra/deploy.sh` | Roda a cada deploy (GitHub Actions): pull, build, migrate, restart |
-| `infra/automation-hub.service` | Serviço systemd que mantém o app rodando |
-| `infra/sudoers-automation-hub` | Permite restart do serviço sem senha (necessário para deploy automático) |
-| `infra/retry-create-instance.ps1` | Script PowerShell que fica tentando criar a VM até conseguir, com renovação automática de token e desligamento do PC ao terminar |
-| `.github/workflows/deploy.yml` | GitHub Actions: deploy automático a cada push na master via SSH |
-
-#### Como retomar quando a VM for criada
-Quando o script conseguir criar a VM, ele:
-1. Mostra um popup com o IP público
-2. Salva o IP em `C:\Users\davi.inov\Desktop\oracle-vm-ip.txt`
-3. Desliga o PC (pode cancelar com `shutdown /a`)
-
-Com o IP em mãos, rodar o setup na VM:
-```bash
-ssh -i "Downloads\ssh-key-2026-06-26.key" ubuntu@SEU_IP
-bash <(curl -s https://raw.githubusercontent.com/InovController/automation-hub/master/infra/setup.sh)
-```
-
-Depois configurar os 3 secrets no GitHub (Settings → Secrets → Actions):
-- `SSH_HOST` → IP da VM
-- `SSH_USER` → `ubuntu`
-- `SSH_KEY` → conteúdo do arquivo `.key` (chave privada)
-
-#### Como rodar o script de retry manualmente
-Se o script tiver parado (PC reiniciou, etc.):
-```powershell
-# 1. Renovar token (abre browser)
-oci session authenticate --region sa-saopaulo-1 --profile automation-hub
-
-# 2. Rodar o script
-Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
-& "C:\Users\davi.inov\Documents\automation-hub\infra\retry-create-instance.ps1"
-```
-
-#### Nota importante sobre autenticação Oracle
-A conta usa **IDCS (Identity Cloud Service)** — autenticação por API key não funciona.
-Sempre usar `--auth security_token --profile automation-hub` nos comandos OCI CLI.
-O token dura 1h mas o script renova automaticamente a cada 50min via `oci session refresh`.
-
----
-
-### Deploy — VM Windows da empresa (alternativa principal a partir de 2026-06-29)
-
-**Contexto:** Oracle Cloud com capacidade indisponível + Railway custa $5/mês → avaliar uso da VM Windows interna da empresa.
-
-**O que se sabe da VM:**
-- Windows Server, acesso via Remote Desktop (RDP)
-- RAM: 6.3GB total, 4.4GB em uso (~1.9GB livre) — pode ser limitado para Chrome/Playwright
-- Já tem outros sites rodando (porta 80/443 ocupada por outro servidor web)
-- Domínio disponível: provavelmente algo como `hub.controller-rnc.com.br`
-- Gerenciada pelo próprio Davi (acesso total)
-
-**Plano de deploy para Windows:**
-- NestJS como serviço Windows via PM2
-- PostgreSQL para Windows (ou usar instância já existente na VM)
-- IIS ou Nginx como reverse proxy para o subdomínio → porta 3000
-- Deploy via GitHub Actions + SSH/WinRM
-
-**Status:** a ser configurado — clonar o repo na VM e abrir Claude Code lá para inspecionar o ambiente e configurar tudo.
-
----
-
-### Deploy — Railway *(descartado)*
-- Custo: $5/mês — substituído por alternativas gratuitas
-- Arquivo de configuração legado: `railway.json` na raiz
-- A `DATABASE_URL` muda entre dev e prod — nunca commitar o `.env` real
+- Push pela conta `davi-baptista` (`gh auth status`); autor dos commits: Davi Baptista.
+- Robôs: repositório privado `Controller-Desenvolvimento/hub-robots` (clonado em `ROBOTS_REPO_DIR`).
+- O `.gitignore` exclui: `node_modules/`, `.env*`, `dist/`, `apps/api/data/`, `.claude/`, `tmp/`, `logs/`, `CLAUDE.local.md` e notas internas.
+- Produção: VM Windows da empresa com PM2 (`automation-hub`) atrás de IIS/ARR; deploy manual = `git pull`, `npm run build` em `apps/web` e `apps/api`, `pm2 restart automation-hub`.

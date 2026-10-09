@@ -1,5 +1,6 @@
 import { BadRequestException, Body, Controller, Delete, Get, NotFoundException, Param, Post, Req, Res, UploadedFiles, UseInterceptors } from '@nestjs/common';
 import { AnyFilesInterceptor } from '@nestjs/platform-express';
+import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { SiteCategory, UserRole } from '@prisma/client';
 import type { Request, Response } from 'express';
 import { normalizeDepartments } from '../shared/access';
@@ -15,6 +16,8 @@ type UploadedFile = {
   buffer?: Buffer;
 };
 
+@ApiTags('Sites e BI')
+@ApiBearerAuth()
 @Controller('sites')
 export class SitesController {
   constructor(
@@ -67,6 +70,13 @@ export class SitesController {
         : [],
       powerbiShowRefresh: body.powerbiShowRefresh !== false && body.powerbiShowRefresh !== 'false',
       ssoEnabled: body.ssoEnabled === true || body.ssoEnabled === 'true',
+      // undefined = não veio no corpo: o vínculo existente é preservado.
+      linkedDashboardId:
+        typeof body.linkedDashboardId === 'string'
+          ? body.linkedDashboardId.trim() || null
+          : body.linkedDashboardId === null
+            ? null
+            : undefined,
     });
   }
 

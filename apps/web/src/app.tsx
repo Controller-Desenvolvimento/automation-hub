@@ -1,10 +1,12 @@
 import { lazy, Suspense, useEffect } from 'react';
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
 import { AppShell } from './components/app-shell';
+import { ChatScopeProvider } from './contexts/chat-scope-context';
 import { ToastViewport } from './components/toast';
 import { AuthProvider, useAuth } from './contexts/auth-context';
 import { HubProvider, useHub } from './contexts/hub-context';
 import { ThemeProvider } from './contexts/theme-context';
+import { removeBootCover } from './lib/boot-cover';
 import { AuthPage } from './pages/auth-page';
 
 const DashboardPage = lazy(() => import('./pages/dashboard-page').then(m => ({ default: m.DashboardPage })));
@@ -17,6 +19,7 @@ const ResultsPage = lazy(() => import('./pages/results-page').then(m => ({ defau
 const RobotDetailPage = lazy(() => import('./pages/robot-detail-page').then(m => ({ default: m.RobotDetailPage })));
 const RobotsPage = lazy(() => import('./pages/robots-page').then(m => ({ default: m.RobotsPage })));
 const SchedulesPage = lazy(() => import('./pages/schedules-page').then(m => ({ default: m.SchedulesPage })));
+const DevDocsPage = lazy(() => import('./pages/dev-docs-page').then(m => ({ default: m.DevDocsPage })));
 const SettingsPage = lazy(() => import('./pages/settings-page').then(m => ({ default: m.SettingsPage })));
 const SitesPage = lazy(() => import('./pages/sites-page').then(m => ({ default: m.SitesPage })));
 const TimeSavingsPage = lazy(() => import('./pages/time-savings-page').then(m => ({ default: m.TimeSavingsPage })));
@@ -48,6 +51,11 @@ function AppRoutes() {
     }
   }, [refreshHub, user]);
 
+  // Sem sessão: vai pra tela de login, então a cobertura de painel não faz mais sentido.
+  useEffect(() => {
+    if (!bootstrapping && !user) removeBootCover();
+  }, [bootstrapping, user]);
+
   if (bootstrapping) {
     return <div className="grid grid-cols-1 min-h-screen place-items-center text-sm text-slate-500">Carregando sessão...</div>;
   }
@@ -58,7 +66,7 @@ function AppRoutes() {
 
   return (
     <Routes>
-      <Route element={<AppShell />}>
+      <Route element={<ChatScopeProvider><AppShell /></ChatScopeProvider>}>
         <Route path="/" element={<Suspense fallback={null}><DashboardPage /></Suspense>} />
         <Route path="/robots" element={<Suspense fallback={null}><RobotsPage /></Suspense>} />
         <Route path="/automation-requests" element={<Suspense fallback={null}><AutomationRequestsPage /></Suspense>} />
@@ -68,6 +76,7 @@ function AppRoutes() {
           element={canViewBoard ? <Suspense fallback={null}><AutomationRequestsPage /></Suspense> : <Navigate to="/" replace />}
         />
         <Route path="/sites" element={<Suspense fallback={null}><SitesPage /></Suspense>} />
+        <Route path="/dashboards" element={<Navigate to="/sites?tab=paineis" replace />} />
         <Route path="/robots/:id" element={<Suspense fallback={null}><RobotDetailPage /></Suspense>} />
         <Route path="/schedules" element={<Suspense fallback={null}><SchedulesPage /></Suspense>} />
         <Route path="/executions/:id" element={<Suspense fallback={null}><ExecutionPage /></Suspense>} />
@@ -79,6 +88,10 @@ function AppRoutes() {
         <Route
           path="/settings"
           element={user.role === 'admin' ? <Suspense fallback={null}><SettingsPage /></Suspense> : <Navigate to="/" replace />}
+        />
+        <Route
+          path="/docs"
+          element={user.role === 'admin' ? <Suspense fallback={null}><DevDocsPage /></Suspense> : <Navigate to="/" replace />}
         />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>

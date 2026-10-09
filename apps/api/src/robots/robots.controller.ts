@@ -11,6 +11,7 @@ import {
   UseInterceptors,
 } from '@nestjs/common';
 import { AnyFilesInterceptor } from '@nestjs/platform-express';
+import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import type { Request } from 'express';
 import { AuthService } from '../auth/auth.service';
 import { uploadLimits } from '../shared/upload';
@@ -24,6 +25,8 @@ type UploadedFile = {
   buffer?: Buffer;
 };
 
+@ApiTags('Robôs')
+@ApiBearerAuth()
 @Controller('robots')
 export class RobotsController {
   constructor(

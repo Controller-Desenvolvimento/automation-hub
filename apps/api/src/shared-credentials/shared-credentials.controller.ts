@@ -9,11 +9,14 @@ import {
   Post,
   Req,
 } from '@nestjs/common';
+import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import type { Request } from 'express';
 import { AuthService } from '../auth/auth.service';
 import { isAdmin } from '../shared/access';
 import { SharedCredentialsService } from './shared-credentials.service';
 
+@ApiTags('Credenciais Compartilhadas')
+@ApiBearerAuth()
 @Controller('shared-credentials')
 export class SharedCredentialsController {
   constructor(
