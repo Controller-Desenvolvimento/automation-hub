@@ -222,15 +222,24 @@ export function SitesPage() {
   }
 
   function closeDashboardViewer() {
+    const removePanelFromUrl = () => {
+      const next = new URLSearchParams(window.location.search);
+      next.delete('painel');
+      next.delete('pagina');
+      setSearchParams(next, { replace: true });
+    };
     if ((location.state as { viewerFromList?: boolean } | null)?.viewerFromList) {
       navigate(-1);
+      // O "voltar" desfaz o histórico do navegador inteiro, inclusive o do iframe: se o painel
+      // navegou por dentro de um jeito que entrou no histórico, ele só volta uma aba interna e a URL
+      // continua com ?painel=. Rede de segurança: se não fechou, fecha trocando a entrada atual.
+      window.setTimeout(() => {
+        if (new URLSearchParams(window.location.search).get('painel')) removePanelFromUrl();
+      }, 600);
       return;
     }
     // Chegou direto pelo link/favorito: não há "lista" atrás no histórico.
-    const next = new URLSearchParams(searchParams);
-    next.delete('painel');
-    next.delete('pagina');
-    setSearchParams(next, { replace: true });
+    removePanelFromUrl();
   }
 
   // Guarda na URL a página interna do painel (troca a entrada atual, não cria outra, e

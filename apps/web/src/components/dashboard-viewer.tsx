@@ -17,6 +17,10 @@ function keepPanelNavigationOutOfHistory(iframe: HTMLIFrameElement | null) {
     const win = iframe?.contentWindow;
     const doc = iframe?.contentDocument;
     if (!win || !doc) return;
+    // Idempotente: o documento pode ser instrumentado cedo (polling) e de novo no onLoad.
+    const marked = doc as Document & { __hubNavKept?: boolean };
+    if (marked.__hubNavKept || !doc.body) return;
+    marked.__hubNavKept = true;
     // Na fase de bolha: roda depois dos handlers do painel, que podem ter cancelado o clique.
     doc.addEventListener('click', (event) => {
       if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
@@ -96,6 +100,14 @@ export function DashboardViewer({
     });
     return () => setBiScope(null);
   }, [hasChat, dashboard.id, dashboard.name, setBiScope]);
+
+  // O onLoad do iframe só dispara depois de TODOS os recursos (gráficos, fontes, imagens):
+  // um clique no menu do painel antes disso entrava no histórico e o "fechar" só voltava
+  // uma aba interna. Por isso o tratamento é instalado assim que o documento existe.
+  useEffect(() => {
+    const timer = window.setInterval(() => keepPanelNavigationOutOfHistory(iframeRef.current), 50);
+    return () => window.clearInterval(timer);
+  }, []);
 
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
