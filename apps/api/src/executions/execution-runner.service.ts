@@ -10,6 +10,7 @@ import { ExecutionsService } from './executions.service';
 import { findStalledExecutions, getStallTimeoutMs, stallMessage } from './stall-watchdog';
 import { NotificationsService } from '../notifications/notifications.service';
 import { listFilesRecursively, sanitizeFileName, toUserFileName } from '../shared/files';
+import { readDeployPendingSync } from '../system/deploy-state';
 import {
   ensureExecutionDirs,
   ensureStorageRoot,
@@ -153,6 +154,16 @@ export class ExecutionRunnerService implements OnModuleInit, OnModuleDestroy {
       const runningExecutions = await this.executionsService.listRunningExecutions();
       const queuedExecutions = await this.executionsService.listQueuedExecutions();
       if (queuedExecutions.length === 0) {
+        return;
+      }
+
+      // Atualização do servidor esperando as execuções terminarem (ver system/deploy-state.ts):
+      // não inicia nada novo, pra o servidor esvaziar e reiniciar. A fila segue intacta no banco.
+      if (readDeployPendingSync()) {
+        await this.updateQueuedReasons(
+          queuedExecutions,
+          'Atualização do servidor em andamento: esta execução começa assim que as que estão rodando terminarem e o servidor reiniciar.',
+        );
         return;
       }
 

@@ -44,6 +44,7 @@ test('resolve primeiro pelo athenasLogin normalizado', async () => {
 
 test('agrupa identidades não vinculadas pelo login, preservando o nome recebido', async () => {
   const prisma = {
+    externalIdentity: { findMany: async () => [] },   // identidades marcadas como ignoradas
     execution: {
       findMany: async () => [
         {

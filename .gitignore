@@ -39,3 +39,9 @@ PROMPT_NOVO_DASHBOARD.md
 LOGIN_ATHENAS_REFERENCIA.md
 relatorio-bug-pgfn-veri.md
 CLAUDE.local.md
+
+# Builds paralelos do auto deploy
+dist-next/
+dist-prev/
+dist-failed/
+*.tsbuildinfo

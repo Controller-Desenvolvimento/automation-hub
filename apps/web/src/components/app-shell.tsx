@@ -22,6 +22,7 @@ import {
   UserCircle,
 } from 'lucide-react';
 import { ControllerLogo } from './controller-logo';
+import { DeployBanner } from './deploy-banner';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/auth-context';
@@ -634,6 +635,7 @@ export function AppShell() {
             </div>
           </header>
 
+          <DeployBanner />
           <main className="w-full px-4 py-6 sm:px-6 lg:px-8">
             <Outlet />
           </main>
