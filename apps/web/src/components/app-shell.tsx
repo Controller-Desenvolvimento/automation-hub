@@ -5,9 +5,12 @@ import {
   Bot,
   CheckCheck,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   Download,
   ExternalLink,
   Globe,
+  History,
   LayoutDashboard,
   LogOut,
   Menu,
@@ -157,17 +160,26 @@ export function AppShell() {
     } catch { /* silent */ }
   }
 
+  // Grupo sem título (label vazio) = item solto no topo, como o "Visão Geral" de outros apps.
   const navGroups = [
     {
-      label: 'Geral',
+      label: '',
+      items: [{ to: '/', label: 'Dashboard', icon: LayoutDashboard }],
+    },
+    {
+      label: 'Automações',
       items: [
-        { to: '/', label: 'Dashboard', icon: LayoutDashboard },
         { to: '/robots', label: 'Robôs', icon: PlayCircle },
         { to: '/sites', label: 'Sites', icon: Globe },
-        { to: '/history', label: 'Histórico', icon: Bell },
+        { to: '/schedules', label: 'Agendamentos', icon: CalendarDays },
+      ],
+    },
+    {
+      label: 'Acompanhamento',
+      items: [
+        { to: '/history', label: 'Histórico', icon: History },
         { to: '/results', label: 'Resultados', icon: Download },
         { to: '/time-savings', label: 'Tempo ganho', icon: BarChart3 },
-        { to: '/schedules', label: 'Agendamentos', icon: CalendarDays },
       ],
     },
     ...(canViewBoard
@@ -208,17 +220,14 @@ export function AppShell() {
             <div className="px-5">
               <Separator className="dark:bg-white/10" />
             </div>
-            <nav className="space-y-8 px-4 py-6">
-              {navGroups.map((group) => (
-                <div key={group.label} className="space-y-2">
-                  <div className={cn(
-                    'px-3 text-xs font-semibold uppercase tracking-[0.18em]',
-                    group.label === 'Solicitação'
-                      ? 'text-sky-500 dark:text-sky-400'
-                      : 'text-slate-400',
-                  )}>
-                    {group.label}
-                  </div>
+            <nav className="space-y-6 px-4 py-5">
+              {navGroups.map((group, groupIndex) => (
+                <div key={groupIndex} className="space-y-2">
+                  {group.label ? (
+                    <div className="px-3 text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">
+                      {group.label}
+                    </div>
+                  ) : null}
                   <div className="space-y-1">
                     {group.items.map(({ to, label, icon: Icon }) => (
                       <NavLink
@@ -314,16 +323,15 @@ export function AppShell() {
             <Separator className="dark:bg-white/10" />
           </div>
 
-          <nav className={cn('flex-1 space-y-8 py-6', sidebarCollapsed ? 'px-3' : 'px-4')}>
-            {navGroups.map((group) => (
-              <div key={group.label} className="space-y-2">
-                {!sidebarCollapsed ? (
-                  <div className={cn(
-                    'px-3 text-xs font-semibold uppercase tracking-[0.18em]',
-                    group.label === 'Solicitação'
-                      ? 'text-sky-500 dark:text-sky-400'
-                      : 'text-slate-400',
-                  )}>
+          <nav className={cn('flex-1 py-3', sidebarCollapsed ? 'space-y-3 px-3' : 'space-y-4 px-4')}>
+            {navGroups.map((group, groupIndex) => (
+              <div key={groupIndex} className="space-y-2">
+                {sidebarCollapsed && groupIndex > 0 ? (
+                  // Recolhida, os títulos somem: uma linha fina mantém os grupos distintos.
+                  <div className="mx-2 mb-3 h-px bg-slate-200 dark:bg-white/10" />
+                ) : null}
+                {!sidebarCollapsed && group.label ? (
+                  <div className="px-3 text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">
                     {group.label}
                   </div>
                 ) : null}
@@ -339,8 +347,8 @@ export function AppShell() {
                         cn(
                           'flex rounded-xl text-sm font-medium transition',
                           sidebarCollapsed
-                            ? 'justify-center px-0 py-3'
-                            : 'items-center gap-3 px-3 py-3',
+                            ? 'justify-center px-0 py-2.5'
+                            : 'items-center gap-3 px-3 py-2.5',
                           isActive
                             ? 'bg-slate-100 text-slate-950 dark:bg-[#1b1b20] dark:text-white'
                             : 'text-slate-600 hover:bg-slate-100 hover:text-slate-950 dark:text-zinc-300 dark:hover:bg-[#18181b] dark:hover:text-white',
@@ -395,6 +403,21 @@ export function AppShell() {
 
         </aside>
 
+        {/* Aba na borda da barra lateral: fica colada ao que controla e a seta mostra a direção.
+            Fora do <aside> porque ele tem overflow e cortaria a metade que passa da borda. */}
+        <button
+          type="button"
+          onClick={() => setSidebarCollapsed((current) => !current)}
+          aria-label={sidebarCollapsed ? 'Expandir menu lateral' : 'Recolher menu lateral'}
+          title={sidebarCollapsed ? 'Expandir menu lateral' : 'Recolher menu lateral'}
+          className={cn(
+            'fixed top-[30px] z-40 hidden h-7 w-7 items-center justify-center rounded-full border border-slate-300 bg-white text-slate-600 shadow-md transition-[left,color,background-color,border-color] duration-200 hover:border-sky-400 hover:bg-sky-50 hover:text-sky-600 focus-visible:outline focus-visible:outline-2 focus-visible:outline-sky-500 dark:border-[#3a3a42] dark:bg-[#1b1b20] dark:text-zinc-300 dark:hover:border-sky-400 dark:hover:bg-[#232329] dark:hover:text-sky-300 lg:flex',
+            sidebarCollapsed ? 'left-[74px]' : 'left-[258px]',
+          )}
+        >
+          {sidebarCollapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronLeft className="h-4 w-4" />}
+        </button>
+
         <div className="min-w-0">
           <header className="sticky top-0 z-20 border-b border-slate-200 bg-white/95 backdrop-blur dark:border-[#27272a] dark:bg-[#09090b]/95">
             <div className="flex w-full items-center justify-between gap-4 px-4 py-4 sm:px-6 lg:px-8">
@@ -403,14 +426,8 @@ export function AppShell() {
                   variant="ghost"
                   size="sm"
                   aria-label="Alternar menu"
-                  className="h-10 w-10 shrink-0 rounded-xl border border-slate-200 bg-white p-0 text-slate-700 hover:bg-slate-100 dark:border-[#2b2b31] dark:bg-[#111113] dark:text-zinc-200 dark:hover:bg-[#18181b] dark:hover:text-white"
-                  onClick={() => {
-                    if (window.matchMedia('(min-width: 1024px)').matches) {
-                      setSidebarCollapsed((current) => !current);
-                    } else {
-                      setMobileNavOpen((current) => !current);
-                    }
-                  }}
+                  className="h-10 w-10 shrink-0 rounded-xl border border-slate-200 bg-white p-0 text-slate-700 hover:bg-slate-100 dark:border-[#2b2b31] dark:bg-[#111113] dark:text-zinc-200 dark:hover:bg-[#18181b] dark:hover:text-white lg:hidden"
+                  onClick={() => setMobileNavOpen((current) => !current)}
                 >
                   <Menu className="h-4 w-4" />
                 </Button>
