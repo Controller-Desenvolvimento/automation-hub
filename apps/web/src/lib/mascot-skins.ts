@@ -7,6 +7,7 @@
 // tablet (mexendo no tablet, com painel/BI aberto). As contagens vivem em MASCOT_ANIMATIONS,
 // no site-chat-widget.
 // A coluna User.mascotSkin do banco ficou sem uso (não vale a migração pra tirar).
+// (Esta linha foi o teste do auto deploy do frontend: compilou e trocou a dist sem reiniciar o servidor.)
 export type MascotSkinId = 'joao';
 
 export const MASCOT_SKIN: MascotSkinId = 'joao';
