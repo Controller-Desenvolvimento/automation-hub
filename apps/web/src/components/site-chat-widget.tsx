@@ -5,7 +5,7 @@ import { useAuth } from '../contexts/auth-context';
 import { useChatScope } from '../contexts/chat-scope-context';
 import { useHub } from '../contexts/hub-context';
 import { api, API_BASE_URL, downloadWithFeedback, getStoredToken } from '../lib/api';
-import { mascotAccent, mascotIdleFrames, mascotSkinOrDefault, type MascotSkinId } from '../lib/mascot-skins';
+import { MASCOT_ACCENT, MASCOT_SKIN, type MascotSkinId } from '../lib/mascot-skins';
 import { cn } from '../lib/utils';
 import { Button } from './ui/button';
 import { Textarea } from './ui/textarea';
@@ -17,16 +17,17 @@ const STREAMING_ID = 'streaming-reply';
 // "transientes" — tocam uma vez (duração = frames × interval) e quem
 // disparou é responsável por voltar ao modo padrão depois (ver
 // `playTransient`).
-type MascotMode = 'idle' | 'waiting' | 'running' | 'waving' | 'jumping' | 'failed' | 'review';
+type MascotMode = 'idle' | 'waiting' | 'running' | 'waving' | 'jumping' | 'failed' | 'review' | 'tablet';
 
 const MASCOT_ANIMATIONS: Record<MascotMode, { frames: number; intervalMs: number; loop: boolean }> = {
   idle: { frames: 6, intervalMs: 220, loop: true },
-  waiting: { frames: 6, intervalMs: 260, loop: true },
-  running: { frames: 8, intervalMs: 70, loop: true },
-  waving: { frames: 4, intervalMs: 110, loop: false },
-  jumping: { frames: 5, intervalMs: 90, loop: false },
-  failed: { frames: 8, intervalMs: 90, loop: false },
+  waiting: { frames: 6, intervalMs: 240, loop: true },
+  running: { frames: 8, intervalMs: 100, loop: true },
+  waving: { frames: 6, intervalMs: 110, loop: false },
+  jumping: { frames: 6, intervalMs: 90, loop: false },
+  failed: { frames: 8, intervalMs: 120, loop: false },
   review: { frames: 6, intervalMs: 220, loop: true },
+  tablet: { frames: 8, intervalMs: 200, loop: true },
 };
 
 // Ao ocultar: toca o failed quase inteiro primeiro (sem encolher ainda) e só
@@ -87,10 +88,7 @@ function MascotIcon({
 
   useEffect(() => {
     setFrame(0);
-    // "idle" varia de frames entre mascotes (6 ou 7) — os outros modos são
-    // iguais pra todos.
-    const frames = mode === 'idle' ? mascotIdleFrames(skin) : MASCOT_ANIMATIONS[mode].frames;
-    const { intervalMs, loop } = MASCOT_ANIMATIONS[mode];
+    const { frames, intervalMs, loop } = MASCOT_ANIMATIONS[mode];
     const id = setInterval(() => {
       setFrame((f) => (loop ? (f + 1) % frames : Math.min(f + 1, frames - 1)));
     }, intervalMs);
@@ -105,7 +103,7 @@ function MascotIcon({
   return (
     <img
       src={src}
-      alt="Mascote do assistente"
+      alt="João"
       draggable={false}
       className={cn('w-auto shrink-0 select-none object-contain drop-shadow-md', heightClassName)}
     />
@@ -119,39 +117,58 @@ function MascotIcon({
 // pra não ficar chato.
 const HINT_IDLE_DELAY_MS = 25 * 1000;
 const HINT_MIN_INTERVAL_MS = 4 * 60 * 1000;
+// "Oi" espontâneo na tela inicial: um aceno a cada 1 a 2 min (sorteado), só com a aba visível.
+const IDLE_WAVE_MIN_MS = 60 * 1000;
+const IDLE_WAVE_MAX_MS = 120 * 1000;
 
 const GENERIC_HINTS = [
-  'Dúvidas sobre o Hub? Pergunte pra mim 🤖',
-  'Travou em algum lugar? Clica aqui que eu ajudo 👋',
-  'Não achou o que procurava? Pode perguntar',
+  'Oi, eu sou o João! Dúvidas sobre o Hub? Pergunta pra mim 👋',
+  'Travou em algum lugar? Clica em mim que o João ajuda',
+  'Não achou o que procurava? Pode perguntar, eu ajudo',
 ];
 
 const ROUTE_HINTS: { match: (path: string) => boolean; messages: string[] }[] = [
   {
     match: (p) => p.startsWith('/robots'),
-    messages: ['Não achou o robô que precisa? Me pergunta que eu ajudo a encontrar 🤖', 'Quer saber se existe automação pra algo? É só perguntar'],
+    messages: ['Não achou o robô que precisa? Me pergunta que o João ajuda a encontrar', 'Quer saber se existe automação pra algo? É só perguntar pro João'],
   },
   {
     match: (p) => p.startsWith('/schedules'),
-    messages: ['Quer ajuda pra criar um agendamento? Eu faço pra você 👋'],
+    messages: ['Quer ajuda pra criar um agendamento? O João faz com você 👋'],
   },
   {
     match: (p) => p.startsWith('/history') || p.startsWith('/results'),
-    messages: ['Procurando uma execução ou um arquivo? Posso ajudar a achar'],
+    messages: ['Procurando uma execução ou um arquivo? O João ajuda a achar'],
   },
   {
     match: (p) => p.startsWith('/time-savings'),
-    messages: ['Quer saber quanto tempo já foi economizado? Pergunta pra mim'],
+    messages: ['Quer saber quanto tempo já foi economizado? Pergunta pro João'],
   },
   {
     match: (p) => p.startsWith('/automation-requests') || p.startsWith('/dashboard-requests'),
-    messages: ['Quer que eu já registre esse pedido pra você? Só me contar o que precisa'],
+    messages: ['Quer que o João já registre esse pedido? Só me contar o que precisa'],
   },
 ];
 
 function pickHintMessage(pathname: string): string {
   const pool = ROUTE_HINTS.find((r) => r.match(pathname))?.messages ?? GENERIC_HINTS;
   return pool[Math.floor(Math.random() * pool.length)];
+}
+
+// Baixa todos os quadros do mascote em segundo plano, depois da página carregar: sem isso,
+// cada troca de quadro (a cada ~100 ms) esperava a rede na primeira volta e a animação engasgava.
+let mascotFramesPreloaded = false;
+function preloadMascotFrames(skin: MascotSkinId) {
+  if (mascotFramesPreloaded) return;
+  mascotFramesPreloaded = true;
+  (Object.keys(MASCOT_ANIMATIONS) as MascotMode[]).forEach((mode) => {
+    const names = mode === 'running' ? ['run-left', 'run-right'] : [mode];
+    names.forEach((name) => {
+      for (let i = 0; i < MASCOT_ANIMATIONS[mode].frames; i += 1) {
+        new Image().src = `/mascots/${skin}/mascot-${name}-${i}.png`;
+      }
+    });
+  });
 }
 
 export function SiteChatWidget() {
@@ -178,6 +195,11 @@ export function SiteChatWidget() {
   const [dragging, setDragging] = useState(false);
   const [runDirection, setRunDirection] = useState<'left' | 'right'>('right');
   const [transientMode, setTransientMode] = useState<MascotMode | null>(null);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => preloadMascotFrames(MASCOT_SKIN), 800);
+    return () => window.clearTimeout(timer);
+  }, []);
   const [hidingAnim, setHidingAnim] = useState(false);
   const [showingAnim, setShowingAnim] = useState(false);
   const lastHintAtRef = useRef(0);
@@ -211,6 +233,25 @@ export function SiteChatWidget() {
       lastHintAtRef.current = Date.now();
       setHintText(pickHintMessage(location.pathname));
     }, HINT_IDLE_DELAY_MS);
+    return () => clearTimeout(timer);
+  }, [location.pathname, open, hidden]);
+
+  // Aceno espontâneo, só pra dar um oi: na tela inicial, com o chat fechado, sem arrastar,
+  // sem balão e sem outra animação rolando. O intervalo é sorteado a cada vez pra não ficar
+  // previsível nem virar flood, e pula o aceno se a aba estiver em segundo plano.
+  const calmRef = useRef(true);
+  calmRef.current = !dragging && transientMode === null && hintText === null;
+  useEffect(() => {
+    if (location.pathname !== '/' || open || hidden) return;
+    if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return;
+    let timer: ReturnType<typeof setTimeout>;
+    const schedule = () => {
+      timer = setTimeout(() => {
+        if (calmRef.current && !document.hidden) playTransient('waving');
+        schedule();
+      }, IDLE_WAVE_MIN_MS + Math.random() * (IDLE_WAVE_MAX_MS - IDLE_WAVE_MIN_MS));
+    };
+    schedule();
     return () => clearTimeout(timer);
   }, [location.pathname, open, hidden]);
 
@@ -251,6 +292,7 @@ export function SiteChatWidget() {
     requestAnimationFrame(() => {
       requestAnimationFrame(() => setShowingAnim(false));
     });
+    playTransient('waving'); // ao voltar da bolinha, ele cresce já acenando
   }
 
   function handleCloseChat() {
@@ -284,15 +326,17 @@ export function SiteChatWidget() {
 
   if (!user) return null;
 
-  const skin = mascotSkinOrDefault(user.mascotSkin);
-  const accent = mascotAccent(skin);
+  const skin = MASCOT_SKIN;
+  // Parado: com um painel/BI aberto o João fica mexendo no tablet; no resto do hub, só esperando.
+  const restMode: MascotMode = biScope ? 'tablet' : 'waiting';
+  const accent = MASCOT_ACCENT;
 
   if (hidden) {
     return (
       <button
         type="button"
         onClick={handleShowMascot}
-        title="Mostrar assistente"
+        title="Mostrar o João"
         style={{ backgroundColor: accent }}
         className="fixed bottom-5 right-5 z-50 grid h-8 w-8 place-items-center rounded-full text-white opacity-60 shadow-lg transition hover:opacity-100"
       >
@@ -341,7 +385,7 @@ export function SiteChatWidget() {
         body: JSON.stringify({ content, ...(chatContext ? { context: chatContext } : {}) }),
       });
       if (!response.ok || !response.body) {
-        throw new Error(`Erro ${response.status} ao falar com o assistente.`);
+        throw new Error(`Erro ${response.status} ao falar com o João.`);
       }
 
       const reader = response.body.getReader();
@@ -424,8 +468,8 @@ export function SiteChatWidget() {
   // posicionamento do painel aberto). Um clique sem arrastar (moveu menos de
   // 4px) ainda abre/fecha o chat normalmente — só "trava" o arrasto quando a
   // pessoa realmente moveu o dedo/mouse.
-  const MASCOT_W = 70;
-  const MASCOT_H = 100;
+  const MASCOT_W = 88;
+  const MASCOT_H = 140;
 
   function handleMascotPointerDown(e: React.PointerEvent<HTMLButtonElement>) {
     if (open) return;
@@ -497,11 +541,11 @@ export function SiteChatWidget() {
         <div className="flex h-[min(70vh,520px)] w-[min(92vw,360px)] flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl dark:border-zinc-800 dark:bg-[#151517]">
           <div className="flex shrink-0 items-center justify-between border-b border-slate-100 px-4 py-3 dark:border-zinc-800">
             <div className="flex items-center gap-2.5">
-              <MascotIcon heightClassName="h-12" mode={transientMode ?? (sendingHere ? 'review' : 'waiting')} skin={skin} />
+              <MascotIcon heightClassName="h-14" mode={transientMode ?? (sendingHere ? 'review' : restMode)} skin={skin} />
               <div>
-                <div className="text-sm font-semibold text-slate-950 dark:text-white">Assistente do Hub</div>
+                <div className="text-sm font-semibold text-slate-950 dark:text-white">João</div>
                 <div className="whitespace-nowrap text-[11px] text-slate-400 dark:text-zinc-500" title={biScope?.name}>
-                  {biScope ? `Respondendo com os dados deste ${biScope.dashboardId ? 'painel' : 'BI'}` : 'Tire dúvidas sobre o site'}
+                  {biScope ? `Respondendo com os dados deste ${biScope.dashboardId ? 'painel' : 'BI'}` : 'Tire suas dúvidas sobre o Hub'}
                 </div>
               </div>
             </div>
@@ -529,8 +573,8 @@ export function SiteChatWidget() {
             {messages.length === 0 ? (
               <p className="text-sm text-slate-400 dark:text-zinc-500">
                 {biScope
-                  ? `Esta é a sua conversa com o assistente deste ${biScope.dashboardId ? 'painel' : 'BI'}, separada do chat do hub. Pergunte sobre os dados dele.`
-                  : 'Oi! Posso ajudar com dúvidas sobre como usar o Hub — robôs disponíveis, agendamentos, relatórios e mais.'}
+                  ? `Oi, eu sou o João! Esta é a nossa conversa sobre este ${biScope.dashboardId ? 'painel' : 'BI'}, separada do chat do hub. Pergunte sobre os dados dele.`
+                  : 'Oi, eu sou o João! Posso ajudar com dúvidas sobre como usar o Hub — robôs disponíveis, agendamentos, relatórios e mais.'}
               </p>
             ) : (
               messages.map((m) => (
@@ -579,7 +623,7 @@ export function SiteChatWidget() {
                   void handleSend();
                 }
               }}
-              placeholder={biScope ? `Pergunte sobre este ${biScope.dashboardId ? 'painel' : 'BI'}...` : 'Digite sua pergunta...'}
+              placeholder={biScope ? `Pergunte sobre este ${biScope.dashboardId ? 'painel' : 'BI'}...` : 'Pergunte ao João...'}
               rows={1}
               className="max-h-28 min-h-[38px] resize-none text-sm"
             />
@@ -599,7 +643,7 @@ export function SiteChatWidget() {
         }}
       >
         {!open && hintText ? (
-          <div className="absolute bottom-full right-2 mb-2 w-40">
+          <div className="absolute bottom-full right-2 mb-2 w-44">
             <button
               type="button"
               onClick={() => {
@@ -619,7 +663,7 @@ export function SiteChatWidget() {
         {!open ? (
           <button
             type="button"
-            title="Ocultar assistente"
+            title="Ocultar o João"
             onClick={(e) => {
               e.stopPropagation();
               handleHideMascot();
@@ -638,7 +682,7 @@ export function SiteChatWidget() {
           onPointerCancel={handleMascotPointerUp}
           onClick={open ? handleCloseChat : undefined}
           onMouseEnter={dismissHint}
-          title={open ? 'Fechar' : 'Assistente do Hub — arraste pra mover'}
+          title={open ? 'Fechar' : 'João — arraste pra mover'}
           className={cn('grid touch-none place-items-center transition', !dragging && 'hover:scale-105')}
         >
           {open ? (
@@ -647,8 +691,8 @@ export function SiteChatWidget() {
             </div>
           ) : (
             <MascotIcon
-              heightClassName="h-24"
-              mode={dragging ? 'running' : (transientMode ?? (hintText ? 'idle' : 'waiting'))}
+              heightClassName="h-[8.5rem]"
+              mode={dragging ? 'running' : (transientMode ?? (hintText ? 'idle' : restMode))}
               skin={skin}
               runDirection={runDirection}
             />

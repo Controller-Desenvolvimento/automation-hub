@@ -2,9 +2,7 @@ import {
   Bell,
   BarChart3,
   BookOpen,
-  Bot,
   CheckCheck,
-  ChevronDown,
   ChevronLeft,
   ChevronRight,
   Download,
@@ -32,7 +30,6 @@ import { useTheme } from '../contexts/theme-context';
 import { ROLE_LABELS } from '../lib/constants';
 import { cn, initialsFor, timeAgo } from '../lib/utils';
 import { api } from '../lib/api';
-import { MASCOT_SKINS, mascotSkinOrDefault } from '../lib/mascot-skins';
 import type { Notification, Site } from '../lib/types';
 import { AppIcon } from './app-icon';
 import { SiteChatWidget } from './site-chat-widget';
@@ -44,13 +41,11 @@ import { Separator } from './ui/separator';
 export function AppShell() {
   const location = useLocation();
   const navigate = useNavigate();
-  const { user, logout, updateUser } = useAuth();
+  const { user, logout } = useAuth();
   const { theme, toggleTheme } = useTheme();
-  const { hub, unreadNotifications, refreshUnreadCount, notify } = useHub();
+  const { hub, unreadNotifications, refreshUnreadCount } = useHub();
   const [search, setSearch] = useState('');
   const [profileOpen, setProfileOpen] = useState(false);
-  const [mascotPickerOpen, setMascotPickerOpen] = useState(false);
-  const [savingMascot, setSavingMascot] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
@@ -64,34 +59,9 @@ export function AppShell() {
   useEffect(() => {
     setMobileNavOpen(false);
     setProfileOpen(false);
-    setMascotPickerOpen(false);
     setSearchOpen(false);
     setNotifOpen(false);
   }, [location.pathname]);
-
-  async function handlePickMascot(skinId: string) {
-    if (savingMascot) return;
-    if (mascotSkinOrDefault(user?.mascotSkin) === skinId) {
-      setMascotPickerOpen(false);
-      setProfileOpen(false);
-      return;
-    }
-    setSavingMascot(true);
-    try {
-      await api('/auth/mascot-skin', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ skin: skinId }),
-      });
-      updateUser({ mascotSkin: skinId });
-      setMascotPickerOpen(false);
-      setProfileOpen(false);
-    } catch (error) {
-      notify(error instanceof Error ? error.message : 'Não foi possível trocar o mascote.');
-    } finally {
-      setSavingMascot(false);
-    }
-  }
 
   useEffect(() => {
     if (!user) return;
@@ -644,46 +614,6 @@ export function AppShell() {
                           <UserCircle className="h-4 w-4" />
                           Meu perfil
                         </Link>
-                        <button
-                          type="button"
-                          onClick={() => setMascotPickerOpen((current) => !current)}
-                          className="flex w-full items-center justify-between gap-3 px-4 py-3 text-sm font-medium text-slate-700 transition hover:bg-slate-50 dark:text-zinc-200 dark:hover:bg-[#18181b]"
-                        >
-                          <span className="flex items-center gap-3">
-                            <Bot className="h-4 w-4" />
-                            Mascote
-                          </span>
-                          <ChevronDown className={cn('h-3.5 w-3.5 text-slate-400 transition-transform', mascotPickerOpen && 'rotate-180')} />
-                        </button>
-                        {mascotPickerOpen ? (
-                          <div className="grid grid-cols-5 gap-2 px-4 pb-3">
-                            {MASCOT_SKINS.map((skin) => {
-                              const isSelected = mascotSkinOrDefault(user?.mascotSkin) === skin.id;
-                              return (
-                                <button
-                                  key={skin.id}
-                                  type="button"
-                                  title={skin.label}
-                                  disabled={savingMascot}
-                                  onClick={() => void handlePickMascot(skin.id)}
-                                  className={cn(
-                                    'flex aspect-square items-center justify-center overflow-hidden rounded-xl border p-1 transition hover:border-sky-300 hover:bg-sky-50 disabled:opacity-60 dark:hover:bg-sky-950/20',
-                                    isSelected
-                                      ? 'border-sky-400 bg-sky-50 dark:border-sky-500 dark:bg-sky-950/30'
-                                      : 'border-slate-200 dark:border-[#2b2b31]',
-                                  )}
-                                >
-                                  <img
-                                    src={`/mascots/${skin.id}/mascot-idle-0.png`}
-                                    alt={skin.label}
-                                    draggable={false}
-                                    className="h-full w-full object-contain"
-                                  />
-                                </button>
-                              );
-                            })}
-                          </div>
-                        ) : null}
                         <div className="mx-4 border-t border-slate-100 dark:border-white/[0.06]" />
                         <button
                           type="button"
