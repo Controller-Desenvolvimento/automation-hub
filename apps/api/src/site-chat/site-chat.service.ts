@@ -119,7 +119,7 @@ const STATUS_LABELS: Record<string, string> = {
 
 const SENSITIVE_FIELD_PATTERN = /senha|password|pin\b|token|secret|credencial/i;
 
-const SYSTEM_PROMPT_BASE = `Você é o assistente virtual do Automation Hub, um sistema interno da empresa usado por gestores e funcionários para monitorar e executar automações (robôs RPA).
+const SYSTEM_PROMPT_BASE = `Você é o João, o mascote e assistente virtual do Automation Hub, um sistema interno da empresa (Grupo Controller) usado por gestores e funcionários para monitorar e executar automações (robôs RPA). Seu tom é simpático e próximo, sem exagero. Se alguém te cumprimentar ou perguntar quem você é, apresente-se: "Oi, eu sou o João!" e diga em uma frase no que você ajuda. Fale de si mesmo no masculino e na primeira pessoa ("eu"), e nunca se refira a si como "assistente do Hub" ou "assistente virtual" de forma genérica — você é o João.
 
 O que você deve saber sobre o site — use os nomes exatos que aparecem no menu, e SEMPRE indique a página certa em vez de inventar/generalizar uma resposta:
 - "/" (Dashboard) — visão geral: robôs favoritos, execuções recentes, atalhos.
@@ -956,7 +956,7 @@ export class SiteChatService {
 
       if (result.toolCalls.length === 0) {
         if (!result.text) {
-          throw new InternalServerErrorException('Resposta vazia do assistente.');
+          throw new InternalServerErrorException('Resposta vazia do João.');
         }
         return { text: result.text, usage: totalUsage, attachment };
       }
@@ -980,7 +980,7 @@ export class SiteChatService {
       }
     }
 
-    throw new InternalServerErrorException('O assistente não conseguiu concluir a ação a tempo. Tente novamente.');
+    throw new InternalServerErrorException('O João não conseguiu concluir a ação a tempo. Tente novamente.');
   }
 
   // Sempre usa a API de streaming da OpenAI por baixo (mesmo quando ninguém
@@ -1025,7 +1025,7 @@ export class SiteChatService {
         });
       } catch (err) {
         this.logger.error(`Erro ao chamar OpenAI: ${err instanceof Error ? err.message : String(err)}`);
-        throw new InternalServerErrorException('Não foi possível falar com o assistente agora. Tente novamente em instantes.');
+        throw new InternalServerErrorException('Não foi possível falar com o João agora. Tente novamente em instantes.');
       }
 
       // 429 de rate limit (tokens/min da conta) é comum com um system prompt
@@ -1047,8 +1047,8 @@ export class SiteChatService {
       const errBody = await response.text().catch(() => '');
       this.logger.error(`OpenAI respondeu ${response.status}: ${errBody.slice(0, 500)}`);
       const friendly = response.status === 429
-        ? 'O assistente está sobrecarregado no momento. Aguarde um pouco e tente de novo.'
-        : 'Não foi possível obter resposta do assistente agora.';
+        ? 'O João está sobrecarregado no momento. Aguarde um pouco e tente de novo.'
+        : 'Não foi possível obter resposta do João agora.';
       throw new InternalServerErrorException(friendly);
     }
 

@@ -70,7 +70,7 @@ export class SiteChatController {
       );
       response.write(`data: ${JSON.stringify({ done: true, userMessage, assistantMessage })}\n\n`);
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Erro inesperado no assistente.';
+      const message = err instanceof Error ? err.message : 'Erro inesperado no João.';
       response.write(`data: ${JSON.stringify({ error: message })}\n\n`);
     } finally {
       response.end();

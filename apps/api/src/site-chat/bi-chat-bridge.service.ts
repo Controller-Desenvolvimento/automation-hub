@@ -22,9 +22,9 @@ const IDLE_TIMEOUT_MS = 2 * 60 * 1000;
 const TOTAL_TIMEOUT_MS = 10 * 60 * 1000;
 
 const MSG_UNAVAILABLE =
-  'O assistente deste painel não está disponível agora (o servidor do painel parece estar parado). Tente novamente em instantes ou avise a equipe de Inovação.';
-const MSG_FAILED = 'O assistente do painel não conseguiu responder agora. Tente novamente em instantes.';
-const MSG_TIMEOUT = 'O assistente do painel demorou demais para responder. Tente uma pergunta mais específica.';
+  'O João não conseguiu falar com este painel agora (o servidor do painel parece estar parado). Tente novamente em instantes ou avise a equipe de Inovação.';
+const MSG_FAILED = 'O João não conseguiu responder sobre este painel agora. Tente novamente em instantes.';
+const MSG_TIMEOUT = 'O João demorou demais para responder sobre este painel. Tente uma pergunta mais específica.';
 
 export type BiLink = {
   // null quando o painel é aberto direto (sem BI no meio).
