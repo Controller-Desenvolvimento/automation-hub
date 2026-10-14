@@ -118,7 +118,9 @@ function Get-RunningCount {
   $psql = (Get-Command psql -ErrorAction SilentlyContinue).Source
   if (-not $psql) { $psql = 'C:\Program Files\PostgreSQL\16\bin\psql.exe' }
   $env:PGPASSWORD = $db.Password
-  $sql = 'select count(*) from "Execution" where status = ''running'''
+  # No PowerShell 5.1 as aspas duplas de um argumento nativo se perdem: o identificador "Execution" (maiusculo)
+  # precisa chegar ao psql escapado com barra invertida.
+  $sql = 'select count(*) from \"Execution\" where status = ''running'''
   $r = Invoke-Native $psql @('-h', $db.Host, '-p', $db.Port, '-U', $db.User, '-d', $db.Db, '-tA', '-c', $sql)
   return [int]$r.Text
 }
@@ -131,7 +133,7 @@ function Set-GhStatus([string]$Sha, [string]$State, [string]$Description) {
     if ($remote -notmatch 'github\.com[:/]([^/]+)/([^/.]+)') { return }
     $tokenFile = Join-Path $env:USERPROFILE '.automation-hub-deploy-token'
     if (Test-Path -LiteralPath $tokenFile) { $env:GH_TOKEN = (Get-Content -LiteralPath $tokenFile -Raw).Trim() }
-    $desc = $Description
+    $desc = (($Description -replace "[`r`n]+", ' ') -replace '"', "'").Trim()    # aspas e quebras de linha quebram o argumento nativo
     if ($desc.Length -gt 130) { $desc = $desc.Substring(0, 130) }
     Invoke-Native gh @('api', '-X', 'POST', ('repos/{0}/{1}/statuses/{2}' -f $Matches[1], $Matches[2], $Sha), '-f', "state=$State", '-f', 'context=deploy/servidor', '-f', "description=$desc") -AllowFail | Out-Null
   } catch {
