@@ -3862,7 +3862,7 @@ function FieldBuilderRow({ field, onChange, onRemove }: { field: RobotSchemaFiel
             value={field.type}
             onChange={(e) => onChange({ ...field, type: e.target.value })}
           >
-            {['text', 'date', 'select', 'radio', 'checkbox-group', 'textarea', 'checkbox'].map((type) => (
+            {['text', 'date', 'select', 'radio', 'checkbox-group', 'textarea', 'checkbox', 'serverpath'].map((type) => (
               <option key={type} value={type}>
                 {type}
               </option>
@@ -3875,6 +3875,34 @@ function FieldBuilderRow({ field, onChange, onRemove }: { field: RobotSchemaFiel
         <Field className="md:col-span-2" label="Placeholder">
           <Input value={field.placeholder || ''} onChange={(e) => onChange({ ...field, placeholder: e.target.value })} />
         </Field>
+        {field.type === 'serverpath' ? (
+          <>
+            <Field className="md:col-span-2" label="Pasta raiz (vista pelo servidor)">
+              <Input
+                value={field.rootPath || ''}
+                placeholder="X:\DECON\CLIENTES\ADECE"
+                onChange={(e) => onChange({ ...field, rootPath: e.target.value })}
+              />
+            </Field>
+            <Field label="Escolher">
+              <select
+                className="flex h-12 w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-sky-400 focus:ring-4 focus:ring-sky-100 dark:border-[#2b2b31] dark:bg-[#0f0f10] dark:text-zinc-100 dark:focus:ring-sky-900/35"
+                value={field.pick || 'folder'}
+                onChange={(e) => onChange({ ...field, pick: e.target.value as 'file' | 'folder' })}
+              >
+                <option value="folder">Pasta</option>
+                <option value="file">Arquivo</option>
+              </select>
+            </Field>
+            <Field label="Extensões aceitas (arquivo)">
+              <Input
+                value={field.accept || ''}
+                placeholder=".xlsx"
+                onChange={(e) => onChange({ ...field, accept: e.target.value })}
+              />
+            </Field>
+          </>
+        ) : null}
         <Field className="md:col-span-2" label="Opções">
           <Input
             value={(field.options || []).join(', ')}

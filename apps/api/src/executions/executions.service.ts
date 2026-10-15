@@ -10,6 +10,7 @@ import { join, relative } from 'node:path';
 import { PrismaService } from '../prisma/prisma.service';
 import { buildExecutionScope, canAccessExecution, canAccessRobot, isAdmin } from '../shared/access';
 import { fixMulterFilename, toUserFileName, uniqueStoredFileName } from '../shared/files';
+import { validateServerPathParameters } from '../shared/server-path';
 import { ensureExecutionDirs, inputDir, storageRoot } from '../shared/storage';
 
 type UploadFile = {
@@ -55,6 +56,8 @@ export class ExecutionsService {
     if (!canAccessRobot(user, robot)) {
       throw new NotFoundException('Robot not found');
     }
+
+    validateServerPathParameters(robot.schema, payload.parameters);
 
     const execution = await this.prisma.execution.create({
       data: {

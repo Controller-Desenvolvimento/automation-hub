@@ -73,6 +73,13 @@ export type RobotSchemaField = {
   options?: string[];
   defaultValue?: string;
   adminOnly?: boolean;
+  /** type 'serverpath': pasta raiz (vista pelo servidor) onde o usuário pode navegar */
+  rootPath?: string;
+  /** type 'serverpath': escolher um arquivo ou uma pasta */
+  pick?: 'file' | 'folder';
+  /** type 'serverpath' + pick 'file': extensões aceitas, ex.: ".xlsx" */
+  accept?: string;
+  helperText?: string;
 };
 
 export type RobotSchemaFileInput = {

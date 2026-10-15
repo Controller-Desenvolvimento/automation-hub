@@ -6,6 +6,7 @@ import { PageHeader } from '../components/page-header';
 import { Badge } from '../components/ui/badge';
 import { Button } from '../components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card';
+import { ServerPathPicker } from '../components/server-path-picker';
 import { Input } from '../components/ui/input';
 import { Separator } from '../components/ui/separator';
 import { Textarea } from '../components/ui/textarea';
@@ -180,7 +181,7 @@ export function RobotDetailPage() {
               </Field>
 
               {fields.map((field) => (
-                <FieldRenderer key={field.name} field={field} />
+                <FieldRenderer key={field.name} field={field} robotId={robot.id} />
               ))}
 
               {fileInputs.map((fileInput) => (
@@ -302,11 +303,23 @@ function ResourceItem({ icon, label, value }: { icon: ReactNode; label: string; 
   );
 }
 
-function FieldRenderer({ field }: { field: RobotSchemaField }) {
+function FieldRenderer({ field, robotId }: { field: RobotSchemaField; robotId: string }) {
   const className =
-    field.type === 'textarea' || field.type === 'radio' || field.type === 'checkbox' || field.type === 'checkbox-group'
+    field.type === 'textarea' ||
+    field.type === 'radio' ||
+    field.type === 'checkbox' ||
+    field.type === 'checkbox-group' ||
+    field.type === 'serverpath'
       ? 'md:col-span-2'
       : '';
+
+  if (field.type === 'serverpath') {
+    return (
+      <Field className={className} label={field.label} hint={field.helperText}>
+        <ServerPathPicker robotId={robotId} field={field} />
+      </Field>
+    );
+  }
 
   if (field.type === 'checkbox-group') {
     const defaultValues = (field.defaultValue ?? '').split(',').map((value) => value.trim()).filter(Boolean);

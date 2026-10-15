@@ -66,6 +66,7 @@ ALLOWED_ORIGIN=http://localhost:5173
 PORT=3000  # opcional
 EXECUTION_RETENTION_DAYS=30  # retenção de arquivos/logs de execuções (0 = nunca limpar)
 EXECUTION_STALL_TIMEOUT_MINUTES=45  # watchdog: cancela como erro uma execução sem NENHUMA saída (stdout/stderr) por esse tempo (0 = desligado)
+SERVER_PATH_DRIVES=X=\\servidor\compartilhamento  # unidades de rede vistas pelo servidor, p/ campos `serverpath` (letra=caminho; vários separados por `;`)
 ```
 
 Relatório "Tempo ganho" (todas opcionais, valores padrão entre parênteses; ver `apps/api/src/reports/time-savings-metrics.ts`):
@@ -203,6 +204,8 @@ GET  /storage/*               # arquivos estáticos (requer autenticação)
 - **O João (assistente do hub):** o chat do hub e o mascote são o João, fixo para todos (sem escolha de mascote; a coluna `User.mascotSkin` ficou sem uso). Quadros em `apps/web/public/mascots/joao/mascot-<modo>-<n>.png` (modos e nº de quadros em `MASCOT_ANIMATIONS`, no `site-chat-widget.tsx`): `waiting` (parado), `idle` (atento, quando há balão de dica), `running` (arrastando; `run-left` é o espelho de `run-right`), `jumping` (soltou), `waving` (acena ao abrir o chat, ao voltar da bolinha e, às vezes, sozinho na tela inicial), `failed` (triste e senta, ao ocultar), `review` (pensando, enquanto responde) e `tablet` (com painel/BI aberto). Quadros novos precisam ter o mesmo tamanho visual do João em pé (senão ele "cresce" na troca de animação). Os textos e o prompt dele ("Oi, eu sou o João!") ficam no widget e em `site-chat.service.ts`.
 - **Registro** cria contas com `isActive: false` — um admin precisa ativar em `/settings` antes do primeiro login (o primeiro usuário do sistema continua virando admin ativo)
 - **Priority** de execução só é aceito de admins (empregados não furam a fila)
+
+- **Campo `serverpath` (escolher caminho do servidor):** em `schema.fields` do robô, `type: "serverpath"` mostra um campo de texto + botão "Procurar" que abre um navegador das pastas que o **servidor** enxerga (ex.: unidade X:); o robô recebe só o caminho (string em `AUTOMATION_PARAMETERS_FILE`), sem upload. Config do campo: `rootPath` (raiz permitida), `pick` (`file`|`folder`), `accept` (extensões, se arquivo). O navegador (`GET /api/robots/:id/browse?field=&path=`, `shared/server-path.ts`) e a validação na criação da execução só aceitam caminhos DENTRO do `rootPath` do schema (nunca informado pelo cliente; `..`, outra raiz ou prefixo parecido são recusados). A letra da unidade não fica conectada no processo do hub, então `SERVER_PATH_DRIVES` (no `.env`, fora do git) traduz `X:` para o caminho de rede; o robô precisa fazer a mesma tradução ao abrir o caminho. Componente: `components/server-path-picker.tsx` (usado em `robot-detail-page` e `schedules-page`). Exemplo: ADECE — Preencher Nº do Documento.
 
 ## Integração de novos robôs
 

@@ -6,6 +6,7 @@ import {
   NotFoundException,
   Param,
   Post,
+  Query,
   Req,
   UploadedFiles,
   UseInterceptors,
@@ -14,6 +15,7 @@ import { AnyFilesInterceptor } from '@nestjs/platform-express';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import type { Request } from 'express';
 import { AuthService } from '../auth/auth.service';
+import { getServerPathFields, listServerPath } from '../shared/server-path';
 import { uploadLimits } from '../shared/upload';
 import { RobotsSyncService } from './robots-sync.service';
 import { RobotsService } from './robots.service';
@@ -59,6 +61,29 @@ export class RobotsController {
     const user = await this.authService.requireUser(request);
     this.authService.ensureAdmin(user);
     return this.robotsSyncService.sync();
+  }
+
+  // Navegador de pastas do servidor para campos `serverpath` (a raiz vem do schema do robô,
+  // nunca do cliente, e o caminho pedido precisa ficar dentro dela).
+  @Get(':id/browse')
+  async browse(
+    @Param('id') id: string,
+    @Query('field') fieldName: string,
+    @Query('path') path: string | undefined,
+    @Req() request: Request,
+  ) {
+    const user = await this.authService.requireUser(request);
+    const robot = await this.robotsService.findOne(id, user);
+    if (!robot) {
+      throw new NotFoundException('Automação não encontrada.');
+    }
+
+    const field = getServerPathFields(robot.schema).find((item) => item.name === fieldName);
+    if (!field) {
+      throw new NotFoundException('Campo de caminho não encontrado.');
+    }
+
+    return listServerPath(field, path ?? '');
   }
 
   @Get(':id')

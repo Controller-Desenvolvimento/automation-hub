@@ -6,6 +6,7 @@ import { PageHeader } from '../components/page-header';
 import { Badge } from '../components/ui/badge';
 import { Button } from '../components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card';
+import { ServerPathPicker } from '../components/server-path-picker';
 import { Input } from '../components/ui/input';
 import { Separator } from '../components/ui/separator';
 import { Textarea } from '../components/ui/textarea';
@@ -528,6 +529,7 @@ export function SchedulesPage() {
                     <FieldRenderer
                       key={field.name}
                       field={field}
+                      robotId={selectedRobot?.id ?? ''}
                       value={draft.parameters[field.name]}
                       onChange={(value) =>
                         setDraft((current) => ({
@@ -822,17 +824,32 @@ export function SchedulesPage() {
 
 function FieldRenderer({
   field,
+  robotId,
   value,
   onChange,
 }: {
   field: RobotSchemaField;
+  robotId: string;
   value: string | boolean | undefined;
   onChange: (value: string | boolean) => void;
 }) {
   const className =
-    field.type === 'textarea' || field.type === 'radio' || field.type === 'checkbox'
+    field.type === 'textarea' || field.type === 'radio' || field.type === 'checkbox' || field.type === 'serverpath'
       ? 'md:col-span-2'
       : '';
+
+  if (field.type === 'serverpath') {
+    return (
+      <Field className={className} label={field.label} hint={field.helperText}>
+        <ServerPathPicker
+          robotId={robotId}
+          field={field}
+          value={String(value ?? field.defaultValue ?? '')}
+          onChange={(next) => onChange(next)}
+        />
+      </Field>
+    );
+  }
 
   if (field.type === 'textarea') {
     return (
