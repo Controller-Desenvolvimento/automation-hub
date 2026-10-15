@@ -25,6 +25,12 @@ const MSG_UNAVAILABLE =
   'O João não conseguiu falar com este painel agora (o servidor do painel parece estar parado). Tente novamente em instantes ou avise a equipe de Inovação.';
 const MSG_FAILED = 'O João não conseguiu responder sobre este painel agora. Tente novamente em instantes.';
 const MSG_TIMEOUT = 'O João demorou demais para responder sobre este painel. Tente uma pergunta mais específica.';
+const MSG_NO_CHAT =
+  'Este painel ainda não tem o chat de IA ligado. Para dúvidas sobre o Hub, feche o painel e pergunte ao João por aqui.';
+
+// Onde o painel serve o ChatKit: a maioria em /chatkit; alguns (ex.: BI DRE Contábil) em /api/chatkit.
+// Tenta nessa ordem quando o primeiro não existe (404/405) e guarda o que funcionou por painel.
+export const CHAT_PATHS = ['/chatkit', '/api/chatkit'];
 
 export type BiLink = {
   // null quando o painel é aberto direto (sem BI no meio).
@@ -53,6 +59,7 @@ class PanelHttpError extends Error {
 export class BiChatBridgeService {
   private readonly logger = new Logger(BiChatBridgeService.name);
   private readonly threads = new Map<string, { threadId: string; lastUsedAt: number }>();
+  private readonly chatPaths = new Map<string, string>();   // dashboardId -> caminho do ChatKit que funcionou
 
   constructor(private readonly prisma: PrismaService) {}
 
@@ -179,6 +186,10 @@ export class BiChatBridgeService {
 
   private toHttpException(error: unknown, link: BiLink): HttpException {
     if (error instanceof HttpException) return error;
+    if (error instanceof PanelHttpError && (error.status === 404 || error.status === 405)) {
+      this.logger.warn(`Painel ${link.dashboardSlug} não tem rota de chat (HTTP ${error.status} em ${CHAT_PATHS.join(' e ')}).`);
+      return new HttpException(MSG_NO_CHAT, HttpStatus.BAD_GATEWAY);
+    }
     this.logger.warn(`Falha ao falar com o painel ${link.dashboardSlug}: ${error instanceof Error ? error.message : String(error)}`);
     return new HttpException(MSG_FAILED, HttpStatus.BAD_GATEWAY);
   }
@@ -203,19 +214,29 @@ export class BiChatBridgeService {
     const turn = newTurn();
     try {
       armIdle();
-      let response: Response;
-      try {
-        response = await fetch(`http://127.0.0.1:${link.port}/chatkit${screen ? `?contexto=${encodeURIComponent(JSON.stringify(screen))}` : ''}`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
-          body: JSON.stringify(body),
-          signal: controller.signal,
-        });
-      } catch (error) {
-        if (handlers.signal?.aborted) throw error;
-        if (idleExpired) throw new HttpException(MSG_TIMEOUT, HttpStatus.GATEWAY_TIMEOUT);
-        this.logger.warn(`Painel ${link.dashboardSlug} inacessível na porta ${link.port}: ${error instanceof Error ? error.message : String(error)}`);
-        throw new HttpException(MSG_UNAVAILABLE, HttpStatus.SERVICE_UNAVAILABLE);
+      const query = screen ? `?contexto=${encodeURIComponent(JSON.stringify(screen))}` : '';
+      const known = this.chatPaths.get(link.dashboardId);
+      const candidates = known ? [known] : CHAT_PATHS;
+      let response!: Response;
+      for (let i = 0; i < candidates.length; i++) {
+        try {
+          response = await fetch(`http://127.0.0.1:${link.port}${candidates[i]}${query}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
+            body: JSON.stringify(body),
+            signal: controller.signal,
+          });
+        } catch (error) {
+          if (handlers.signal?.aborted) throw error;
+          if (idleExpired) throw new HttpException(MSG_TIMEOUT, HttpStatus.GATEWAY_TIMEOUT);
+          this.logger.warn(`Painel ${link.dashboardSlug} inacessível na porta ${link.port}: ${error instanceof Error ? error.message : String(error)}`);
+          throw new HttpException(MSG_UNAVAILABLE, HttpStatus.SERVICE_UNAVAILABLE);
+        }
+        const missing = response.status === 404 || response.status === 405;
+        if (missing && i < candidates.length - 1) continue;      // tenta o outro caminho
+        if (response.ok) this.chatPaths.set(link.dashboardId, candidates[i]);
+        else if (missing && known) this.chatPaths.delete(link.dashboardId);   // o painel mudou de rota: redescobre na próxima
+        break;
       }
 
       if (!response.ok || !response.body) {
