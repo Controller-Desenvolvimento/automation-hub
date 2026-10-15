@@ -4,8 +4,10 @@
 // campos ".campo-filtro": rótulo no <label>, valor em ".multi-select-btn" ou
 // <select>), pra o chat do hub enxergar exatamente o que o chat do painel vê.
 //
-// Depende da estrutura HTML dos painéis (BI_DEPES e irmãos). Se outro painel
-// usar marcação diferente, devolve filtros vazios — nunca quebra o chat.
+// Ordem: (1) a função coletarContextoTela() da própria página, quando existe (o painel
+// sabe melhor que ninguém o que está selecionado — ex.: BI DRE Contábil, que não usa
+// ".campo-filtro"); (2) a leitura por marcação (BI_DEPES e irmãos). Se nenhuma achar
+// filtros, devolve filtros vazios — nunca quebra o chat.
 
 export type PanelScreenContext = { pagina: string; filtros: Record<string, string> };
 
@@ -14,9 +16,31 @@ type SelectableButton = Element & {
   _obterSelecionado?: () => string;
 };
 
+// Normaliza o que a página devolve: valores podem vir como texto, número ou lista.
+function normalizePageContext(raw: unknown): PanelScreenContext | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const { pagina, filtros } = raw as { pagina?: unknown; filtros?: unknown };
+  if (!filtros || typeof filtros !== 'object' || Array.isArray(filtros)) return null;
+  const out: Record<string, string> = {};
+  for (const [chave, valor] of Object.entries(filtros as Record<string, unknown>)) {
+    const texto = Array.isArray(valor) ? valor.map(String).join(', ') : valor == null ? '' : String(valor);
+    if (texto.trim()) out[chave] = texto.trim();
+  }
+  return { pagina: typeof pagina === 'string' && pagina.trim() ? pagina.trim() : '(desconhecida)', filtros: out };
+}
+
 export function readPanelScreenContext(doc: Document | null | undefined): PanelScreenContext | null {
   if (!doc) return null;
   try {
+    const fromPage = (doc.defaultView as (Window & { coletarContextoTela?: () => unknown }) | null)?.coletarContextoTela;
+    if (typeof fromPage === 'function') {
+      try {
+        const ctx = normalizePageContext(fromPage.call(doc.defaultView));
+        if (ctx && Object.keys(ctx.filtros).length > 0) return ctx;
+      } catch {
+        // a função da página falhou: cai na leitura por marcação
+      }
+    }
     const filtros: Record<string, string> = {};
     doc.querySelectorAll('.campo-filtro').forEach((campo) => {
       const label = campo.querySelector('label');

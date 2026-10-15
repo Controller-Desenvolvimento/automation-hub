@@ -3,7 +3,7 @@ import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import test from 'node:test';
 import { HttpException } from '@nestjs/common';
-import { BiChatBridgeService, type BiLink } from '../src/site-chat/bi-chat-bridge.service';
+import { BiChatBridgeService, identityHeaders, type BiLink } from '../src/site-chat/bi-chat-bridge.service';
 
 // Painel falso: cada rota responde com o status combinado; as que dão 200 devolvem um ChatKit mínimo.
 function sse(text: string) {
@@ -17,10 +17,11 @@ function sse(text: string) {
   return events.map((e) => `data: ${JSON.stringify(e)}\n\n`).join('');
 }
 
-async function fakePanel(routes: Record<string, number>, hits: string[]) {
+async function fakePanel(routes: Record<string, number>, hits: string[], headersSeen: Record<string, string | string[] | undefined>[] = []) {
   const server: Server = createServer((req, res) => {
     const path = (req.url ?? '').split('?')[0];
     hits.push(`${req.method} ${path}`);
+    headersSeen.push(req.headers);
     req.resume();
     req.on('end', () => {
       const status = routes[path] ?? 404;
@@ -99,4 +100,23 @@ test('erro de verdade do painel (500) não vira "sem chat" nem tenta outro camin
   } finally {
     await panel.close();
   }
+});
+
+test('a ponte manda a identidade do usuário ao painel (sem o proxy do hub, que é quem injeta isso pro navegador)', async () => {
+  const headersSeen: Record<string, string | string[] | undefined>[] = [];
+  const panel = await fakePanel({ '/chatkit': 200 }, [], headersSeen);
+  try {
+    const joao = { id: 'u2', email: 'maria@empresa.com', name: 'Maria João' } as never;
+    await new BiChatBridgeService({} as never).ask({ user: joao, link: panel.link, question: 'oi', onDelta: () => undefined });
+    assert.equal(headersSeen[0]['x-hub-user-email'], 'maria@empresa.com');
+    assert.equal(headersSeen[0]['x-hub-user-name'], 'Maria João');
+  } finally {
+    await panel.close();
+  }
+});
+
+test('identityHeaders ignora valores que não cabem num cabeçalho HTTP (fora do Latin-1) em vez de quebrar a chamada', () => {
+  assert.deepEqual(identityHeaders({ email: 'a@b.com', name: 'Łukasz' }), { 'X-Hub-User-Email': 'a@b.com' });
+  assert.deepEqual(identityHeaders({ email: '', name: null }), {});
+  assert.deepEqual(identityHeaders({ email: 'a@b.com', name: 'José' }), { 'X-Hub-User-Email': 'a@b.com', 'X-Hub-User-Name': 'José' });
 });

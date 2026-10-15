@@ -32,6 +32,18 @@ const MSG_NO_CHAT =
 // Tenta nessa ordem quando o primeiro não existe (404/405) e guarda o que funcionou por painel.
 export const CHAT_PATHS = ['/chatkit', '/api/chatkit'];
 
+// A ponte chama o painel direto (sem passar pelo proxy /d/<slug>, que é quem injeta estes
+// cabeçalhos pro navegador). Sem eles o painel não sabe QUEM está perguntando e, quando o
+// contexto da tela vem vazio, cai na "última seleção de qualquer usuário" — o que pode
+// mostrar a empresa de outra pessoa. Só caracteres Latin-1 (limite de valor de cabeçalho HTTP).
+export function identityHeaders(user: { email?: string | null; name?: string | null }): Record<string, string> {
+  const headers: Record<string, string> = {};
+  const ok = (v?: string | null): v is string => !!v && /^[\u0020-\u00ff]+$/.test(v);
+  if (ok(user.email)) headers['X-Hub-User-Email'] = user.email;
+  if (ok(user.name)) headers['X-Hub-User-Name'] = user.name;
+  return headers;
+}
+
 export type BiLink = {
   // null quando o painel é aberto direto (sem BI no meio).
   siteId: string | null;
@@ -134,6 +146,7 @@ export class BiChatBridgeService {
         threadId ? { type: 'threads.add_user_message', params: { thread_id: threadId, input } } : { type: 'threads.create', params: { input } },
         handlers,
         screen ?? null,
+        identityHeaders(user),
       );
 
     let turn: ChatKitTurn;
@@ -194,7 +207,7 @@ export class BiChatBridgeService {
     return new HttpException(MSG_FAILED, HttpStatus.BAD_GATEWAY);
   }
 
-  private async runChatKit(link: BiLink, body: unknown, handlers: AskHandlers, screen: ScreenContext | null): Promise<ChatKitTurn> {
+  private async runChatKit(link: BiLink, body: unknown, handlers: AskHandlers, screen: ScreenContext | null, identity: Record<string, string> = {}): Promise<ChatKitTurn> {
     const controller = new AbortController();
     const onExternalAbort = () => controller.abort();
     if (handlers.signal?.aborted) controller.abort();
@@ -222,7 +235,7 @@ export class BiChatBridgeService {
         try {
           response = await fetch(`http://127.0.0.1:${link.port}${candidates[i]}${query}`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
+            headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream', ...identity },
             body: JSON.stringify(body),
             signal: controller.signal,
           });
