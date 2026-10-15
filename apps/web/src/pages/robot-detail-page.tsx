@@ -1,4 +1,4 @@
-import { BookOpen, ExternalLink, FileDown, FileText, LifeBuoy } from 'lucide-react';
+import { BookOpen, ExternalLink, FileDown, FileText, LifeBuoy, Settings } from 'lucide-react';
 import { useEffect, useState, type ReactNode } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { Field } from '../components/field';
@@ -83,9 +83,19 @@ export function RobotDetailPage() {
           </Badge>
         }
         actions={
-          <Button asChild variant="outline">
-            <Link to="/history">Ver histórico</Link>
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            {isAdmin ? (
+              <Button asChild variant="outline">
+                <Link to={`/settings?tab=robots&robotId=${encodeURIComponent(robot.id)}`}>
+                  <Settings className="mr-2 h-4 w-4" />
+                  Configurações
+                </Link>
+              </Button>
+            ) : null}
+            <Button asChild variant="outline">
+              <Link to={`/history?robotId=${encodeURIComponent(robot.id)}`}>Ver histórico</Link>
+            </Button>
+          </div>
         }
       />
 

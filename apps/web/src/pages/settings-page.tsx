@@ -292,6 +292,17 @@ export function SettingsPage() {
     if (activeTab !== 'docs') { setSelectedDocId(null); setIsCreatingNewDoc(false); }
   }, [activeTab]);
 
+  // Deep-link do botão "Configurações" da página do robô: /settings?tab=robots&robotId=<id>
+  useEffect(() => {
+    if (activeTab !== 'robots') return;
+    const id = searchParams.get('robotId');
+    if (id && robots.some((robot) => robot.id === id)) {
+      setIsCreatingNew(false);
+      setSelectedRobotId(id);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, searchParams, robots.length]);
+
   // Deep-link de "Editar" na aba Painéis (Sites): /settings?tab=dashboards&dashboardId=<id>
   useEffect(() => {
     if (activeTab !== 'dashboards') return;

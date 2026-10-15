@@ -1,6 +1,6 @@
-import { CalendarClock, Check, ChevronDown, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Plus, RefreshCw, Search } from 'lucide-react';
+import { CalendarClock, Check, ChevronDown, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Plus, RefreshCw, Search, X } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { PageHeader } from '../components/page-header';
 import { SiteFavicon } from '../components/site-favicon';
 import { Avatar, AvatarFallback } from '../components/ui/avatar';
@@ -19,8 +19,20 @@ const STATUS_OPTIONS: Execution['status'][] = ['running', 'queued', 'success', '
 type View = 'all' | 'manual' | 'scheduled' | 'bi';
 
 export function HistoryPage() {
-  const { executions, refreshHub, notify } = useHub();
+  const { hub, executions, refreshHub, notify } = useHub();
   const [view, setView] = useState<View>('all');
+  // Filtro por automação via link: /history?robotId=<id> (botão "Ver histórico" da página do robô)
+  const [searchParams, setSearchParams] = useSearchParams();
+  const robotFilterId = searchParams.get('robotId');
+  const robotFilterName = useMemo(
+    () =>
+      robotFilterId
+        ? hub?.robots.find((r) => r.id === robotFilterId)?.name ??
+          executions.find((e) => e.robotId === robotFilterId)?.robot?.name ??
+          null
+        : null,
+    [hub, executions, robotFilterId],
+  );
   const [userFilter, setUserFilter] = useState('');
   const [statusMenuOpen, setStatusMenuOpen] = useState(false);
   const [statusFilter, setStatusFilter] = useState<Execution['status'][]>([]);
@@ -47,13 +59,14 @@ export function HistoryPage() {
         robot.includes(term) ||
         step.includes(term);
       const matchesStatus = statusFilter.length === 0 || statusFilter.includes(execution.status);
+      const matchesRobot = !robotFilterId || execution.robotId === robotFilterId;
       const matchesOrigin =
         view !== 'scheduled' && view !== 'manual' ||
         (view === 'scheduled' && Boolean(execution.scheduledTaskId)) ||
         (view === 'manual' && !execution.scheduledTaskId);
-      return matchesTerm && matchesStatus && matchesOrigin;
+      return matchesTerm && matchesStatus && matchesOrigin && matchesRobot;
     });
-  }, [executions, view, statusFilter, userFilter]);
+  }, [executions, view, statusFilter, userFilter, robotFilterId]);
 
   const totalPages = Math.max(1, Math.ceil(filteredExecutions.length / rowsPerPage));
   const currentPage = Math.min(page, totalPages);
@@ -74,7 +87,7 @@ export function HistoryPage() {
 
   useEffect(() => {
     setPage(1);
-  }, [rowsPerPage, userFilter, statusFilter, view]);
+  }, [rowsPerPage, userFilter, statusFilter, view, robotFilterId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -174,6 +187,18 @@ export function HistoryPage() {
                 placeholder="Buscar por robô, usuário ou status..."
               />
             </div>
+
+            {robotFilterId ? (
+              <button
+                type="button"
+                onClick={() => setSearchParams({}, { replace: true })}
+                title="Remover filtro de automação"
+                className="inline-flex h-12 items-center gap-2 rounded-2xl border border-sky-300 bg-sky-50 px-4 text-sm font-medium text-sky-800 hover:bg-sky-100 dark:border-sky-800 dark:bg-sky-950/40 dark:text-sky-200 dark:hover:bg-sky-950/70"
+              >
+                <span className="max-w-[16rem] truncate">Automação: {robotFilterName ?? 'selecionada'}</span>
+                <X className="h-4 w-4 shrink-0" />
+              </button>
+            ) : null}
 
             <div className="relative">
               <Button variant="outline" onClick={() => setStatusMenuOpen((current) => !current)}>
