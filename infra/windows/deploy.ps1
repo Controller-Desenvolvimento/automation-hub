@@ -135,7 +135,14 @@ function Set-GhStatus([string]$Sha, [string]$State, [string]$Description) {
     if (Test-Path -LiteralPath $tokenFile) { $env:GH_TOKEN = (Get-Content -LiteralPath $tokenFile -Raw).Trim() }
     $desc = (($Description -replace "[`r`n]+", ' ') -replace '"', "'").Trim()    # aspas e quebras de linha quebram o argumento nativo
     if ($desc.Length -gt 130) { $desc = $desc.Substring(0, 130) }
-    Invoke-Native gh @('api', '-X', 'POST', ('repos/{0}/{1}/statuses/{2}' -f $Matches[1], $Matches[2], $Sha), '-f', "state=$State", '-f', 'context=deploy/servidor', '-f', "description=$desc") -AllowFail | Out-Null
+    # A rede do servidor oscila (ja vimos fetch falhar de madrugada): tenta ate 3 vezes e registra se nao der,
+    # senao o check ficaria preso em "pendente" no GitHub mesmo com o deploy concluido.
+    $repoPath = 'repos/{0}/{1}/statuses/{2}' -f $Matches[1], $Matches[2], $Sha
+    for ($try = 1; $try -le 3; $try++) {
+      $r = Invoke-Native gh @('api', '-X', 'POST', $repoPath, '-f', "state=$State", '-f', 'context=deploy/servidor', '-f', "description=$desc") -AllowFail
+      if ($r.Code -eq 0) { return }
+      if ($try -lt 3) { Start-Sleep -Seconds (3 * $try) } else { Log ('(status no GitHub nao enviado apos 3 tentativas: ' + (Tail $r.Text 160) + ')') }
+    }
   } catch {
     Log ('(status no GitHub ignorado: {0})' -f $_.Exception.Message)
   }
