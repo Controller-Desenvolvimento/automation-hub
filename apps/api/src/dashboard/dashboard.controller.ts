@@ -1,10 +1,10 @@
 import {
-  Body, Controller, Delete, ForbiddenException, Get, NotFoundException,
-  Param, Patch, Post, Req, UploadedFile, UseInterceptors,
+  BadRequestException, Body, Controller, Delete, ForbiddenException, Get, NotFoundException,
+  Param, Patch, Post, Req, Res, UploadedFile, UseInterceptors,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
-import type { Request } from 'express';
+import type { Request, Response } from 'express';
 import { memoryStorage } from 'multer';
 import { AuthService } from '../auth/auth.service';
 import { canAccessDashboard, isAdmin, normalizeDepartments } from '../shared/access';
@@ -188,6 +188,24 @@ export class DashboardController {
     if (!d) throw new NotFoundException();
     if (d.type === DashboardType.server) return this.svc.startServer(id);
     return this.svc.startStreamlit(id);
+  }
+
+  // Reinício completo: para, garante a porta livre, limpa o cache do Python e sobe um processo novo.
+  // `Clear-Site-Data: "cache"` faz o navegador de QUEM clicou descartar os arquivos guardados do hub e dos
+  // painéis (o painel mora no mesmo endereço), então o painel reaberto já vem com o código novo.
+  @Post(':id/restart')
+  async restart(@Req() req: Request, @Param('id') id: string, @Res({ passthrough: true }) res: Response) {
+    const user = await this.authService.requireUser(req);
+    if (!isAdmin(user)) throw new ForbiddenException();
+    const d = await this.svc.findById(id);
+    if (!d) throw new NotFoundException();
+    try {
+      const r = await this.svc.restart(id);
+      res.setHeader('Clear-Site-Data', '"cache"');
+      return { ...r.dashboard, pycacheRemovido: r.pycacheRemovido, processoAntigoEncerrado: r.processoAntigoEncerrado };
+    } catch (err) {
+      throw new BadRequestException(err instanceof Error ? err.message : 'Falha ao reiniciar o painel.');
+    }
   }
 
   @Post(':id/stop')

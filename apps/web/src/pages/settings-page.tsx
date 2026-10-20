@@ -1,4 +1,4 @@
-import { Bot, Building2, Clock, ClipboardCopy, Code2, Eye, EyeOff, FolderOpen, Globe, LayoutGrid, Pencil, Play, Plus, RefreshCw, Search, Square, Trash2, Users, X } from 'lucide-react';
+import { Bot, Building2, Clock, ClipboardCopy, Code2, Eye, EyeOff, FolderOpen, Globe, LayoutGrid, Pencil, Play, Plus, RefreshCw, RotateCw, Search, Square, Trash2, Users, X } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Field } from '../components/field';
@@ -179,7 +179,7 @@ export function SettingsPage() {
   const [isSavingDashboard, setIsSavingDashboard] = useState(false);
   const [dashboardFile, setDashboardFile] = useState<File | null>(null);
   const [confirmDeleteDashboardId, setConfirmDeleteDashboardId] = useState<string | null>(null);
-  const [dashboardAction, setDashboardAction] = useState<'start' | 'stop' | null>(null);
+  const [dashboardAction, setDashboardAction] = useState<'start' | 'stop' | 'restart' | null>(null);
   const [dashboardLog, setDashboardLog] = useState<string[]>([]);
 
   // Dev Docs state
@@ -1274,6 +1274,28 @@ export function SettingsPage() {
                                 <RefreshCw className="mr-1.5 h-3.5 w-3.5" />Logs
                               </Button>
                             )}
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              disabled={dashboardAction !== null}
+                              title="Para o servidor, limpa o cache e sobe de novo com o código atual do painel"
+                              onClick={async () => {
+                                if (!dashboardDraft.id) return;
+                                setDashboardAction('restart');
+                                try {
+                                  const r = await api<{ processoAntigoEncerrado?: boolean }>(`/dashboards/${dashboardDraft.id}/restart`, { method: 'POST' });
+                                  await loadDashboards();
+                                  if (dashboardDraft.id) void fetchDashboardLog(dashboardDraft.id);
+                                  notify(r?.processoAntigoEncerrado
+                                    ? `${label} reiniciado (havia um processo antigo preso; foi encerrado) e cache limpo.`
+                                    : `${label} reiniciado e cache limpo.`);
+                                } catch (e) { notify(e instanceof Error ? e.message : 'Erro ao reiniciar.'); }
+                                finally { setDashboardAction(null); }
+                              }}
+                            >
+                              <RotateCw className={`mr-1.5 h-3.5 w-3.5 ${dashboardAction === 'restart' ? 'animate-spin' : ''}`} />
+                              {dashboardAction === 'restart' ? 'Reiniciando…' : 'Reiniciar'}
+                            </Button>
                             <Button
                               variant="outline"
                               size="sm"

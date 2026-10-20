@@ -212,13 +212,15 @@ export function SitesPage() {
   const viewingDashboardSlug = searchParams.get('painel');
   const viewingDashboard = viewingDashboardSlug ? dashboards.find((d) => d.slug === viewingDashboardSlug) ?? null : null;
 
-  function openDashboardViewer(slug: string) {
+  // Endereço que abre o painel em "Ver". O "Abrir" da lista é um link de verdade para ele: clique normal
+  // abre aqui (com o marcador do histórico abaixo); Ctrl/Cmd+clique, botão do meio ou "abrir em nova aba"
+  // abrem uma aba nova direto no painel (o link direto funciona, ver acima).
+  function dashboardViewerSearch(slug: string) {
     const next = new URLSearchParams(searchParams);
     next.set('tab', 'paineis');
     next.set('painel', slug);
     next.delete('pagina'); // abre sempre na página inicial do painel
-    // Entrada nova no histórico; o marcador diz que o "fechar" pode simplesmente voltar uma entrada.
-    setSearchParams(next, { state: { viewerFromList: true } });
+    return `?${next.toString()}`;
   }
 
   function closeDashboardViewer() {
@@ -1200,9 +1202,18 @@ export function SitesPage() {
                                   onDone={(status) => setDashboards((prev) => prev.map((x) => x.id === d.id ? { ...x, lastUpdateStatus: status, lastUpdateAt: new Date().toISOString() } : x))}
                                 />
                               ) : null}
-                              <Button variant="outline" size="sm" disabled={isDown} onClick={() => openDashboardViewer(d.slug)}>
-                                Abrir
-                              </Button>
+                              {isDown ? (
+                                <Button variant="outline" size="sm" disabled>
+                                  Abrir
+                                </Button>
+                              ) : (
+                                <Button variant="outline" size="sm" asChild>
+                                  {/* Entrada nova no histórico; o marcador diz que o "fechar" pode simplesmente voltar uma entrada. */}
+                                  <Link to={{ search: dashboardViewerSearch(d.slug) }} state={{ viewerFromList: true }}>
+                                    Abrir
+                                  </Link>
+                                </Button>
+                              )}
                               {isAdmin && (
                                 <>
                                   <Link

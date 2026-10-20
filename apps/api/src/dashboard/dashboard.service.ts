@@ -4,10 +4,10 @@ import AdmZip from 'adm-zip';
 import { createProxyMiddleware, fixRequestBody } from 'http-proxy-middleware';
 import type { IncomingMessage } from 'node:http';
 import type { Duplex } from 'node:stream';
-import { ChildProcess, spawn } from 'node:child_process';
+import { ChildProcess, execSync, spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { createServer } from 'node:net';
-import { mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { Agent, fetch as undiciFetch } from 'undici';
 import { PrismaService } from '../prisma/prisma.service';
@@ -47,6 +47,11 @@ const updateDispatcher = new Agent({
 const CRASH_RESTART_DELAY_MS = 10 * 1000;
 const CRASH_LOOP_WINDOW_MS = 10 * 60 * 1000;
 const CRASH_LOOP_MAX_RESTARTS = 5;
+
+// Pastas que o "Reiniciar" não percorre ao limpar o cache do Python (grandes e sem __pycache__ do painel).
+const PYCACHE_SKIP_DIRS = new Set(['node_modules', '.git', 'venv', '.venv', 'env', 'site-packages', 'data', 'dados']);
+const PYCACHE_MAX_DEPTH = 6;
+const PYCACHE_MAX_DIRS = 5000;
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -95,6 +100,15 @@ export class DashboardService implements OnModuleInit, OnModuleDestroy {
         this.logger.error(`[${type}:${slug}] falha ao religar automaticamente: ${String(err)}`),
       );
     }, CRASH_RESTART_DELAY_MS);
+  }
+
+  // A saída de um processo que já foi parado ou substituído (Parar, Reiniciar, Iniciar por cima) chega
+  // DEPOIS, de forma assíncrona. Se ela mexesse no estado, apagaria o processo/proxy do processo novo e
+  // gravaria "erro" no banco por cima do "rodando". Quem parou/substituiu já cuidou do estado.
+  private isSupersededExit(id: string, proc: ChildProcess): boolean {
+    if (this.processes.get(id) === proc) return false;
+    this.intentionalStops.delete(id);
+    return true;
   }
 
   private appendError(id: string, line: string) {
@@ -356,6 +370,12 @@ export class DashboardService implements OnModuleInit, OnModuleDestroy {
             proxyRes.headers['cache-control'] = 'no-cache, no-store, no-transform';
             proxyRes.headers['x-accel-buffering'] = 'no';
           }
+          // Os painéis servem os arquivos estáticos só com Last-Modified/ETag, sem Cache-Control. Nesse caso o
+          // navegador "adivinha" quanto tempo reaproveitar (uma fração do tempo desde a última alteração: dias,
+          // para um theme.js antigo) e nem Ctrl+F5 resolve, pois o painel vive num iframe criado por script.
+          // `no-cache` = pode guardar, mas pergunta ao servidor se mudou (304 barato via ETag). Quem já manda
+          // Cache-Control próprio continua valendo.
+          if (!proxyRes.headers['cache-control']) proxyRes.headers['cache-control'] = 'no-cache';
           if (!slug) return;
           const loc = proxyRes.headers['location'];
           if (typeof loc === 'string' && loc.startsWith('/') && !loc.startsWith(`/d/${slug}`)) {
@@ -419,6 +439,7 @@ export class DashboardService implements OnModuleInit, OnModuleDestroy {
     });
     proc.on('exit', (code) => {
       this.logger.log(`[streamlit:${slug}] exit ${code}`);
+      if (this.isSupersededExit(id, proc)) return;
       this.processes.delete(id);
       this.proxies.delete(id);
       void this.prisma.dashboard.update({
@@ -489,6 +510,7 @@ export class DashboardService implements OnModuleInit, OnModuleDestroy {
     });
     proc.on('exit', (code) => {
       this.logger.log(`[server:${slug}] exit ${code}`);
+      if (this.isSupersededExit(id, proc)) return;
       this.processes.delete(id);
       this.proxies.delete(id);
       void this.prisma.dashboard.update({
@@ -523,6 +545,111 @@ export class DashboardService implements OnModuleInit, OnModuleDestroy {
       where: { id },
       data: { streamlitStatus: 'stopped' },
     });
+  }
+
+  /**
+   * Reinício completo (botão "Reiniciar"): para o processo, garante que a porta ficou livre (matando
+   * sobrevivente, se houver), limpa o cache do Python e sobe um processo NOVO — nunca reaproveita o antigo,
+   * como o "Iniciar" faz quando a porta ainda está ocupada. O cache do navegador é tratado pelo controller
+   * (Clear-Site-Data) e pelo proxy (Cache-Control: no-cache).
+   */
+  async restart(id: string): Promise<{ dashboard: Dashboard; pycacheRemovido: number; processoAntigoEncerrado: boolean }> {
+    const dashboard = await this.prisma.dashboard.findUniqueOrThrow({ where: { id } });
+    if (dashboard.type !== DashboardType.server && dashboard.type !== DashboardType.streamlit) {
+      throw new Error('Só painéis de servidor/Streamlit têm processo para reiniciar.');
+    }
+    if (dashboard.type === DashboardType.server) {
+      if (!dashboard.serverCommand) throw new Error('serverCommand não configurado.');
+      if (!dashboard.serverWorkingDirectory) throw new Error('serverWorkingDirectory não configurado.');
+    }
+
+    await this.stopStreamlit(id);
+    this.clearLastError(id);
+
+    const port = dashboard.streamlitPort;
+    const processoAntigoEncerrado = port ? await this.freePort(port) : false;
+
+    const dir = dashboard.serverWorkingDirectory ?? dashboardRoot(id);
+    const pycacheRemovido = await this.clearPyCache(dir);
+    this.logger.log(`[restart:${dashboard.slug}] porta ${port ?? '-'} livre; ${pycacheRemovido} pasta(s) __pycache__ removida(s)`);
+
+    const started = dashboard.type === DashboardType.server ? await this.startServer(id) : await this.startStreamlit(id);
+    return { dashboard: started, pycacheRemovido, processoAntigoEncerrado };
+  }
+
+  /** Espera a porta liberar; se um processo antigo sobreviveu ao "parar", encerra quem a segura. true = precisou matar. */
+  private async freePort(port: number): Promise<boolean> {
+    for (let i = 0; i < 8; i++) {   // ~2,4s: o sistema leva um instante para soltar a porta de um processo recém-morto
+      if (await isPortFree(port)) return false;
+      await sleep(300);
+    }
+    if (port < PORT_START || port > PORT_END) {
+      throw new Error(`A porta ${port} está ocupada e fora da faixa dos painéis (${PORT_START}–${PORT_END}); não vou encerrar quem a usa.`);
+    }
+    const pids = this.pidsListeningOn(port).filter((pid) => pid !== process.pid);
+    for (const pid of pids) {
+      this.logger.warn(`[restart] porta ${port} ainda ocupada pelo processo antigo ${pid} — encerrando`);
+      try {
+        if (process.platform === 'win32') execSync(`taskkill /F /T /PID ${pid}`, { stdio: 'ignore' });
+        else process.kill(pid, 'SIGKILL');
+      } catch { /* já morreu */ }
+    }
+    for (let i = 0; i < 20; i++) {
+      if (await isPortFree(port)) return pids.length > 0;
+      await sleep(300);
+    }
+    throw new Error(`A porta ${port} continua ocupada depois de encerrar o processo antigo. Veja quem a usa e tente de novo.`);
+  }
+
+  private pidsListeningOn(port: number): number[] {
+    try {
+      if (process.platform === 'win32') {
+        const out = execSync('netstat -ano -p tcp', { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+        const pids = new Set<number>();
+        for (const line of out.split(/\r?\n/)) {
+          const cols = line.trim().split(/\s+/);
+          // TCP  <local>  <remoto>  <estado>  <pid> — "escutando" = remoto zerado (o texto do estado muda com o idioma)
+          if (cols.length < 5 || cols[0] !== 'TCP') continue;
+          const remoto = cols[2];
+          if (!cols[1].endsWith(`:${port}`) || !(remoto.endsWith(':0') && (remoto.startsWith('0.0.0.0') || remoto.startsWith('[::]')))) continue;
+          const pid = Number(cols[cols.length - 1]);
+          if (Number.isInteger(pid) && pid > 0) pids.add(pid);
+        }
+        return [...pids];
+      }
+      const out = execSync(`lsof -ti tcp:${port} -sTCP:LISTEN`, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+      return out.split(/\s+/).map(Number).filter((n) => Number.isInteger(n) && n > 0);
+    } catch {
+      return [];
+    }
+  }
+
+  /** Apaga as pastas __pycache__ do projeto do painel (o Python recompila tudo do código atual). */
+  private async clearPyCache(root: string): Promise<number> {
+    let removidas = 0;
+    let visitadas = 0;
+    const percorrer = async (dir: string, nivel: number): Promise<void> => {
+      if (nivel > PYCACHE_MAX_DEPTH || visitadas > PYCACHE_MAX_DIRS) return;
+      let entradas;
+      try {
+        entradas = await readdir(dir, { withFileTypes: true });
+      } catch {
+        return;
+      }
+      for (const e of entradas) {
+        if (!e.isDirectory()) continue;
+        const caminho = join(dir, e.name);
+        if (e.name === '__pycache__') {
+          await rm(caminho, { recursive: true, force: true }).then(() => { removidas++; }).catch(() => {});
+          continue;
+        }
+        if (PYCACHE_SKIP_DIRS.has(e.name.toLowerCase())) continue;
+        visitadas++;
+        await percorrer(caminho, nivel + 1);
+      }
+    };
+    await percorrer(root, 0);
+    return removidas;
   }
 
   isRunning(id: string): boolean {
