@@ -14,6 +14,31 @@ export function setStoredToken(token: string | null) {
   window.localStorage.removeItem(AUTH_TOKEN_KEY);
 }
 
+/** Erro de uma chamada à API; `status` 0 = nem chegou ao servidor (rede caiu, hub reiniciando). */
+export class ApiError extends Error {
+  status: number;
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = 'ApiError';
+    this.status = status;
+  }
+}
+
+/** Falha que costuma passar sozinha (hub reiniciando/sobrecarregado, rede): vale tentar de novo. */
+export function isTransientError(err: unknown) {
+  const status = err instanceof ApiError ? err.status : 0;
+  return !(status === 400 || status === 401 || status === 403 || status === 404);
+}
+
+const MSG_SERVIDOR_INDISPONIVEL =
+  'O servidor está indisponível no momento (pode estar reiniciando ou sobrecarregado). Tente de novo em instantes.';
+const MSG_SEM_CONEXAO = 'Sem conexão com o servidor. Verifique a rede ou aguarde: ele pode estar reiniciando.';
+
+// Página de erro de quem está na frente do hub (IIS "502 - O servidor Web recebeu uma resposta inválida...").
+function pareceHtml(texto: string) {
+  return /^\s*(<!doctype html|<html)/i.test(texto);
+}
+
 export async function api<T>(path: string, options: RequestInit = {}) {
   const token = getStoredToken();
   const headers = new Headers(options.headers ?? {});
@@ -22,10 +47,15 @@ export async function api<T>(path: string, options: RequestInit = {}) {
     headers.set('Authorization', `Bearer ${token}`);
   }
 
-  const response = await fetch(`${API_BASE_URL}${path}`, {
-    ...options,
-    headers,
-  });
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE_URL}${path}`, {
+      ...options,
+      headers,
+    });
+  } catch {
+    throw new ApiError(MSG_SEM_CONEXAO, 0);
+  }
 
   if (!response.ok) {
     const text = await response.text();
@@ -34,9 +64,9 @@ export async function api<T>(path: string, options: RequestInit = {}) {
       const json = JSON.parse(text) as { message?: unknown };
       message = typeof json.message === 'string' ? json.message : text;
     } catch {
-      message = text || `Erro ${response.status}: ${response.statusText}`;
+      message = pareceHtml(text) ? MSG_SERVIDOR_INDISPONIVEL : text || `Erro ${response.status}: ${response.statusText}`;
     }
-    throw new Error(message || 'Falha na requisição.');
+    throw new ApiError(message || 'Falha na requisição.', response.status);
   }
 
   const contentType = response.headers.get('content-type') ?? '';

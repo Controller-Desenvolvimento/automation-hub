@@ -8,7 +8,7 @@ import { Progress } from '../components/ui/progress';
 import { Separator } from '../components/ui/separator';
 import { useAuth } from '../contexts/auth-context';
 import { useHub } from '../contexts/hub-context';
-import { api, downloadWithFeedback } from '../lib/api';
+import { api, downloadWithFeedback, isTransientError } from '../lib/api';
 import type { Execution } from '../lib/types';
 import { formatDate, statusLabel, statusVariant, userFileName } from '../lib/utils';
 import { useNavigate, useParams } from 'react-router-dom';
@@ -20,6 +20,8 @@ export function ExecutionPage() {
   const { notify, refreshHub } = useHub();
   const [execution, setExecution] = useState<Execution | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
+  // Falha passageira ao atualizar (hub reiniciando, 502, rede): a tela fica como está e tenta de novo.
+  const [connectionLost, setConnectionLost] = useState(false);
   const [isCanceling, setIsCanceling] = useState(false);
   const [isRetrying, setIsRetrying] = useState(false);
 
@@ -33,6 +35,8 @@ export function ExecutionPage() {
         const data = await api<Execution>(`/executions/${id}`);
         if (!cancelled) {
           setExecution(data);
+          setLoadError(null);
+          setConnectionLost(false);
           if (data.status === 'queued' || data.status === 'running') {
             timer = window.setTimeout(() => void load(), 2500);
           } else if (!finalCheck) {
@@ -40,9 +44,14 @@ export function ExecutionPage() {
           }
         }
       } catch (err) {
-        if (!cancelled) {
-          setLoadError(err instanceof Error ? err.message : 'Não foi possível carregar a execução.');
+        if (cancelled) return;
+        if (isTransientError(err)) {
+          // Antes qualquer falha trocava a página inteira pelo erro (com o HTML cru do IIS) e PARAVA de atualizar.
+          setConnectionLost(true);
+          timer = window.setTimeout(() => void load(finalCheck), 5000);
+          return;
         }
+        setLoadError(err instanceof Error ? err.message : 'Não foi possível carregar a execução.');
       }
     };
 
@@ -68,6 +77,17 @@ export function ExecutionPage() {
     }
   }, [logCount]);
 
+  const connectionBanner = connectionLost ? (
+    <div
+      role="status"
+      aria-live="polite"
+      className="flex items-center gap-2 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-2.5 text-sm text-amber-700 dark:border-amber-500/30 dark:bg-amber-950/20 dark:text-amber-300"
+    >
+      <RefreshCw className="h-3.5 w-3.5 shrink-0 animate-spin" />
+      Conexão com o servidor interrompida (ele pode estar reiniciando). Tentando de novo a cada poucos segundos.
+    </div>
+  ) : null;
+
   if (loadError) {
     return (
       <div role="status" className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-600 dark:border-rose-500/30 dark:bg-rose-950/20 dark:text-rose-400">
@@ -78,10 +98,11 @@ export function ExecutionPage() {
 
   if (!execution) {
     return (
-      <div role="status" aria-live="polite" className="grid grid-cols-1 animate-pulse gap-6">
-        <div className="h-8 w-72 rounded-lg bg-slate-200 dark:bg-slate-800" />
-        <div className="h-32 rounded-3xl bg-slate-100 dark:bg-slate-800/50" />
-        <div className="h-96 rounded-3xl bg-slate-100 dark:bg-slate-800/50" />
+      <div role="status" aria-live="polite" className="grid grid-cols-1 gap-6">
+        {connectionBanner}
+        <div className="h-8 w-72 animate-pulse rounded-lg bg-slate-200 dark:bg-slate-800" />
+        <div className="h-32 animate-pulse rounded-3xl bg-slate-100 dark:bg-slate-800/50" />
+        <div className="h-96 animate-pulse rounded-3xl bg-slate-100 dark:bg-slate-800/50" />
       </div>
     );
   }
@@ -109,6 +130,7 @@ export function ExecutionPage() {
 
   return (
     <div className="grid grid-cols-1 gap-5">
+      {connectionBanner}
       <PageHeader
         title={execution.robot.name}
         description={`${execution.requestedByName || execution.requestedByEmail || 'Usuário interno'} · ${formatDate(execution.startedAt || execution.createdAt)}`}
