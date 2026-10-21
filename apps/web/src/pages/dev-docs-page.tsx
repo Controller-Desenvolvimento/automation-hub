@@ -1,4 +1,4 @@
-import { ClipboardCopy, Code2, Search, Tag, Terminal } from 'lucide-react';
+import { Check, ClipboardCopy, Code2, Files, Search, Tag, Terminal } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { PageHeader } from '../components/page-header';
@@ -39,12 +39,33 @@ async function copyToClipboard(text: string): Promise<boolean> {
   }
 }
 
+// Um documento no formato usado para "Copiar tudo" e "Copiar tópico": título, categoria, resumo, como usar, exemplo e endpoint.
+function docToSection(doc: DevDoc): string {
+  const lines: string[] = [
+    `## ${doc.title}`,
+    `**Categoria:** ${doc.category}`,
+    `**Resumo:** ${doc.summary}`,
+    '',
+    '**Como usar:**',
+    doc.howToUse,
+  ];
+  if (doc.codeExample) {
+    lines.push('', `**Exemplo${doc.language ? ` (${doc.language})` : ''}:**`);
+    lines.push('```' + (doc.language ?? ''));
+    lines.push(doc.codeExample);
+    lines.push('```');
+  }
+  if (doc.endpoint) lines.push('', `**Endpoint:** \`${doc.endpoint}\``);
+  return lines.join('\n');
+}
+
 export function DevDocsPage() {
   const { notify } = useHub();
   const [docs, setDocs] = useState<DevDoc[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [query, setQuery] = useState('');
   const [copied, setCopied] = useState(false);
+  const [copiedTopic, setCopiedTopic] = useState<string | null>(null);
 
   useEffect(() => {
     api<DevDoc[]>('/dev-docs').then((data) => {
@@ -76,6 +97,7 @@ export function DevDocsPage() {
   }, [filtered]);
 
   const selected = docs.find((d) => d.id === selectedId) ?? null;
+  const topicCount = selected ? docs.filter((d) => d.category === selected.category).length : 0;
 
   function copyAsPrompt(doc: DevDoc) {
     const lines: string[] = [
@@ -105,27 +127,34 @@ export function DevDocsPage() {
   }
 
   function copyAll() {
-    const sections = docs.map((doc) => {
-      const lines: string[] = [
-        `## ${doc.title}`,
-        `**Categoria:** ${doc.category}`,
-        `**Resumo:** ${doc.summary}`,
-        '',
-        '**Como usar:**',
-        doc.howToUse,
-      ];
-      if (doc.codeExample) {
-        lines.push('', `**Exemplo${doc.language ? ` (${doc.language})` : ''}:**`);
-        lines.push('```' + (doc.language ?? ''));
-        lines.push(doc.codeExample);
-        lines.push('```');
-      }
-      if (doc.endpoint) lines.push('', `**Endpoint:** \`${doc.endpoint}\``);
-      return lines.join('\n');
-    });
-    const full = `# Documentação Técnica — Automation Hub\n\n${sections.join('\n\n---\n\n')}`;
+    const full = `# Documentação Técnica — Automation Hub\n\n${docs.map(docToSection).join('\n\n---\n\n')}`;
     void copyToClipboard(full).then((ok) => {
       notify(ok ? 'Toda a documentação copiada como prompt!' : 'Não foi possível copiar — copie o texto manualmente selecionando-o.');
+    });
+  }
+
+  // Todos os documentos de UM tópico (categoria) num só texto, para entregar de uma vez a uma IA. Copia o tópico inteiro mesmo
+  // com uma busca ativa na lateral: a ideia é levar o tópico completo, não só o que a busca deixou visível.
+  function copyTopic(category: string) {
+    const items = docs.filter((doc) => doc.category === category);
+    if (items.length === 0) return;
+    const quantos = `${items.length} ${items.length === 1 ? 'documento' : 'documentos'}`;
+    const full = [
+      '# Documentação Técnica — Automation Hub',
+      `Tópico: ${category} (${quantos})`,
+      '',
+      'Os documentos abaixo formam o guia completo deste tópico. Leia todos antes de agir.',
+      '',
+      items.map(docToSection).join('\n\n---\n\n'),
+    ].join('\n');
+    void copyToClipboard(full).then((ok) => {
+      if (ok) {
+        setCopiedTopic(category);
+        setTimeout(() => setCopiedTopic((atual) => (atual === category ? null : atual)), 2000);
+        notify(`Tópico "${category}" copiado como prompt (${quantos}).`);
+      } else {
+        notify('Não foi possível copiar — copie o texto manualmente selecionando-o.');
+      }
     });
   }
 
@@ -180,8 +209,23 @@ export function DevDocsPage() {
                 Array.from(byCategory.entries()).map(([category, items], gi) => (
                   <div key={category}>
                     {gi > 0 && <div className="mx-3 border-t border-slate-100 dark:border-white/[0.05]" />}
-                    <div className="px-4 pb-1 pt-3 text-[11px] font-semibold uppercase tracking-widest text-slate-400 dark:text-zinc-500">
-                      {category}
+                    <div className="flex items-center justify-between gap-2 px-4 pb-1 pt-3">
+                      <span className="text-[11px] font-semibold uppercase tracking-widest text-slate-400 dark:text-zinc-500">
+                        {category}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => copyTopic(category)}
+                        title={`Copiar todos os documentos de "${category}" como prompt`}
+                        aria-label={`Copiar todos os documentos de ${category} como prompt`}
+                        className="rounded-md p-1 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700 dark:text-zinc-500 dark:hover:bg-white/[0.06] dark:hover:text-zinc-200"
+                      >
+                        {copiedTopic === category ? (
+                          <Check className="h-3.5 w-3.5 text-emerald-500" />
+                        ) : (
+                          <ClipboardCopy className="h-3.5 w-3.5" />
+                        )}
+                      </button>
                     </div>
                     {items.map((doc) => (
                       <button
@@ -231,15 +275,27 @@ export function DevDocsPage() {
 
                 <div className="mt-4 flex items-center justify-between gap-4">
                   <p className="text-sm text-slate-500 dark:text-zinc-400">{selected.summary}</p>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="shrink-0"
-                    onClick={() => copyAsPrompt(selected)}
-                  >
-                    <ClipboardCopy className="mr-1.5 h-3.5 w-3.5" />
-                    {copied ? 'Copiado!' : 'Copiar como prompt'}
-                  </Button>
+                  <div className="flex shrink-0 flex-wrap justify-end gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => copyAsPrompt(selected)}
+                    >
+                      <ClipboardCopy className="mr-1.5 h-3.5 w-3.5" />
+                      {copied ? 'Copiado!' : 'Copiar como prompt'}
+                    </Button>
+                    {topicCount > 1 ? (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        title={`Copia os ${topicCount} documentos do tópico "${selected.category}" num só texto, para entregar de uma vez a uma IA`}
+                        onClick={() => copyTopic(selected.category)}
+                      >
+                        <Files className="mr-1.5 h-3.5 w-3.5" />
+                        {copiedTopic === selected.category ? 'Copiado!' : `Copiar tópico inteiro (${topicCount})`}
+                      </Button>
+                    ) : null}
+                  </div>
                 </div>
               </div>
 
