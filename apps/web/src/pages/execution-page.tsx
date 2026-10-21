@@ -294,8 +294,6 @@ function ParametersCard({ execution }: { execution: Execution }) {
     ...hidden.filter((name) => !fieldByName.has(name)),
   ].filter((name, index, all) => all.indexOf(name) === index);
 
-  if (names.length === 0) return null;
-
   function toggle(name: string) {
     setRevealed((current) => {
       const next = new Set(current);
@@ -319,6 +317,12 @@ function ParametersCard({ execution }: { execution: Execution }) {
         </div>
       </CardHeader>
       <CardContent>
+        {names.length === 0 ? (
+          // Muitos robôs só usam os arquivos enviados (sem campos no formulário); sem este aviso o cartão sumia e parecia defeito.
+          <p className="text-sm text-slate-500 dark:text-zinc-400">
+            Esta automação não recebeu parâmetros: ela usa apenas os arquivos de entrada.
+          </p>
+        ) : null}
         <dl className="grid grid-cols-1 gap-x-8 gap-y-4 sm:grid-cols-2 xl:grid-cols-3">
           {names.map((name) => {
             const field = fieldByName.get(name);
