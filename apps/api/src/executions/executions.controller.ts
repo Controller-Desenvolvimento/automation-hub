@@ -92,11 +92,24 @@ export class ExecutionsController {
     return execution;
   }
 
+  // Rodar de novo com as mesmas entradas. Quem executou ou um administrador (a regra fica no serviço).
   @Post(':id/retry')
   async retryExecution(@Param('id') id: string, @Req() request: Request) {
     const user = await this.authService.requireUser(request);
-    this.authService.ensureAdmin(user);
     return this.executionsService.retry(id, user);
+  }
+
+  // Rodar de novo usando a planilha de saída como entrada (continua de onde parou). `fileName` só é preciso quando a
+  // saída tem mais de uma planilha e nenhuma tem o nome da planilha enviada.
+  @Post(':id/retry-with-output')
+  async retryExecutionWithOutput(
+    @Param('id') id: string,
+    @Req() request: Request,
+    @Body() body?: { fileName?: string },
+  ) {
+    const user = await this.authService.requireUser(request);
+    const fileName = typeof body?.fileName === 'string' && body.fileName.trim() ? body.fileName.trim() : undefined;
+    return this.executionsService.retryWithOutputSpreadsheet(id, user, fileName);
   }
 }
 

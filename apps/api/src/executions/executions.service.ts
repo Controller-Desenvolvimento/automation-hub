@@ -1,14 +1,17 @@
 import {
   BadRequestException,
+  ForbiddenException,
   Injectable,
   InternalServerErrorException,
   NotFoundException,
 } from '@nestjs/common';
 import { ExecutionStatus, Prisma, type User } from '@prisma/client';
-import { copyFile, rename, unlink, writeFile } from 'node:fs/promises';
-import { join, relative } from 'node:path';
+import AdmZip from 'adm-zip';
+import { access, copyFile, readFile, rename, unlink, writeFile } from 'node:fs/promises';
+import { extname, join, relative } from 'node:path';
 import { PrismaService } from '../prisma/prisma.service';
 import { buildExecutionScope, canAccessExecution, canAccessRobot, isAdmin } from '../shared/access';
+import { parametersForViewer, withoutParameters } from '../shared/execution-parameters';
 import { fixMulterFilename, toUserFileName, uniqueStoredFileName } from '../shared/files';
 import { validateServerPathParameters } from '../shared/server-path';
 import { ensureExecutionDirs, inputDir, storageRoot } from '../shared/storage';
@@ -20,6 +23,39 @@ type UploadFile = {
   buffer?: Buffer;
   path?: string;
 };
+
+const SPREADSHEET_RE = /\.(xlsx|xlsm|xls)$/i;
+const SPREADSHEET_MIME: Record<string, string> = {
+  '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  '.xlsm': 'application/vnd.ms-excel.sheet.macroEnabled.12',
+  '.xls': 'application/vnd.ms-excel',
+};
+
+type ExecutionFileRow = {
+  id: string;
+  kind: string;
+  filename: string;
+  originalName: string | null;
+  downloadName: string | null;
+  storagePath: string;
+  mimeType: string | null;
+  size: number | null;
+};
+
+type OutputSpreadsheet = { name: string; data: Buffer };
+
+// Nome sem o prefixo "<timestamp>-<id>-" que o hub põe nos arquivos enviados e sem a extensão, para comparar.
+function comparableBaseName(name: string) {
+  return name
+    .replace(/^(?:\d{13}-[a-z0-9]{6}-)+/i, '')
+    .replace(/\.[^.]+$/, '')
+    .trim()
+    .toLowerCase();
+}
+
+function isSpreadsheetName(name: string | null | undefined) {
+  return SPREADSHEET_RE.test(name ?? '');
+}
 
 type CreateExecutionInput = {
   userId: string;
@@ -118,13 +154,40 @@ export class ExecutionsService {
     return this.getExecution(execution.id, user);
   }
 
+  /** Rodar de novo com as mesmas entradas (quem executou ou um administrador). */
   async retry(id: string, requestedBy: User) {
+    return this.cloneExecution(id, requestedBy, null);
+  }
+
+  /**
+   * Rodar de novo usando a PLANILHA FINAL da execução como entrada (no lugar da planilha enviada). Serve para
+   * continuar de onde parou quando o robô foi interrompido (hub reiniciado, cancelamento, erro): a planilha de
+   * saída já traz marcado o que foi feito, e o robô pula essas linhas.
+   */
+  async retryWithOutputSpreadsheet(id: string, requestedBy: User, fileName?: string) {
+    return this.cloneExecution(id, requestedBy, { fileName });
+  }
+
+  private async cloneExecution(
+    id: string,
+    requestedBy: User,
+    withOutput: { fileName?: string } | null,
+  ) {
     const original = await this.prisma.execution.findUnique({
       where: { id },
-      include: { files: true },
+      include: { files: true, robot: true },
     });
 
     if (!original) {
+      throw new NotFoundException('Execution not found');
+    }
+
+    // Quem executou ou um administrador. Repetir reaproveita os parâmetros da execução original (inclusive CPF/senha
+    // digitados nela), por isso um colega não pode repetir a execução de outro.
+    if (!isAdmin(requestedBy) && original.userId !== requestedBy.id) {
+      throw new ForbiddenException('Só quem executou a automação (ou um administrador) pode rodá-la novamente.');
+    }
+    if (!canAccessRobot(requestedBy, original.robot)) {
       throw new NotFoundException('Execution not found');
     }
 
@@ -136,6 +199,16 @@ export class ExecutionsService {
       throw new BadRequestException(
         'Os arquivos de entrada dessa execução já foram removidos pela retenção. Não é possível reiniciar automaticamente.',
       );
+    }
+
+    const inputFiles = original.files.filter((file) => file.kind === 'input');
+
+    // Modo "planilha final como entrada": descobre a planilha de saída e qual entrada ela substitui — tudo antes de criar
+    // a execução nova, para um erro aqui não deixar uma execução pela metade.
+    let replacement: { target: ExecutionFileRow; output: OutputSpreadsheet } | null = null;
+    if (withOutput) {
+      const output = await this.findOutputSpreadsheet(original.files, inputFiles, withOutput.fileName);
+      replacement = { target: this.pickInputToReplace(inputFiles, output.name), output };
     }
 
     const execution = await this.prisma.execution.create({
@@ -152,38 +225,134 @@ export class ExecutionsService {
 
     await ensureExecutionDirs(execution.id);
 
-    const inputFiles = original.files.filter((file) => file.kind === 'input');
-    if (inputFiles.length > 0) {
-      const copiedFiles = await Promise.all(
-        inputFiles.map(async (file) => {
-          const storedName = uniqueStoredFileName(file.originalName ?? file.filename);
+    const copiedFiles = await Promise.all(
+      inputFiles.map(async (file) => {
+        if (replacement && file.id === replacement.target.id) {
+          // Mantém o nome da planilha original (o robô monta o nome da saída a partir dele) com a extensão da planilha final.
+          const baseName = (file.originalName ?? file.filename).replace(/\.[^.]+$/, '');
+          const extension = extname(replacement.output.name).toLowerCase();
+          const newName = `${baseName}${extension}`;
+          const storedName = uniqueStoredFileName(newName);
           const absolutePath = join(inputDir(execution.id), storedName);
-          await copyFile(join(storageRoot, file.storagePath), absolutePath);
-
+          await writeFile(absolutePath, replacement.output.data);
           return {
             executionId: execution.id,
             kind: 'input',
             filename: storedName,
-            originalName: file.originalName,
+            originalName: newName,
             storagePath: relative(storageRoot, absolutePath).replaceAll('\\', '/'),
-            downloadName: file.downloadName,
-            mimeType: file.mimeType,
-            size: file.size,
+            downloadName: newName,
+            mimeType: SPREADSHEET_MIME[extension] ?? file.mimeType,
+            size: replacement.output.data.length,
           };
-        }),
-      );
+        }
 
+        const storedName = uniqueStoredFileName(file.originalName ?? file.filename);
+        const absolutePath = join(inputDir(execution.id), storedName);
+        await copyFile(join(storageRoot, file.storagePath), absolutePath);
+        return {
+          executionId: execution.id,
+          kind: 'input',
+          filename: storedName,
+          originalName: file.originalName,
+          storagePath: relative(storageRoot, absolutePath).replaceAll('\\', '/'),
+          downloadName: file.downloadName,
+          mimeType: file.mimeType,
+          size: file.size,
+        };
+      }),
+    );
+
+    if (copiedFiles.length > 0) {
       await this.prisma.executionFile.createMany({ data: copiedFiles });
     }
 
     await this.log(
       execution.id,
       'info',
-      `Execução reiniciada com as mesmas entradas da execução ${original.id} por ${requestedBy.name}.`,
+      replacement
+        ? `Execução reiniciada usando a planilha de saída "${replacement.output.name}" da execução ${original.id} como entrada, por ${requestedBy.name}.`
+        : `Execução reiniciada com as mesmas entradas da execução ${original.id} por ${requestedBy.name}.`,
     );
     await this.updateProgress(execution.id, 5, 'Aguardando processamento');
 
     return this.getExecution(execution.id, requestedBy);
+  }
+
+  /** Planilhas (.xlsx/.xlsm/.xls) que a execução deixou na saída — soltas ou dentro do output.zip. */
+  private async findOutputSpreadsheet(
+    files: ExecutionFileRow[],
+    inputFiles: ExecutionFileRow[],
+    preferredName?: string,
+  ): Promise<OutputSpreadsheet> {
+    const candidates: Array<{ name: string; read: () => Promise<Buffer> }> = [];
+
+    for (const file of files.filter((f) => f.kind === 'output')) {
+      const fullPath = join(storageRoot, file.storagePath);
+      const name = file.downloadName ?? file.filename;
+      if (isSpreadsheetName(name)) {
+        candidates.push({ name, read: () => readFile(fullPath) });
+      } else if (/\.zip$/i.test(name) || /\.zip$/i.test(file.filename)) {
+        try {
+          await access(fullPath);
+          const zip = new AdmZip(fullPath);
+          for (const entry of zip.getEntries()) {
+            const entryName = entry.entryName.split('/').pop() ?? entry.entryName;
+            if (!entry.isDirectory && isSpreadsheetName(entryName) && !entryName.startsWith('~$')) {
+              candidates.push({ name: entryName, read: async () => entry.getData() });
+            }
+          }
+        } catch {
+          // zip ausente ou ilegível: segue com o que achou
+        }
+      }
+    }
+
+    if (candidates.length === 0) {
+      throw new BadRequestException(
+        'Essa execução não deixou nenhuma planilha (.xlsx) na saída para usar como entrada.',
+      );
+    }
+
+    let chosen = candidates.length === 1 ? candidates[0] : undefined;
+    if (!chosen && preferredName) {
+      chosen = candidates.find((c) => c.name.toLowerCase() === preferredName.toLowerCase());
+    }
+    if (!chosen) {
+      // Várias planilhas na saída: vale a que tem o mesmo nome (sem extensão) de uma planilha enviada.
+      const inputBases = new Set(
+        inputFiles
+          .filter((f) => isSpreadsheetName(f.originalName ?? f.filename))
+          .map((f) => comparableBaseName(f.originalName ?? f.filename)),
+      );
+      const matches = candidates.filter((c) => inputBases.has(comparableBaseName(c.name)));
+      if (matches.length === 1) chosen = matches[0];
+    }
+    if (!chosen) {
+      throw new BadRequestException(
+        `Há mais de uma planilha na saída (${candidates.map((c) => c.name).join(', ')}) e não sei qual usar como entrada.`,
+      );
+    }
+
+    return { name: chosen.name, data: await chosen.read() };
+  }
+
+  /** Qual planilha ENVIADA a planilha de saída vai substituir. */
+  private pickInputToReplace(inputFiles: ExecutionFileRow[], outputName: string): ExecutionFileRow {
+    const spreadsheets = inputFiles.filter((f) => isSpreadsheetName(f.originalName ?? f.filename));
+    if (spreadsheets.length === 0) {
+      throw new BadRequestException(
+        'Essa execução não recebeu planilha como entrada, então não há o que trocar pela planilha de saída.',
+      );
+    }
+    if (spreadsheets.length === 1) return spreadsheets[0];
+
+    const wanted = comparableBaseName(outputName);
+    const same = spreadsheets.filter((f) => comparableBaseName(f.originalName ?? f.filename) === wanted);
+    if (same.length === 1) return same[0];
+    throw new BadRequestException(
+      'Essa execução recebeu mais de uma planilha e não sei qual delas trocar pela planilha de saída.',
+    );
   }
 
   async listExecutions(user: User) {
@@ -204,10 +373,12 @@ export class ExecutionsService {
       take: 200,
     });
 
-    return executions.filter(
-      (execution) =>
-        canAccessExecution(user, execution) && canAccessRobot(user, execution.robot),
-    );
+    return executions
+      .filter(
+        (execution) =>
+          canAccessExecution(user, execution) && canAccessRobot(user, execution.robot),
+      )
+      .map(withoutParameters);
   }
 
   async listResults(user: User) {
@@ -237,7 +408,7 @@ export class ExecutionsService {
       : [];
     const taskMap = new Map(tasks.map((t) => [t.id, t]));
 
-    return executions.filter((e) => {
+    const visible = executions.filter((e) => {
       if (!canAccessRobot(user, e.robot as Parameters<typeof canAccessRobot>[1])) return false;
       if (adminUser) return true;
 
@@ -256,6 +427,7 @@ export class ExecutionsService {
       // 'specific'
       return task.recipientUserIds.includes(user.id);
     });
+    return visible.map(withoutParameters);
   }
 
   async getExecution(id: string, user?: User) {
@@ -284,8 +456,16 @@ export class ExecutionsService {
       throw new NotFoundException('Execution not found');
     }
 
+    // Com `user` (resposta ao navegador): parâmetros completos para quem executou e admins; sem as senhas para os demais.
+    // Sem `user` é uso interno do servidor e nada é alterado.
+    const parameters = user
+      ? parametersForViewer(execution, user)
+      : { inputJson: execution.inputJson, hiddenParameters: [] as string[] };
+
     return {
       ...execution,
+      inputJson: parameters.inputJson,
+      hiddenParameters: parameters.hiddenParameters,
       files: execution.files.map((file) => ({
         ...file,
         downloadUrl: `/storage/${file.storagePath}`,
@@ -481,7 +661,8 @@ export class ExecutionsService {
       throw new BadRequestException('A execução já foi finalizada e não pode ser cancelada.');
     }
 
-    return this.prisma.execution.findUniqueOrThrow({ where: { id } });
+    // A resposta do cancelamento não precisa dos parâmetros (e quem cancela pode não ser quem executou).
+    return withoutParameters(await this.prisma.execution.findUniqueOrThrow({ where: { id } }));
   }
 
   async updateProgress(id: string, progress: number, currentStep: string) {

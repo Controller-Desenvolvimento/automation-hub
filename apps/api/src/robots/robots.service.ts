@@ -18,6 +18,7 @@ import {
   normalizeDepartments,
 } from '../shared/access';
 import { generateToken, hashToken } from '../shared/crypto';
+import { withoutParameters } from '../shared/execution-parameters';
 import { toUserFileName, uniqueStoredFileName } from '../shared/files';
 import {
   ensureRobotExampleDirs,
@@ -135,7 +136,8 @@ export class RobotsService {
         lastExecution: robot.executions[0] ?? null,
         executions: undefined,
       })),
-      recentExecutions: visibleExecutions,
+      // Sem os parâmetros digitados (empresa, CPF, senha...): a tela inicial não usa e eles não devem sair em lista.
+      recentExecutions: visibleExecutions.map(withoutParameters),
     };
   }
 

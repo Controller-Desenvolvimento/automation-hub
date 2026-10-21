@@ -1,4 +1,4 @@
-import { Download, FileInput, Files, RefreshCw, SquareTerminal } from 'lucide-react';
+import { Download, Eye, EyeOff, FileInput, FileSpreadsheet, Files, RefreshCw, SlidersHorizontal, SquareTerminal } from 'lucide-react';
 import { useEffect, useState, type ReactNode } from 'react';
 import { PageHeader } from '../components/page-header';
 import { Badge } from '../components/ui/badge';
@@ -23,7 +23,8 @@ export function ExecutionPage() {
   // Falha passageira ao atualizar (hub reiniciando, 502, rede): a tela fica como está e tenta de novo.
   const [connectionLost, setConnectionLost] = useState(false);
   const [isCanceling, setIsCanceling] = useState(false);
-  const [isRetrying, setIsRetrying] = useState(false);
+  // Qual "rodar novamente" está em andamento (os dois botões ficam desabilitados enquanto um deles roda).
+  const [retrying, setRetrying] = useState<'same' | 'output' | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -108,23 +109,36 @@ export function ExecutionPage() {
   }
 
   const isLive = execution.status === 'queued' || execution.status === 'running';
+  // Quem executou e os administradores (a API confere de novo). O papel já vem "efetivo": Inovação conta como admin.
   const canRetry =
-    (execution.status === 'error' || execution.status === 'canceled') && user?.role === 'admin';
+    (execution.status === 'error' || execution.status === 'canceled') &&
+    (user?.role === 'admin' || (!!user && execution.userId === user.id));
   const outputFiles = execution.files.filter((file) => file.kind !== 'input');
   const inputFiles = execution.files.filter((file) => file.kind === 'input');
+  // "Com a planilha final como entrada" só faz sentido se a execução recebeu uma planilha e deixou arquivos na saída.
+  // Qual planilha da saída vale (às vezes dentro do output.zip) quem decide é a API.
+  const canRetryWithOutput =
+    canRetry &&
+    outputFiles.length > 0 &&
+    inputFiles.some((file) => /\.(xlsx|xlsm|xls)$/i.test(file.originalName ?? file.filename));
 
-  async function handleRetry() {
-    if (isRetrying) return;
-    setIsRetrying(true);
+  async function handleRetry(mode: 'same' | 'output') {
+    if (retrying) return;
+    setRetrying(mode);
     try {
-      const retried = await api<Execution>(`/executions/${execution!.id}/retry`, { method: 'POST' });
-      notify('Execução reiniciada com as mesmas entradas.');
+      const path = mode === 'output' ? 'retry-with-output' : 'retry';
+      const retried = await api<Execution>(`/executions/${execution!.id}/${path}`, { method: 'POST' });
+      notify(
+        mode === 'output'
+          ? 'Execução iniciada com a planilha final como entrada.'
+          : 'Execução reiniciada com as mesmas entradas.',
+      );
       await refreshHub();
       navigate(`/executions/${retried.id}`);
     } catch (err) {
       notify(err instanceof Error ? err.message : 'Não foi possível reiniciar a execução.');
     } finally {
-      setIsRetrying(false);
+      setRetrying(null);
     }
   }
 
@@ -156,10 +170,23 @@ export function ExecutionPage() {
               {isCanceling ? 'Cancelando...' : 'Cancelar execução'}
             </Button>
           ) : canRetry ? (
-            <Button variant="outline" disabled={isRetrying} onClick={() => void handleRetry()}>
-              <RefreshCw className={`mr-2 h-4 w-4 ${isRetrying ? 'animate-spin' : ''}`} />
-              {isRetrying ? 'Reiniciando...' : 'Reiniciar com mesmas entradas'}
-            </Button>
+            <>
+              <Button variant="outline" disabled={retrying !== null} onClick={() => void handleRetry('same')}>
+                <RefreshCw className={`mr-2 h-4 w-4 ${retrying === 'same' ? 'animate-spin' : ''}`} />
+                {retrying === 'same' ? 'Iniciando...' : 'Rodar novamente com as mesmas entradas'}
+              </Button>
+              {canRetryWithOutput ? (
+                <Button
+                  variant="outline"
+                  disabled={retrying !== null}
+                  title="Usa a planilha que esta execução deixou na saída (com o que já foi feito marcado) no lugar da enviada, para continuar de onde parou."
+                  onClick={() => void handleRetry('output')}
+                >
+                  <FileSpreadsheet className={`mr-2 h-4 w-4 ${retrying === 'output' ? 'animate-pulse' : ''}`} />
+                  {retrying === 'output' ? 'Iniciando...' : 'Rodar novamente com a planilha final como entrada'}
+                </Button>
+              ) : null}
+            </>
           ) : null
         }
       />
@@ -232,7 +259,112 @@ export function ExecutionPage() {
           />
         </div>
       </div>
+
+      {/* Faixa inteira no fim da página: logs e arquivos de saída são o que mais se consulta e não dividem espaço com ela. */}
+      <ParametersCard execution={execution} />
     </div>
+  );
+}
+
+const SECRET_NAME_RE = /senha|password|passwd|secret|segredo|token/i;
+
+function formatParameter(value: unknown, fieldType?: string): string {
+  if (value === null || value === undefined || value === '') return '—';
+  if (typeof value === 'boolean') return value ? 'Sim' : 'Não';
+  if (fieldType === 'checkbox' && (value === 'true' || value === 'false')) return value === 'true' ? 'Sim' : 'Não';
+  if (Array.isArray(value)) return value.length > 0 ? value.map((item) => String(item)).join(', ') : '—';
+  if (typeof value === 'object') return JSON.stringify(value);
+  return String(value);
+}
+
+// O que foi informado ao rodar a automação. Quem executou e os administradores veem tudo, inclusive as senhas (escondidas
+// por padrão, com um botão para mostrar): serve para achar "senha digitada errada" sem precisar ligar para o suporte.
+// Para os outros usuários a API tira as senhas e elas aparecem aqui como "oculto".
+function ParametersCard({ execution }: { execution: Execution }) {
+  const [revealed, setRevealed] = useState<Set<string>>(() => new Set());
+  const fields = execution.robot.schema?.fields ?? [];
+  const params = execution.inputJson ?? {};
+  const hidden = execution.hiddenParameters ?? [];
+  const fieldByName = new Map(fields.map((field) => [field.name, field]));
+
+  // Primeiro os campos do formulário do robô (na ordem dele), depois o que sobrou.
+  const names = [
+    ...fields.map((field) => field.name).filter((name) => name in params || hidden.includes(name)),
+    ...Object.keys(params).filter((name) => !fieldByName.has(name)),
+    ...hidden.filter((name) => !fieldByName.has(name)),
+  ].filter((name, index, all) => all.indexOf(name) === index);
+
+  if (names.length === 0) return null;
+
+  function toggle(name: string) {
+    setRevealed((current) => {
+      const next = new Set(current);
+      if (next.has(name)) next.delete(name);
+      else next.add(name);
+      return next;
+    });
+  }
+
+  return (
+    <Card className="rounded-3xl">
+      <CardHeader>
+        <div className="flex items-center gap-3">
+          <div className="rounded-xl border border-slate-200 p-2 dark:border-slate-800">
+            <SlidersHorizontal className="h-4 w-4 text-slate-500 dark:text-zinc-400" />
+          </div>
+          <div>
+            <CardTitle>Parâmetros</CardTitle>
+            <CardDescription>O que foi informado ao rodar esta automação.</CardDescription>
+          </div>
+        </div>
+      </CardHeader>
+      <CardContent>
+        <dl className="grid grid-cols-1 gap-x-8 gap-y-4 sm:grid-cols-2 xl:grid-cols-3">
+          {names.map((name) => {
+            const field = fieldByName.get(name);
+            const label = field?.label ?? name;
+            const isHidden = hidden.includes(name);
+            const isSecret = isHidden || field?.type === 'password' || SECRET_NAME_RE.test(name);
+            const text = formatParameter(params[name], field?.type);
+            const empty = text === '—';
+            const show = revealed.has(name);
+            // Valores longos (lista de empresas, observações) ocupam a linha toda em vez de espremer uma coluna.
+            const wide = !isSecret && (text.length > 60 || text.includes('\n'));
+            return (
+              <div key={name} className={wide ? 'sm:col-span-2 xl:col-span-3' : undefined}>
+                <dt className="text-xs font-medium text-slate-500 dark:text-zinc-400">{label}</dt>
+                <dd className="mt-0.5 flex items-start justify-between gap-2 text-sm text-slate-900 dark:text-zinc-100">
+                  {isHidden ? (
+                    <span className="text-slate-500 dark:text-zinc-400">
+                      Oculto — só quem executou e os administradores veem.
+                    </span>
+                  ) : isSecret && !empty ? (
+                    <>
+                      <span className={`min-w-0 break-all ${show ? 'font-mono' : 'tracking-widest'}`}>
+                        {show ? text : '•'.repeat(Math.min(text.length, 24))}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => toggle(name)}
+                        aria-label={show ? `Ocultar ${label}` : `Mostrar ${label}`}
+                        title={show ? 'Ocultar' : 'Mostrar'}
+                        className="shrink-0 rounded-lg p-1 text-slate-500 transition hover:bg-slate-100 hover:text-slate-800 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-100"
+                      >
+                        {show ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                      </button>
+                    </>
+                  ) : (
+                    <span className={`min-w-0 whitespace-pre-wrap break-words ${empty ? 'text-slate-400 dark:text-zinc-500' : ''}`}>
+                      {text}
+                    </span>
+                  )}
+                </dd>
+              </div>
+            );
+          })}
+        </dl>
+      </CardContent>
+    </Card>
   );
 }
 

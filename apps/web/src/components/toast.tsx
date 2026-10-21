@@ -7,7 +7,9 @@ export function ToastViewport() {
 
   useEffect(() => {
     if (!toast) return;
-    const timer = window.setTimeout(clearToast, 3000);
+    // 3 s fixos faziam mensagens de erro (ex.: "Sessão expirada...", "Este arquivo não está mais no servidor...") sumirem antes
+    // de dar tempo de ler: o clique parecia não ter feito nada. A duração acompanha o tamanho do texto (3 s a 10 s).
+    const timer = window.setTimeout(clearToast, Math.min(10_000, Math.max(3000, 1500 + toast.length * 70)));
     return () => window.clearTimeout(timer);
   }, [toast, clearToast]);
 

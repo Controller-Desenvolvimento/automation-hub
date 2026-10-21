@@ -18,11 +18,12 @@ import { SeedService } from './seed.service';
 import { SharedCredentialsModule } from './shared-credentials/shared-credentials.module';
 import { SiteChatModule } from './site-chat/site-chat.module';
 import { SitesModule } from './sites/sites.module';
+import { StorageModule } from './storage/storage.module';
 import { SystemModule } from './system/system.module';
 import { UsersModule } from './users/users.module';
 
 @Module({
-  imports: [PrismaModule, AuthModule, RobotsModule, ExecutionsModule, UsersModule, ScheduledTasksModule, ReportsModule, NotificationsModule, MaintenanceModule, SitesModule, DepartmentsModule, SharedCredentialsModule, IntegrationsModule, AutomationRequestsModule, SystemModule, DashboardModule, ExternalMetricsModule, DevDocsModule, SiteChatModule],
+  imports: [PrismaModule, AuthModule, RobotsModule, ExecutionsModule, UsersModule, ScheduledTasksModule, ReportsModule, NotificationsModule, MaintenanceModule, SitesModule, DepartmentsModule, SharedCredentialsModule, IntegrationsModule, AutomationRequestsModule, SystemModule, StorageModule, DashboardModule, ExternalMetricsModule, DevDocsModule, SiteChatModule],
   controllers: [AppController],
   providers: [SeedService],
 })

@@ -165,6 +165,12 @@ export type Robot = {
 
 export type Execution = {
   id: string;
+  /** Quem executou (dono da execução): ele e os administradores podem rodá-la novamente. */
+  userId?: string | null;
+  /** Parâmetros informados ao rodar (só no detalhe da execução; nas listas não vêm). */
+  inputJson?: Record<string, unknown> | null;
+  /** Parâmetros de senha escondidos de quem não executou e não é admin (ficam fora de `inputJson`). */
+  hiddenParameters?: string[];
   robotId: string;
   robot: Robot;
   status: 'queued' | 'running' | 'success' | 'error' | 'canceled';
