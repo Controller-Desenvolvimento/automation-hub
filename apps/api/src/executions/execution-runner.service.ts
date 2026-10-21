@@ -10,6 +10,7 @@ import { ExecutionsService } from './executions.service';
 import { findStalledExecutions, getStallTimeoutMs, stallMessage } from './stall-watchdog';
 import { NotificationsService } from '../notifications/notifications.service';
 import { listFilesRecursively, sanitizeFileName, toUserFileName } from '../shared/files';
+import { WINDOWS_HIDE } from '../shared/process-options';
 import { readDeployPendingSync } from '../system/deploy-state';
 import {
   ensureExecutionDirs,
@@ -410,6 +411,7 @@ export class ExecutionRunnerService implements OnModuleInit, OnModuleDestroy {
     const child = spawn(resolvedCommand, {
       cwd,
       shell: true,
+      windowsHide: WINDOWS_HIDE,
       detached: process.platform !== 'win32',
       env: {
         ...process.env,

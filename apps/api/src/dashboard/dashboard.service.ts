@@ -11,6 +11,7 @@ import { mkdir, readdir, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { Agent, fetch as undiciFetch } from 'undici';
 import { PrismaService } from '../prisma/prisma.service';
+import { WINDOWS_HIDE } from '../shared/process-options';
 import { dashboardRoot, dashboardsRoot } from '../shared/storage';
 
 const PORT_START = 8500;
@@ -341,7 +342,7 @@ export class DashboardService implements OnModuleInit, OnModuleDestroy {
   private killProcess(proc: ChildProcess) {
     const pid = proc.pid;
     if (pid && process.platform === 'win32') {
-      try { require('node:child_process').execSync(`taskkill /F /T /PID ${pid}`, { stdio: 'ignore' }); } catch { /* ignore */ }
+      try { require('node:child_process').execSync(`taskkill /F /T /PID ${pid}`, { stdio: 'ignore', windowsHide: WINDOWS_HIDE }); } catch { /* ignore */ }
     } else {
       try { proc.kill(); } catch { /* ignore */ }
     }
@@ -429,7 +430,7 @@ export class DashboardService implements OnModuleInit, OnModuleDestroy {
       '--server.enableCORS', 'false',
       '--server.enableXsrfProtection', 'false',
       '--server.baseUrlPath', `/d/${slug}`,
-    ], { cwd: dir, shell: false });
+    ], { cwd: dir, shell: false, windowsHide: WINDOWS_HIDE });
 
     proc.stdout?.on('data', (d) => this.logger.log(`[streamlit:${slug}] ${String(d).trim()}`));
     proc.stderr?.on('data', (d) => {
@@ -495,6 +496,7 @@ export class DashboardService implements OnModuleInit, OnModuleDestroy {
     const proc = spawn(command, [], {
       cwd: dashboard.serverWorkingDirectory,
       shell: true,
+      windowsHide: WINDOWS_HIDE,   // sem isso cada painel abria uma janela de prompt na tela do servidor
     });
 
     this.clearLastError(id);
@@ -590,7 +592,7 @@ export class DashboardService implements OnModuleInit, OnModuleDestroy {
     for (const pid of pids) {
       this.logger.warn(`[restart] porta ${port} ainda ocupada pelo processo antigo ${pid} — encerrando`);
       try {
-        if (process.platform === 'win32') execSync(`taskkill /F /T /PID ${pid}`, { stdio: 'ignore' });
+        if (process.platform === 'win32') execSync(`taskkill /F /T /PID ${pid}`, { stdio: 'ignore', windowsHide: WINDOWS_HIDE });
         else process.kill(pid, 'SIGKILL');
       } catch { /* já morreu */ }
     }
@@ -604,7 +606,7 @@ export class DashboardService implements OnModuleInit, OnModuleDestroy {
   private pidsListeningOn(port: number): number[] {
     try {
       if (process.platform === 'win32') {
-        const out = execSync('netstat -ano -p tcp', { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+        const out = execSync('netstat -ano -p tcp', { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], windowsHide: WINDOWS_HIDE });
         const pids = new Set<number>();
         for (const line of out.split(/\r?\n/)) {
           const cols = line.trim().split(/\s+/);
@@ -617,7 +619,7 @@ export class DashboardService implements OnModuleInit, OnModuleDestroy {
         }
         return [...pids];
       }
-      const out = execSync(`lsof -ti tcp:${port} -sTCP:LISTEN`, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+      const out = execSync(`lsof -ti tcp:${port} -sTCP:LISTEN`, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], windowsHide: WINDOWS_HIDE });
       return out.split(/\s+/).map(Number).filter((n) => Number.isInteger(n) && n > 0);
     } catch {
       return [];

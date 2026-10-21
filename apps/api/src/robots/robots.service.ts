@@ -19,6 +19,7 @@ import {
 } from '../shared/access';
 import { generateToken, hashToken } from '../shared/crypto';
 import { withoutParameters } from '../shared/execution-parameters';
+import { WINDOWS_HIDE } from '../shared/process-options';
 import { toUserFileName, uniqueStoredFileName } from '../shared/files';
 import {
   ensureRobotExampleDirs,
@@ -487,7 +488,7 @@ export class RobotsService {
         this.pipStatus.set(robot.id, 'installing');
 
         try {
-          execSync(`${pythonCmd} -m venv --system-site-packages "${pipDir}"`, { stdio: 'inherit' });
+          execSync(`${pythonCmd} -m venv --system-site-packages "${pipDir}"`, { stdio: 'inherit', windowsHide: WINDOWS_HIDE });
         } catch (err) {
           console.error(`[venv] erro ao criar venv: ${String(err)}`);
           this.pipStatus.set(robot.id, 'error');
@@ -497,6 +498,7 @@ export class RobotsService {
         const pip = spawn(venvPip, ['install', '-r', requirementsTxt], {
           stdio: 'inherit',
           shell: false,
+          windowsHide: WINDOWS_HIDE,
         });
         pip.on('error', (err) => {
           console.error(`[pip] erro ao instalar dependencias: ${err.message}`);

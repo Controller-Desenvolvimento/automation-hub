@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useLocation } from 'react-router-dom';
 import { useAuth } from '../contexts/auth-context';
 import { useChatScope } from '../contexts/chat-scope-context';
+import { pickPanelHint, type PanelHintKind } from '../lib/panel-hints';
 import { useHub } from '../contexts/hub-context';
 import { api, API_BASE_URL, downloadWithFeedback, getStoredToken } from '../lib/api';
 import { MASCOT_ACCENT, MASCOT_SKIN, type MascotSkinId } from '../lib/mascot-skins';
@@ -117,6 +118,9 @@ function MascotIcon({
 // pra não ficar chato.
 const HINT_IDLE_DELAY_MS = 25 * 1000;
 const HINT_MIN_INTERVAL_MS = 4 * 60 * 1000;
+// Modo painel (ver panel-hints.ts): a primeira fala vem logo ao entrar no painel e depois se repete de tempos em tempos.
+const PANEL_HINT_FIRST_DELAY_MS = 8 * 1000;
+const PANEL_HINT_REPEAT_MS = 5 * 60 * 1000;
 // "Oi" espontâneo na tela inicial: um aceno a cada 1 a 2 min (sorteado), só com a aba visível.
 const IDLE_WAVE_MIN_MS = 60 * 1000;
 const IDLE_WAVE_MAX_MS = 120 * 1000;
@@ -225,16 +229,46 @@ export function SiteChatWidget() {
     if (shrinkTimerRef.current) clearTimeout(shrinkTimerRef.current);
   }, []);
 
+  // Com painel/BI aberto (e o chat dele ligado) o João fala DO PAINEL, não do hub. A rota continua "/sites" nesse modo,
+  // então o tipo vem do escopo do chat. Por isso o escopo também está nas dependências: entrar ou sair de um painel
+  // reinicia o temporizador e troca o conjunto de frases.
+  const panelKind: PanelHintKind | null = biScope ? (biScope.dashboardId ? 'painel' : 'BI') : null;
+  const lastPanelHintRef = useRef<string | null>(null);
+  const introducedScopeRef = useRef<string | null>(null);   // conversa (painel) em que a fala de apresentação já saiu
   useEffect(() => {
     setHintText(null);
     if (open || hidden) return;
+
+    if (panelKind) {
+      // Modo painel: uma pessoa fica muito tempo na mesma tela, então a dica aparece logo ao entrar (apresenta o chat
+      // do painel) e volta de tempos em tempos enquanto o chat estiver fechado e a aba visível.
+      // A fala de apresentação vem UMA vez por painel aberto: se a pessoa abrir e fechar o chat, a próxima só vem depois
+      // do intervalo normal (senão a apresentação voltaria 8 s depois de cada conversa).
+      let timer: ReturnType<typeof setTimeout>;
+      const schedule = (delay: number, first: boolean) => {
+        timer = setTimeout(() => {
+          if (!document.hidden) {
+            const message = pickPanelHint(panelKind, { first, previous: lastPanelHintRef.current });
+            lastPanelHintRef.current = message;
+            introducedScopeRef.current = scopeKey;
+            lastHintAtRef.current = Date.now();
+            setHintText(message);
+          }
+          schedule(PANEL_HINT_REPEAT_MS, false);
+        }, delay);
+      };
+      const first = introducedScopeRef.current !== scopeKey;
+      schedule(first ? PANEL_HINT_FIRST_DELAY_MS : PANEL_HINT_REPEAT_MS, first);
+      return () => clearTimeout(timer);
+    }
+
     const timer = setTimeout(() => {
       if (Date.now() - lastHintAtRef.current < HINT_MIN_INTERVAL_MS) return;
       lastHintAtRef.current = Date.now();
       setHintText(pickHintMessage(location.pathname));
     }, HINT_IDLE_DELAY_MS);
     return () => clearTimeout(timer);
-  }, [location.pathname, open, hidden]);
+  }, [location.pathname, open, hidden, panelKind, scopeKey]);
 
   // Aceno espontâneo, só pra dar um oi: na tela inicial, com o chat fechado, sem arrastar,
   // sem balão e sem outra animação rolando. O intervalo é sorteado a cada vez pra não ficar
