@@ -5,7 +5,8 @@ import { useAuth } from '../contexts/auth-context';
 import { useChatScope } from '../contexts/chat-scope-context';
 import { pickPanelHint, type PanelHintKind } from '../lib/panel-hints';
 import { useHub } from '../contexts/hub-context';
-import { api, API_BASE_URL, downloadWithFeedback, getStoredToken } from '../lib/api';
+import { api, API_BASE_URL, downloadPanelFile, downloadWithFeedback, getStoredToken } from '../lib/api';
+import { tokenizeChatLine } from '../lib/chat-markdown';
 import { MASCOT_ACCENT, MASCOT_SKIN, type MascotSkinId } from '../lib/mascot-skins';
 import { cn } from '../lib/utils';
 import { Button } from './ui/button';
@@ -48,23 +49,70 @@ interface SiteChatMessage {
 }
 
 // Renderização leve de markdown — só o suficiente pro que o assistente
-// realmente usa (negrito **assim** e linhas soltas, inclusive bullets "- ").
-// Sem biblioteca externa: o conteúdo vem só do nosso próprio backend/modelo,
-// nunca de HTML de terceiros, então não precisa de um parser completo.
-function renderMessageContent(content: string) {
+// realmente usa: negrito **assim**, links [texto](endereço) e linhas soltas
+// (inclusive bullets "- "). Sem biblioteca externa e sem HTML: a leitura está em
+// lib/chat-markdown.ts, que devolve "peças" e daqui saem elementos React, então
+// o texto do modelo ou de um painel não injeta nada na página (javascript:, data:
+// e caminhos soltos viram só texto).
+//
+// Link de arquivo gerado pelo chat de IA de um painel ("../chatkit-download/<arquivo>"):
+// funciona dentro do painel, mas aqui o endereço relativo não leva a lugar nenhum. Com um painel
+// aberto (`panelDashboardId`) o clique pede ao hub o download daquele painel.
+type MessageRenderOptions = {
+  panelDashboardId: string | null;
+  onPanelDownload: (dashboardId: string, file: string) => void;
+  userBubble: boolean;
+};
+
+function renderMessageContent(content: string, options: MessageRenderOptions) {
+  const linkClass = options.userBubble
+    ? 'underline underline-offset-2'
+    : 'font-medium text-sky-600 underline underline-offset-2 hover:text-sky-700 dark:text-sky-400 dark:hover:text-sky-300';
   return content.split('\n').map((line, lineIndex) => {
-    const parts = line.split(/(\*\*[^*]+\*\*)/g).filter((p) => p !== '');
+    const tokens = tokenizeChatLine(line);
     return (
-      <div key={lineIndex}>
-        {parts.length > 0
-          ? parts.map((part, partIndex) =>
-              part.startsWith('**') && part.endsWith('**') ? (
-                <strong key={partIndex}>{part.slice(2, -2)}</strong>
-              ) : (
-                <span key={partIndex}>{part}</span>
-              ),
-            )
-          : ' '}
+      <div key={lineIndex} className="break-words">
+        {tokens.length > 0
+          ? tokens.map((token, tokenIndex) => {
+              switch (token.type) {
+                case 'bold':
+                  return <strong key={tokenIndex}>{token.text}</strong>;
+                case 'link':
+                  return (
+                    <a
+                      key={tokenIndex}
+                      href={token.href}
+                      {...(token.external ? { target: '_blank', rel: 'noopener noreferrer' } : {})}
+                      className={linkClass}
+                    >
+                      {token.label}
+                    </a>
+                  );
+                case 'panel-download':
+                  // Fora de um painel não há de onde baixar: só o texto, sem clique.
+                  return options.panelDashboardId ? (
+                    <a
+                      key={tokenIndex}
+                      href="#"
+                      role="button"
+                      title="Baixar arquivo gerado pelo painel"
+                      onClick={(event) => {
+                        event.preventDefault();
+                        options.onPanelDownload(options.panelDashboardId!, token.file);
+                      }}
+                      className={cn('inline-flex items-baseline gap-1', linkClass)}
+                    >
+                      <Download className="h-3.5 w-3.5 shrink-0 self-center" />
+                      {token.label}
+                    </a>
+                  ) : (
+                    <span key={tokenIndex}>{token.label}</span>
+                  );
+                default:
+                  return <span key={tokenIndex}>{token.text}</span>;
+              }
+            })
+          : ' '}
       </div>
     );
   });
@@ -621,7 +669,12 @@ export function SiteChatWidget() {
                         : 'bg-slate-100 text-slate-800 dark:bg-zinc-800 dark:text-zinc-200',
                     )}
                   >
-                    {renderMessageContent(m.content)}
+                    {renderMessageContent(m.content, {
+                      // a conversa exibida é a do escopo atual ("dash:<id do painel>" quando há painel/BI aberto)
+                      panelDashboardId: scopeKey.startsWith('dash:') ? scopeKey.slice('dash:'.length) : null,
+                      onPanelDownload: (dashboardId, file) => void downloadPanelFile(dashboardId, file, notify),
+                      userBubble: m.role === 'user',
+                    })}
                     {m.attachmentName ? (
                       <button
                         type="button"

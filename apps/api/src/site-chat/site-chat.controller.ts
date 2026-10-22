@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { AuthService } from '../auth/auth.service';
 import { storageRoot } from '../shared/storage';
 import { parseScope } from './conversation-scope';
+import { PanelDownloadService } from './panel-download.service';
 import { SiteChatService } from './site-chat.service';
 
 @ApiTags('Chat do site')
@@ -14,6 +15,7 @@ export class SiteChatController {
   constructor(
     private readonly siteChatService: SiteChatService,
     private readonly authService: AuthService,
+    private readonly panelDownloadService: PanelDownloadService,
   ) {}
 
   @Get('messages')
@@ -81,6 +83,30 @@ export class SiteChatController {
   async clearMessages(@Req() request: Request, @Query('scope') scope?: string) {
     const user = await this.authService.requireUser(request);
     return this.siteChatService.clearMessages(user.id, parseScope(scope));
+  }
+
+  // Arquivo (Excel/CSV) gerado pelo chat de IA de um painel: o frontend pede o link (com a sessão) e o navegador baixa direto.
+  @Post('panel-download')
+  async panelDownloadLink(@Req() request: Request, @Body() body: { dashboardId?: unknown; file?: unknown }) {
+    const user = await this.authService.requireUser(request);
+    return this.panelDownloadService.createLink(user, typeof body?.dashboardId === 'string' ? body.dashboardId : '', typeof body?.file === 'string' ? body.file : '');
+  }
+
+  // Sem cabeçalho Authorization de propósito: é aberto pelo navegador (clique no link). A autorização é o link assinado de
+  // 1 minuto emitido acima, válido só para este painel e este arquivo.
+  @Get('panel-download')
+  async panelDownload(
+    @Req() request: Request,
+    @Res() response: Response,
+    @Query('d') dashboardId?: string,
+    @Query('f') file?: string,
+    @Query('dl') token?: string,
+  ) {
+    const abort = new AbortController();
+    response.on('close', () => {
+      if (!response.writableEnded) abort.abort();
+    });
+    await this.panelDownloadService.stream({ dashboardId: dashboardId ?? '', file: file ?? '', token, res: response, signal: abort.signal });
   }
 
   @Get('messages/:id/attachment')

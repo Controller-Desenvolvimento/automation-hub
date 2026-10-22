@@ -151,6 +151,29 @@ export async function downloadFile(url: string, filename: string, notify?: (mess
   await downloadViaMemory(url, filename);
 }
 
+/**
+ * Baixa um arquivo (Excel/CSV) que o chat de IA de um painel gerou. O link do texto da resposta ("../chatkit-download/<arquivo>")
+ * só funciona dentro do painel; aqui o servidor confere o acesso ao painel e devolve um link curto para o navegador baixar
+ * direto (o hub busca o arquivo no painel e repassa em fluxo).
+ */
+export async function downloadPanelFile(dashboardId: string, file: string, notify: (message: string) => void) {
+  try {
+    const link = await api<{ url: string; name: string }>('/site-chat/panel-download', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ dashboardId, file }),
+    });
+    startBrowserDownload(link.url, link.name);
+    notify(`Baixando "${link.name}". Acompanhe na barra de downloads do navegador.`);
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 401) {
+      notify(MSG_SESSAO_EXPIRADA);
+      return;
+    }
+    notify(error instanceof Error ? error.message : 'Não foi possível baixar o arquivo.');
+  }
+}
+
 export async function downloadWithFeedback(
   url: string,
   filename: string,
