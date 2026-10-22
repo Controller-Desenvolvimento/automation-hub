@@ -3,6 +3,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { createServer, request as httpRequest, type IncomingMessage, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import test from 'node:test';
+import { gzipSync } from 'node:zlib';
 import { HttpException } from '@nestjs/common';
 import express from 'express';
 import { PanelDownloadService, isValidPanelFile, panelFileDisplayName } from '../src/site-chat/panel-download.service';
@@ -21,7 +22,8 @@ const USUARIOS: Record<string, typeof DONO> = { dono: DONO, outro: OUTRO };
 type Painel = { server: Server; port: number; pedidos: string[]; fechouNoMeio: boolean };
 
 // Painel de mentira: serve o arquivo em `prefixo`/<arquivo> como o /chatkit-download real.
-async function subirPainel(opcoes: { prefixo: string; semDisposition?: boolean; lento?: boolean }): Promise<Painel> {
+// `gzip`: 'se-aceitar' comprime só se o cliente aceitar (como o GZipMiddleware do FastAPI); 'sempre' comprime mesmo assim.
+async function subirPainel(opcoes: { prefixo: string; semDisposition?: boolean; lento?: boolean; gzip?: 'se-aceitar' | 'sempre' }): Promise<Painel> {
   const painel = { pedidos: [] as string[], fechouNoMeio: false } as Painel;
   painel.server = createServer((req: IncomingMessage, res) => {
     painel.pedidos.push(decodeURIComponent(req.url ?? ''));
@@ -37,6 +39,12 @@ async function subirPainel(opcoes: { prefixo: string; semDisposition?: boolean; 
       'Cache-Control': 'max-age=3600',                       // o hub NÃO pode repassar isso
     };
     if (!opcoes.semDisposition) cabecalhos['Content-Disposition'] = 'attachment; filename="Balancete setembro.xlsx"';
+    if (opcoes.gzip === 'sempre' || (opcoes.gzip === 'se-aceitar' && /gzip/.test(String(req.headers['accept-encoding'] ?? '')))) {
+      const comprimido = gzipSync(CONTEUDO);
+      res.writeHead(200, { ...cabecalhos, 'Content-Encoding': 'gzip', 'Content-Length': comprimido.length });
+      res.end(comprimido);
+      return;
+    }
     res.writeHead(200, cabecalhos);
     if (!opcoes.lento) { res.end(CONTEUDO); return; }
     // arquivo "grande" entregue devagar: serve para provar que o hub para de puxar quando o cliente desiste
@@ -132,6 +140,25 @@ test('fluxo completo: link com a sessão, download sem cabeçalho, binário idê
     await hub.fechar(); await fechar(painel.server);
   }
 });
+
+// Os painéis em FastAPI usam GZipMiddleware: o time já viu o .xlsx abrir "corrompido" quando alguém repassou os bytes
+// comprimidos. O hub pede sem compressão e, se o painel comprimir mesmo assim, não repassa o tamanho comprimido.
+for (const modo of ['se-aceitar', 'sempre'] as const) {
+  test(`painel que comprime (${modo}): o arquivo chega inteiro e idêntico`, async () => {
+    const painel = await subirPainel({ prefixo: '/chatkit-download', gzip: modo });
+    const hub = await subirHub({ dash1: painelDoBanco(painel.port) });
+    try {
+      const { corpo } = await pedirLink(hub.base, 'dono', 'dash1', ARQUIVO);
+      const r = await fetch(hub.base + corpo.url, { headers: { 'accept-encoding': 'identity' } });
+      assert.equal(r.status, 200);
+      const bytes = Buffer.from(await r.arrayBuffer());
+      assert.equal(sha(bytes), sha(CONTEUDO));
+      assert.equal(bytes.length, CONTEUDO.length);
+    } finally {
+      await hub.fechar(); await fechar(painel.server);
+    }
+  });
+}
 
 test('quem não tem acesso ao painel, painel inativo ou arquivo inválido não ganham link', async () => {
   const painel = await subirPainel({ prefixo: '/chatkit-download' });

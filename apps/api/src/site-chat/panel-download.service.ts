@@ -99,7 +99,8 @@ export class PanelDownloadService {
         let response: globalThis.Response;
         try {
           response = await fetch(`http://127.0.0.1:${dashboard.streamlitPort}${candidates[i]}/${encodeURIComponent(file)}`, {
-            headers: { Accept: '*/*' },
+            // identity: o fetch descomprime sozinho, e o Content-Length do painel seria o do arquivo comprimido.
+            headers: { Accept: '*/*', 'Accept-Encoding': 'identity' },
             signal: controller.signal,
           });
         } catch (error) {
@@ -137,7 +138,9 @@ export class PanelDownloadService {
       const contentLength = upstream.headers.get('content-length');
       const disposition = upstream.headers.get('content-disposition');
       res.setHeader('Content-Type', contentType ?? 'application/octet-stream');
-      if (contentLength) res.setHeader('Content-Length', contentLength);
+      // Painel que comprime mesmo assim: o corpo já chega descomprimido aqui, então o tamanho avisado não vale.
+      const encoding = (upstream.headers.get('content-encoding') ?? 'identity').toLowerCase();
+      if (contentLength && encoding === 'identity') res.setHeader('Content-Length', contentLength);
       res.setHeader('Content-Disposition', disposition ?? `attachment; filename*=UTF-8''${encodeURIComponent(panelFileDisplayName(file))}`);
       res.setHeader('Cache-Control', 'no-store, no-cache, no-transform, must-revalidate');
       res.setHeader('Pragma', 'no-cache');
