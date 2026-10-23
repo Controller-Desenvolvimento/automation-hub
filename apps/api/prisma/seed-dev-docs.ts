@@ -33,7 +33,7 @@ const docs: Doc[] = [
     id: 'devdoc_protocolo_hub',
     order: 1,
     category: 'Robôs',
-    title: 'Como o robô avisa o hub do que está fazendo (e como isso vira "tempo economizado")',
+    title: 'Protocolo do robô com o hub',
     summary:
       'Para que serve: o contrato completo entre o hub e o script de um robô — como o robô recebe seus parâmetros e pastas de entrada/saída, e como ele avisa o hub do que está fazendo. O hub roda o robô como um processo comum (Python, .exe, o que for) e não tem nenhuma forma de "olhar dentro" dele: tudo que sabe é o que combinaram por env vars/arquivos na entrada, e o que o robô escreve na tela (stdout/stderr) durante a execução.',
     howToUse: `Parte 0 — o que o robô recebe do hub antes de começar
@@ -133,9 +133,9 @@ print("AH_PROGRESS|100|Concluído", flush=True)
     id: 'devdoc_sso_dauth',
     order: 2,
     category: 'Autenticação',
-    title: 'Login automático nos painéis externos (sem tela de login própria)',
+    title: 'Login automático nos painéis',
     summary:
-      'Para que serve: dashboards externos (Streamlit/FastAPI hospedados dentro do hub, ver doc "Painéis externos") não precisam ter tela de login própria. Quando alguém já logado no hub abre um painel em /d/<slug>/, o hub identifica quem é e passa isso pro dashboard via headers — o dashboard só confia no hub, nunca conversa direto com o navegador sem passar por ele.',
+      'Para que serve: dashboards externos (Streamlit/FastAPI hospedados dentro do hub, ver doc "Como funcionam os painéis") não precisam ter tela de login própria. Quando alguém já logado no hub abre um painel em /d/<slug>/, o hub identifica quem é e passa isso pro dashboard via headers — o dashboard só confia no hub, nunca conversa direto com o navegador sem passar por ele.',
     howToUse: `Como o fluxo funciona de ponta a ponta (apps/api/src/main.ts, middleware registrado antes do catch-all da SPA para qualquer path começando em /d/):
 
 1. Quando o front-end do hub monta um link pra abrir um painel, ele inclui o token de sessão atual na URL: /d/<slug>/?t=<token>. Isso é necessário porque, na primeira visita, ainda não existe cookie nenhum pra esse domínio/path.
@@ -156,7 +156,7 @@ Atenção — isso é diferente de "um header X-Hub-User com um JSON contendo id
 
 Importante: o dashboard NUNCA deve ser exposto direto na porta local dele (ex.: acessar http://10.100.1.18:8501 diretamente) — só o acesso via /d/<slug>/ passa pela validação de sessão. Isso é convenção de operação, não um bloqueio técnico automático: se a porta estiver acessível na rede, alguém pode contornar o proxy. Prefira sempre --server.address 127.0.0.1 (Streamlit) ou --host 127.0.0.1 (uvicorn) no comando do servidor, assim o processo só aceita conexões locais e o único caminho de entrada é o proxy do hub.
 
-⚠️ Não confundir com o SSO de Sites (ver doc "Login automático em Sites externos"): aquele é um mecanismo bem mais pesado — token de uso único trocado servidor-a-servidor — porque o site de destino é uma aplicação separada, com o próprio domínio, que o hub não intercepta requisição por requisição. Painéis não precisam disso e NÃO usam esse fluxo: como o hub já intercepta e reencaminha toda requisição de /d/<slug>/, a identidade simplesmente "viaja junto" no proxy, sem nenhuma troca de token acontecer. Se você notar os dois mecanismos e ficar em dúvida qual usar: painel hospedado dentro do hub (tipo streamlit/server/html cadastrado em Painéis) usa este aqui; qualquer outro sistema com domínio/porta própria fora do hub usa o outro.`,
+⚠️ Não confundir com o SSO de Sites (ver doc "Login automático em sites (SSO)"): aquele é um mecanismo bem mais pesado — token de uso único trocado servidor-a-servidor — porque o site de destino é uma aplicação separada, com o próprio domínio, que o hub não intercepta requisição por requisição. Painéis não precisam disso e NÃO usam esse fluxo: como o hub já intercepta e reencaminha toda requisição de /d/<slug>/, a identidade simplesmente "viaja junto" no proxy, sem nenhuma troca de token acontecer. Se você notar os dois mecanismos e ficar em dúvida qual usar: painel hospedado dentro do hub (tipo streamlit/server/html cadastrado em Painéis) usa este aqui; qualquer outro sistema com domínio/porta própria fora do hub usa o outro.`,
     codeExample: `# FastAPI — ler o usuário identificado pelo hub
 from fastapi import Request
 
@@ -177,10 +177,10 @@ def dados(request: Request):
     id: 'devdoc_sso_sites',
     order: 3,
     category: 'Autenticação',
-    title: 'Login automático em Sites externos (SSO por token de 30s)',
+    title: 'Login automático em sites (SSO)',
     summary:
       'Para que serve: para um sistema que já tem domínio, porta e sessão própria — e não é hospedado dentro do hub como painel — este é o jeito de deixar o botão "Abrir" do catálogo de Sites já entrar logado, sem o usuário digitar senha de novo. Existe um guia completo e pronto para repassar a outro time em docs/integracao-sso.md, na raiz do repositório — este doc é o resumo rápido do mesmo mecanismo.',
-    howToUse: `Diferença chave em relação ao doc "Login automático nos painéis externos": lá a identidade "viaja de carona" porque o hub intercepta e reencaminha toda requisição do painel. Aqui NÃO — o site de destino é uma aplicação totalmente separada (domínio/porta próprios) que o hub não intercepta depois do clique inicial. Por isso precisa de uma troca de token pontual, em vez de um proxy contínuo.
+    howToUse: `Diferença chave em relação ao doc "Login automático nos painéis": lá a identidade "viaja de carona" porque o hub intercepta e reencaminha toda requisição do painel. Aqui NÃO — o site de destino é uma aplicação totalmente separada (domínio/porta próprios) que o hub não intercepta depois do clique inicial. Por isso precisa de uma troca de token pontual, em vez de um proxy contínuo.
 
 Fluxo completo:
 1. No cadastro do site (Configurações → Sites → editar), ative "SSO habilitado". Isso muda o botão "Abrir"/"Ver" daquele site: em vez de um link direto pra site.url, o hub passa a gerar um token antes de abrir.
@@ -225,7 +225,7 @@ async def hub_sso(token: str = Query(...), hub: str = Query(...)):
     id: 'devdoc_dashboards_externos',
     order: 4,
     category: 'Painéis',
-    title: 'Como funcionam os painéis (dashboards) hospedados dentro do hub',
+    title: 'Como funcionam os painéis',
     summary:
       'Para que serve: em vez de cada dashboard BI (Streamlit, FastAPI) precisar do próprio domínio, HTTPS e login, o hub adota ele como "filho": sobe o processo, expõe em /d/<slug>/, cuida da autenticação (ver doc de SSO) e opcionalmente dispara atualizações de dados em horários agendados. Existe um prompt pronto para integrar um projeto novo em PROMPT_NOVO_DASHBOARD.md, na raiz do repositório — este doc explica o "por quê" por trás daquele prompt.',
     howToUse: `Existem 3 tipos de dashboard (campo "type" no cadastro, Configurações → Painéis), tratados de formas bem diferentes pelo DashboardService (apps/api/src/dashboard/dashboard.service.ts):
@@ -251,7 +251,7 @@ Onde as coisas vivem no sistema de arquivos:
 - Para type "server" com serverWorkingDirectory apontando pra fora do storage do hub (comum quando o projeto Python já existe em outra pasta, ex.: X:\\INOVAÇÃO\\BI\\...), o hub roda o comando ali mesmo — não copia nada.
 
 Como cadastrar um painel direto por API (sem abrir o formulário):
-POST /api/dashboards, com token de admin (ver doc "Como autenticar um script para chamar a API do hub"). Diferente de Robôs/Sites, o corpo é multipart/form-data (não JSON puro), porque aceita um arquivo/zip já no mesmo request — mas o arquivo é opcional na criação, dá pra criar o registro primeiro e mandar os arquivos depois em POST /api/dashboards/:id/upload. Campos aceitos: slug e name (obrigatórios), description, type ("streamlit"/"server", qualquer outra coisa vira "html"), isActive, allowedDepartments (lista, mande como texto JSON: '["fiscal","rh"]'), mainFile, serverCommand, serverWorkingDirectory, updatePath, warmupPaths (lista, mesma regra de JSON), updateFrequency, updateTimesOfDay (lista de "HH:mm", também JSON), updateDayOfWeek, updateDayOfMonth. Diferente de Robôs/Sites, este endpoint NÃO é upsert — criar sempre cria um novo registro; pra editar um já existente use PATCH /api/dashboards/:id (esse sim aceita JSON puro, sem multipart). Cuidado: um slug duplicado não dá um erro amigável — quebra com um erro de banco (constraint única), então vale conferir a lista antes de criar.`,
+POST /api/dashboards, com token de admin (ver doc "Autenticar um script na API"). Diferente de Robôs/Sites, o corpo é multipart/form-data (não JSON puro), porque aceita um arquivo/zip já no mesmo request — mas o arquivo é opcional na criação, dá pra criar o registro primeiro e mandar os arquivos depois em POST /api/dashboards/:id/upload. Campos aceitos: slug e name (obrigatórios), description, type ("streamlit"/"server", qualquer outra coisa vira "html"), isActive, allowedDepartments (lista, mande como texto JSON: '["fiscal","rh"]'), mainFile, serverCommand, serverWorkingDirectory, updatePath, warmupPaths (lista, mesma regra de JSON), updateFrequency, updateTimesOfDay (lista de "HH:mm", também JSON), updateDayOfWeek, updateDayOfMonth. Diferente de Robôs/Sites, este endpoint NÃO é upsert — criar sempre cria um novo registro; pra editar um já existente use PATCH /api/dashboards/:id (esse sim aceita JSON puro, sem multipart). Cuidado: um slug duplicado não dá um erro amigável — quebra com um erro de banco (constraint única), então vale conferir a lista antes de criar.`,
     codeExample: `import requests
 
 BASE_URL = "http://10.100.1.18:3000/api"
@@ -289,7 +289,7 @@ print(resp.json())
     id: 'devdoc_api_external_metrics',
     order: 5,
     category: 'Integrações',
-    title: 'Registrar tempo economizado sem precisar cadastrar um robô',
+    title: 'Registrar tempo economizado',
     summary:
       'Para que serve: quando algo economiza tempo mas NÃO é um robô que o hub executa (ex.: um dashboard Power BI que baixa dados de N empresas, um script que roda em outra máquina) ainda é possível fazer isso contar no relatório de tempo economizado do hub, sem precisar cadastrar um robô "de mentira" pra isso. É um endpoint de ingestão simples, autenticado por uma chave única compartilhada (não por usuário nem por robô).',
     howToUse: `Endpoint: POST /api/metrics/external
@@ -309,7 +309,7 @@ O hub calcula manualEstimatedSeconds = unitsProcessed × manualSecondsPerUnit e 
 
 Onde isso aparece depois: cada evento vira uma linha na tabela ExternalMetric, e o relatório de tempo economizado (GET /api/reports/time-savings) mistura essas linhas com as execuções de robôs de verdade, usando um "robô sintético" com id ext:<source> — na prática, aparece na lista de robôs do relatório como se fosse mais um robô, com o nome sourceName.
 
-⚠️ Não confundir com POST /api/integrations/time-savings (ver doc "Registrar a execução de um robô que roda fora do hub"): aquele endpoint exige um robô já cadastrado no hub (com apiKey própria) e cria uma Execution de verdade, atribuída aquele robô específico. Este aqui (/api/metrics/external) é o caminho mais leve, pra coisas que nem fazem sentido virar um "robô" — não cria execução, não aparece no histórico de execuções, só entra na conta de tempo economizado.`,
+⚠️ Não confundir com POST /api/integrations/time-savings (ver doc "Robô que roda fora do hub"): aquele endpoint exige um robô já cadastrado no hub (com apiKey própria) e cria uma Execution de verdade, atribuída aquele robô específico. Este aqui (/api/metrics/external) é o caminho mais leve, pra coisas que nem fazem sentido virar um "robô" — não cria execução, não aparece no histórico de execuções, só entra na conta de tempo economizado.`,
     codeExample: `import requests
 
 requests.post(
@@ -335,7 +335,7 @@ requests.post(
     id: 'devdoc_api_integrations_time_savings',
     order: 6,
     category: 'Integrações',
-    title: 'Registrar a execução de um robô que roda fora do hub',
+    title: 'Robô que roda fora do hub',
     summary:
       'Para que serve: para robôs que já existem e rodam FORA do runner do hub (não são spawnados pelo ExecutionRunnerService — ex.: rodam num agendador do Windows numa outra máquina, ou já existiam antes do hub) mas ainda assim precisam aparecer no histórico de execuções e nos relatórios do robô como se tivessem rodado normalmente pelo hub.',
     howToUse: `Endpoint: POST /api/integrations/time-savings
@@ -383,7 +383,7 @@ print(resp.json())  # {"success": true, "executionId": "...", "deduplicated": fa
     id: 'devdoc_sistema_admin',
     order: 7,
     category: 'Administração',
-    title: 'Ajustes do sistema: quantos robôs por vez, memória e limpeza automática',
+    title: 'Ajustes do sistema',
     summary:
       'Para que serve: a VM de produção tem RAM e disco compartilhados com outros serviços da empresa (Power BI Gateway, dashboards Streamlit, Firebird, etc.) — este painel (Configurações → Sistema, admin only) existe pra ajustar os principais limites de segurança do hub sem precisar de deploy nem editar o .env manualmente na VM.',
     howToUse: `O que cada configuração controla (GET/PATCH /api/system/settings):
@@ -416,7 +416,7 @@ Outras ações do painel:
     id: 'devdoc_auth_script',
     order: 8,
     category: 'Cadastro via API',
-    title: 'Como autenticar um script (ou uma IA) para chamar a API do hub',
+    title: 'Autenticar um script na API',
     summary:
       'Para que serve: todos os documentos desta categoria ("Cadastrar isso ou aquilo direto pela API") pedem a mesma coisa antes de qualquer coisa: um token válido. Este doc é o pré-requisito comum — leia-o primeiro. Serve tanto para um script Python quanto para uma IA que você conecte na API do hub.',
     howToUse: `O hub NÃO usa cookie de sessão pra chamadas de API (só os painéis externos usam um cookie próprio, "dauth" — ver doc de SSO). A autenticação normal é por token Bearer, igual a maioria das APIs modernas:
@@ -458,10 +458,10 @@ print(me.json())  # {"id": "...", "name": "...", "role": "admin", ...}`,
     id: 'devdoc_api_criar_robo',
     order: 9,
     category: 'Cadastro via API',
-    title: 'Cadastrar ou editar um robô direto pela API (sem abrir o formulário)',
+    title: 'Cadastrar robô pela API',
     summary:
       'Para que serve: em vez de preencher o formulário em Configurações → Automações campo por campo, um admin — ou uma IA com o token certo — pode criar ou atualizar a definição de um robô com uma única chamada HTTP. Útil pra cadastrar várias automações de uma vez, versionar a definição num script, ou deixar uma IA montar o cadastro a partir de uma conversa.',
-    howToUse: `Pré-requisito: um token de admin (ver doc "Como autenticar um script para chamar a API do hub"). Usuários não-admin recebem 403.
+    howToUse: `Pré-requisito: um token de admin (ver doc "Autenticar um script na API"). Usuários não-admin recebem 403.
 
 Endpoint: POST /api/robots, corpo em JSON puro (não multipart).
 
@@ -474,10 +474,10 @@ Campos mais usados pra deixar o robô funcional:
 - workingDirectory — pasta onde o comando roda.
 - allowedDepartments — lista de siglas de departamento (ex.: ["fiscal","rh"]); vazio = visível pra todo mundo.
 - category, icon, summary, description — só afetam a exibição no catálogo.
-- manualSecondsPerUnit, unitLabel, unitMetricKey — usados no cálculo de tempo economizado (ver doc "Como o robô avisa o hub do que está fazendo").
+- manualSecondsPerUnit, unitLabel, unitMetricKey — usados no cálculo de tempo economizado (ver doc "Protocolo do robô com o hub").
 - maxConcurrency — quantas execuções desse robô específico podem rodar ao mesmo tempo.
 - conflictKeys — texto separado por vírgula; robôs que compartilham uma chave nunca rodam ao mesmo tempo entre si (útil quando dois robôs disputam o mesmo recurso, ex.: o mesmo login num site).
-- isExternal — marque true se este robô NÃO vai rodar pelo runner do hub, e sim reportar execuções de fora via a API de integrações (ver doc "Registrar a execução de um robô que roda fora do hub").
+- isExternal — marque true se este robô NÃO vai rodar pelo runner do hub, e sim reportar execuções de fora via a API de integrações (ver doc "Robô que roda fora do hub").
 - schema — define o formulário que a pessoa vê na hora de executar o robô (ver formato abaixo).
 
 O que este endpoint NÃO faz: subir o script/código do robô (isso é um upload de zip/rar em POST /api/robots/:id/scripts, feito depois de criar o robô) e gerar a chave de API de execução do robô (POST /api/robots/:id/api-key, também depois de criado).
@@ -526,7 +526,7 @@ requests.post(f"{BASE_URL}/robots", headers=headers, json={**novo_robo, "id": ro
     id: 'devdoc_api_criar_site',
     order: 10,
     category: 'Cadastro via API',
-    title: 'Cadastrar um site, sistema ou painel de BI (Power BI) direto pela API',
+    title: 'Cadastrar site ou BI pela API',
     summary:
       'Para que serve: as abas "Sistemas" e "BI" (dentro de Sites, no menu) são a MESMA tabela no banco — só muda um campo "category". Este doc ensina a cadastrar os dois tipos direto por API, incluindo os campos específicos de Power BI (grupo, dataset, atualização agendada).',
     howToUse: `Pré-requisito: token de admin (ver doc de autenticação de script).
@@ -575,7 +575,7 @@ print(resp.json())`,
     id: 'devdoc_api_criar_agendamento',
     order: 11,
     category: 'Cadastro via API',
-    title: 'Agendar a execução de um robô direto pela API',
+    title: 'Agendar execução pela API',
     summary:
       'Para que serve: em vez de configurar o agendamento na tela de Agendamentos, é possível criar (ou deixar uma IA criar) o agendamento já com os parâmetros de execução certos, direto por API. Diferente dos outros documentos desta categoria, este endpoint NÃO é admin-only — qualquer usuário autenticado com acesso ao robô pode chamar.',
     howToUse: `Pré-requisito: um token válido (ver doc de autenticação de script) de um usuário que tenha acesso ao robô que vai ser agendado — não precisa ser admin.
