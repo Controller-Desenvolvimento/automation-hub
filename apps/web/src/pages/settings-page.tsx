@@ -86,6 +86,7 @@ type DashboardDraft = {
   updateTimesOfDay: string[];
   updateDayOfWeek: string;
   updateDayOfMonth: string;
+  aiTracing: boolean;
 };
 
 type SiteDraft = {
@@ -1021,6 +1022,7 @@ export function SettingsPage() {
                                 updateTimesOfDay: dashboardDraft.updateFrequency ? dashboardDraft.updateTimesOfDay.filter(Boolean) : [],
                                 updateDayOfWeek: dashboardDraft.updateFrequency === 'weekly' ? parseInt(dashboardDraft.updateDayOfWeek) : null,
                                 updateDayOfMonth: dashboardDraft.updateFrequency === 'monthly' ? parseInt(dashboardDraft.updateDayOfMonth) : null,
+                                aiTracing: dashboardDraft.aiTracing,
                               }),
                             })
                           : await api<Dashboard>('/dashboards', {
@@ -1045,6 +1047,7 @@ export function SettingsPage() {
                                 updateTimesOfDay: dashboardDraft.updateFrequency ? dashboardDraft.updateTimesOfDay.filter(Boolean) : [],
                                 updateDayOfWeek: dashboardDraft.updateFrequency === 'weekly' ? parseInt(dashboardDraft.updateDayOfWeek) : null,
                                 updateDayOfMonth: dashboardDraft.updateFrequency === 'monthly' ? parseInt(dashboardDraft.updateDayOfMonth) : null,
+                                aiTracing: dashboardDraft.aiTracing,
                               }),
                             });
                         if (dashboardFile) {
@@ -1133,6 +1136,25 @@ export function SettingsPage() {
                           />
                         </Field>
                       </>
+                    )}
+                    {(dashboardDraft.type === 'server' || dashboardDraft.type === 'streamlit') && (
+                      <div className="md:col-span-2">
+                        <label className="flex items-start gap-2 text-sm">
+                          <input
+                            type="checkbox"
+                            className="mt-1"
+                            checked={dashboardDraft.aiTracing}
+                            onChange={(e) => setDashboardDraft({ ...dashboardDraft, aiTracing: e.target.checked })}
+                          />
+                          <span>
+                            Enviar o rastreamento (traces) do assistente de IA à OpenAI
+                            <span className="mt-1 block text-xs text-slate-500 dark:text-zinc-400">
+                              Desligado por padrão. Ligado, cada pergunta do chat deste painel e os dados que o assistente leu (nomes, valores...) vão para a
+                              tela de Traces da conta da OpenAI. Serve só para depurar o assistente. Vale a partir do próximo Reiniciar do painel.
+                            </span>
+                          </span>
+                        </label>
+                      </div>
                     )}
                     <div className="md:col-span-2 grid gap-4">
                       <label className="flex items-center gap-2 text-sm">
@@ -4450,6 +4472,7 @@ function emptyDashboardDraft(): DashboardDraft {
     updateTimesOfDay: ['08:00'],
     updateDayOfWeek: '1',
     updateDayOfMonth: '1',
+    aiTracing: false,
   };
 }
 
@@ -4475,6 +4498,7 @@ function mapDashboardToDraft(d: Dashboard): DashboardDraft {
     updateTimesOfDay: d.updateTimesOfDay && d.updateTimesOfDay.length > 0 ? d.updateTimesOfDay : ['08:00'],
     updateDayOfWeek: String(d.updateDayOfWeek ?? 1),
     updateDayOfMonth: String(d.updateDayOfMonth ?? 1),
+    aiTracing: d.aiTracing ?? false,
   };
 }
 

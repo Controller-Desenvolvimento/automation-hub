@@ -11,6 +11,7 @@ import { mkdir, readdir, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { Agent, fetch as undiciFetch } from 'undici';
 import { PrismaService } from '../prisma/prisma.service';
+import { panelProcessEnv } from '../shared/panel-env';
 import { WINDOWS_HIDE } from '../shared/process-options';
 import { dashboardRoot, dashboardsRoot } from '../shared/storage';
 
@@ -192,6 +193,7 @@ export class DashboardService implements OnModuleInit, OnModuleDestroy {
     updateTimesOfDay?: string[];
     updateDayOfWeek?: number;
     updateDayOfMonth?: number;
+    aiTracing?: boolean;
   }): Promise<Dashboard> {
     const defaultMain = dto.type === DashboardType.html ? 'index.html' : 'app.py';
     const isProcess = dto.type === DashboardType.streamlit || dto.type === DashboardType.server;
@@ -216,13 +218,14 @@ export class DashboardService implements OnModuleInit, OnModuleDestroy {
         updateTimesOfDay: dto.updateTimesOfDay ?? [],
         updateDayOfWeek: dto.updateDayOfWeek ?? null,
         updateDayOfMonth: dto.updateDayOfMonth ?? null,
+        aiTracing: dto.aiTracing ?? false,
       },
     });
     await mkdir(dashboardRoot(dashboard.id), { recursive: true });
     return dashboard;
   }
 
-  update(id: string, dto: Partial<Pick<Dashboard, 'name' | 'description' | 'isActive' | 'allowedDepartments' | 'minRole' | 'allowedUserIds' | 'mainFile' | 'serverCommand' | 'serverWorkingDirectory' | 'updatePath' | 'warmupPaths' | 'warmupMode' | 'updateFrequency' | 'updateTimesOfDay' | 'updateDayOfWeek' | 'updateDayOfMonth'>>): Promise<Dashboard> {
+  update(id: string, dto: Partial<Pick<Dashboard, 'name' | 'description' | 'isActive' | 'allowedDepartments' | 'minRole' | 'allowedUserIds' | 'mainFile' | 'serverCommand' | 'serverWorkingDirectory' | 'updatePath' | 'warmupPaths' | 'warmupMode' | 'updateFrequency' | 'updateTimesOfDay' | 'updateDayOfWeek' | 'updateDayOfMonth' | 'aiTracing'>>): Promise<Dashboard> {
     return this.prisma.dashboard.update({ where: { id }, data: dto });
   }
 
@@ -430,7 +433,7 @@ export class DashboardService implements OnModuleInit, OnModuleDestroy {
       '--server.enableCORS', 'false',
       '--server.enableXsrfProtection', 'false',
       '--server.baseUrlPath', `/d/${slug}`,
-    ], { cwd: dir, shell: false, windowsHide: WINDOWS_HIDE });
+    ], { cwd: dir, shell: false, windowsHide: WINDOWS_HIDE, env: panelProcessEnv(dashboard.aiTracing) });
 
     proc.stdout?.on('data', (d) => this.logger.log(`[streamlit:${slug}] ${String(d).trim()}`));
     proc.stderr?.on('data', (d) => {
@@ -497,6 +500,7 @@ export class DashboardService implements OnModuleInit, OnModuleDestroy {
       cwd: dashboard.serverWorkingDirectory,
       shell: true,
       windowsHide: WINDOWS_HIDE,   // sem isso cada painel abria uma janela de prompt na tela do servidor
+      env: panelProcessEnv(dashboard.aiTracing),   // rastreamento da OpenAI desligado, salvo opção do painel
     });
 
     this.clearLastError(id);

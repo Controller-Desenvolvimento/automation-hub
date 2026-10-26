@@ -49,7 +49,7 @@ export class DashboardController {
   @UseInterceptors(FileInterceptor('file', uploadConfig))
   async create(
     @Req() req: Request,
-    @Body() body: { slug: string; name: string; description?: string; type?: string; isActive?: boolean | string; allowedDepartments?: string | string[]; minRole?: string; allowedUserIds?: string | string[]; mainFile?: string; serverCommand?: string; serverWorkingDirectory?: string; updatePath?: string; warmupPaths?: string | string[]; warmupMode?: string; updateFrequency?: string; updateTimesOfDay?: string | string[]; updateDayOfWeek?: string | number; updateDayOfMonth?: string | number },
+    @Body() body: { slug: string; name: string; description?: string; type?: string; isActive?: boolean | string; allowedDepartments?: string | string[]; minRole?: string; allowedUserIds?: string | string[]; mainFile?: string; serverCommand?: string; serverWorkingDirectory?: string; updatePath?: string; warmupPaths?: string | string[]; warmupMode?: string; updateFrequency?: string; updateTimesOfDay?: string | string[]; updateDayOfWeek?: string | number; updateDayOfMonth?: string | number; aiTracing?: boolean | string },
     @UploadedFile() file?: UploadedFile,
   ) {
     const user = await this.authService.requireUser(req);
@@ -93,6 +93,7 @@ export class DashboardController {
       updateTimesOfDay,
       updateDayOfWeek: body.updateDayOfWeek !== undefined ? Number(body.updateDayOfWeek) : undefined,
       updateDayOfMonth: body.updateDayOfMonth !== undefined ? Number(body.updateDayOfMonth) : undefined,
+      aiTracing: body.aiTracing === true || body.aiTracing === 'true',
     });
 
     if (file?.buffer) {
@@ -110,7 +111,7 @@ export class DashboardController {
   async update(
     @Req() req: Request,
     @Param('id') id: string,
-    @Body() body: { name?: string; description?: string; isActive?: boolean; allowedDepartments?: string[]; minRole?: string; allowedUserIds?: string[]; mainFile?: string; serverCommand?: string; serverWorkingDirectory?: string; updatePath?: string; warmupPaths?: string[]; warmupMode?: string; updateFrequency?: string; updateTimesOfDay?: string[]; updateDayOfWeek?: number; updateDayOfMonth?: number },
+    @Body() body: { name?: string; description?: string; isActive?: boolean; allowedDepartments?: string[]; minRole?: string; allowedUserIds?: string[]; mainFile?: string; serverCommand?: string; serverWorkingDirectory?: string; updatePath?: string; warmupPaths?: string[]; warmupMode?: string; updateFrequency?: string; updateTimesOfDay?: string[]; updateDayOfWeek?: number; updateDayOfMonth?: number; aiTracing?: boolean },
   ) {
     const user = await this.authService.requireUser(req);
     if (!isAdmin(user)) throw new ForbiddenException();

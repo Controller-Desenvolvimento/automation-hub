@@ -530,6 +530,8 @@ export type Dashboard = {
   updateDayOfMonth?: number | null;
   lastUpdateAt?: string | null;
   lastUpdateStatus?: string | null;
+  /** Envia o rastreamento (traces) do assistente de IA à OpenAI; desligado por padrão, vale no próximo reinício do painel. */
+  aiTracing?: boolean;
   createdAt: string;
   updatedAt: string;
 };

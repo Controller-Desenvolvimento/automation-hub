@@ -467,6 +467,9 @@ model Dashboard {
   updateDayOfMonth      Int?
   lastUpdateAt          DateTime?
   lastUpdateStatus      String?
+  // Envio do rastreamento ("traces") do SDK openai-agents à OpenAI. Desligado por padrão: o rastreamento leva as
+  // perguntas e o que o assistente leu dos dados do painel. Vale a partir do próximo (re)início do painel.
+  aiTracing             Boolean       @default(false)
   createdAt             DateTime      @default(now())
   updatedAt             DateTime      @updatedAt
 
