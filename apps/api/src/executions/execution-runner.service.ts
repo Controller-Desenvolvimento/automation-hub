@@ -7,6 +7,7 @@ import AdmZip from 'adm-zip';
 import { fileURLToPath } from 'node:url';
 import { ExecutionStatus } from '@prisma/client';
 import { ExecutionsService } from './executions.service';
+import { failureReason, isPythonExceptionLine } from './failure-reason';
 import { findStalledExecutions, getStallTimeoutMs, stallMessage } from './stall-watchdog';
 import { NotificationsService } from '../notifications/notifications.service';
 import { listFilesRecursively, sanitizeFileName, toUserFileName } from '../shared/files';
@@ -30,6 +31,10 @@ type RunningProcess = {
   // Última vez que o robô escreveu algo em stdout/stderr — base do watchdog
   // de travamento (em memória de propósito: não depende de relógio do banco).
   lastActivityAt: number;
+  // Última linha de erro que o próprio robô declarou (AH_LOG|error|...) e última linha de exceção do Python na
+  // saída de erro: viram o motivo mostrado se o robô terminar com código diferente de 0 (ver failure-reason.ts).
+  lastRobotError?: string;
+  lastPythonException?: string;
 };
 
 @Injectable()
@@ -466,7 +471,8 @@ export class ExecutionRunnerService implements OnModuleInit, OnModuleDestroy {
             return;
           }
 
-          reject(new Error(`Comando finalizado com codigo ${code ?? 'desconhecido'}`));
+          const running = this.runningProcesses.get(executionId);
+          reject(new Error(failureReason(code, running?.lastRobotError, running?.lastPythonException)));
         } catch (error) {
           reject(error);
         }
@@ -584,7 +590,13 @@ export class ExecutionRunnerService implements OnModuleInit, OnModuleDestroy {
 
     const logMatch = line.match(/^AH_LOG\|(info|warn|error)\|(.*)$/i);
     if (logMatch) {
-      await this.executionsService.log(executionId, logMatch[1].toLowerCase(), logMatch[2].trim());
+      const level = logMatch[1].toLowerCase();
+      const message = logMatch[2].trim();
+      if (level === 'error' && message) {
+        const running = this.runningProcesses.get(executionId);
+        if (running) running.lastRobotError = message;
+      }
+      await this.executionsService.log(executionId, level, message);
       return;
     }
 
@@ -605,6 +617,11 @@ export class ExecutionRunnerService implements OnModuleInit, OnModuleDestroy {
         );
       }
       return;
+    }
+
+    if (fallbackLevel === 'error' && isPythonExceptionLine(line)) {
+      const running = this.runningProcesses.get(executionId);
+      if (running) running.lastPythonException = line;
     }
 
     await this.executionsService.log(executionId, fallbackLevel, line);
