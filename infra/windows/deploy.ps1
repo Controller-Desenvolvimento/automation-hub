@@ -339,7 +339,10 @@ try {
     # --- API: prepara o build novo (se nao depende de instalar pacotes) e segura a fila
     $needsInstall = $apiLock
     $built = $false
-    if (-not $needsInstall) {
+    # Mudou o esquema do banco: o cliente do Prisma que esta em node_modules ainda e' o ANTIGO (so' e' regenerado na fase B).
+    # Compilar agora daria erro de tipos (campos novos "nao existem"). Entao, como no caso de pacotes novos, a compilacao
+    # fica para a fase B, que roda "prisma generate" antes de compilar.
+    if (-not $needsInstall -and -not $schema) {
       try {
         Log 'API: compilando em pasta paralela...'
         Build-Api
@@ -407,6 +410,10 @@ try {
       Invoke-Native git @('reset', '--hard', $prevSha) -AllowFail | Out-Null
       # Se o npm ci falhou no meio, node_modules ficou quebrado: reinstala as dependencias da versao anterior.
       if ($needsInstall) { Log 'Reinstalando as dependencias da versao anterior...'; Invoke-Native npm @('ci') $ApiDir -AllowFail | Out-Null }
+      # O cliente do Prisma foi regenerado a partir do esquema NOVO. Voltando ao codigo antigo (e ao schema.prisma antigo,
+      # restaurado pelo reset acima) ele precisa voltar ao esquema antigo, senao a versao anterior consultaria colunas
+      # que o banco ainda nao tem e cairia.
+      if ($needsGenerate) { Log 'Regenerando o cliente do banco da versao anterior...'; Invoke-Native npx @('prisma', 'generate') $ApiDir -AllowFail | Out-Null }
       Invoke-Native pm2 @('restart', $PmName) | Out-Null
       $rolled = Test-Health $HealthTimeoutSec
     } catch { Log ('Falha ao voltar a versao anterior: ' + $_.Exception.Message) }
