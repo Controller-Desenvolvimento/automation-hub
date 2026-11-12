@@ -39,7 +39,7 @@ async function rodar(script: string) {
     updateProgress: async () => undefined,
   };
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const runner = new ExecutionRunnerService(executionsService as any, {} as any);
+  const runner = new ExecutionRunnerService(executionsService as any, {} as any, {} as any);
   try {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     await (runner as any).runCommandExecution('exec-teste', 'python robo.py', dir);

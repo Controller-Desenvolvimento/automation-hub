@@ -1,0 +1,92 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import {
+  buildScheduledExecutionAlert,
+  executionLink,
+  formatDuration,
+  resolveHubBaseUrl,
+  scheduleAlertsEnabled,
+  type ScheduledExecutionAlertInput,
+} from '../src/mail/scheduled-execution-alert';
+
+const base: ScheduledExecutionAlertInput = {
+  kind: 'error',
+  robotName: 'Atualização BI - Gestta',
+  scheduleName: 'Gestta 06:30',
+  executionId: 'cmabc123',
+  startedAt: new Date('2026-11-12T09:30:00Z'),
+  finishedAt: new Date('2026-11-12T09:47:30Z'),
+  errorMessage: 'Falha ao baixar o relatório.',
+  baseUrl: 'https://hubcontroller.com.br',
+};
+
+test('resolveHubBaseUrl: HUB_PUBLIC_URL tem prioridade, senão o primeiro ALLOWED_ORIGIN; sem barra no fim', () => {
+  assert.equal(resolveHubBaseUrl({ HUB_PUBLIC_URL: 'https://hub.exemplo.com/', ALLOWED_ORIGIN: 'http://10.0.0.1:3000' }), 'https://hub.exemplo.com');
+  assert.equal(resolveHubBaseUrl({ ALLOWED_ORIGIN: 'http://10.100.1.18:3000, http://outro' }), 'http://10.100.1.18:3000');
+  assert.equal(resolveHubBaseUrl({}), null);
+  assert.equal(resolveHubBaseUrl({ HUB_PUBLIC_URL: 'javascript:alert(1)', ALLOWED_ORIGIN: '' }), null);
+  assert.equal(resolveHubBaseUrl({ HUB_PUBLIC_URL: 'hubcontroller.com.br' }), null);
+});
+
+test('scheduleAlertsEnabled: ligado por padrão, desliga com false/0/off', () => {
+  assert.equal(scheduleAlertsEnabled({}), true);
+  assert.equal(scheduleAlertsEnabled({ SCHEDULE_ALERT_EMAILS: 'true' }), true);
+  for (const off of ['false', 'FALSE', '0', 'off', 'não']) {
+    assert.equal(scheduleAlertsEnabled({ SCHEDULE_ALERT_EMAILS: off }), false, off);
+  }
+});
+
+test('executionLink aponta para a tela da execução e some sem endereço', () => {
+  assert.equal(executionLink('https://h.com', 'abc'), 'https://h.com/executions/abc');
+  assert.equal(executionLink(null, 'abc'), null);
+});
+
+test('formatDuration', () => {
+  const t = (s: number) => formatDuration(new Date(0), new Date(s * 1000));
+  assert.equal(t(45), '45 s');
+  assert.equal(t(17 * 60 + 30), '17 min');
+  assert.equal(t(3600 + 5 * 60), '1 h 5 min');
+  assert.equal(formatDuration(null, new Date()), '—');
+});
+
+test('e-mail de erro: assunto, motivo, link e duração', () => {
+  const mail = buildScheduledExecutionAlert(base);
+  assert.equal(mail.subject, '⚠️ Agendamento falhou: Atualização BI - Gestta — Gestta 06:30');
+  assert.match(mail.text, /terminou com erro/);
+  assert.match(mail.text, /Motivo: Falha ao baixar o relatório\./);
+  assert.match(mail.text, /Duração: 17 min/);
+  assert.match(mail.text, /Abrir a execução: https:\/\/hubcontroller\.com\.br\/executions\/cmabc123/);
+  assert.match(mail.html, /href="https:\/\/hubcontroller\.com\.br\/executions\/cmabc123"/);
+});
+
+test('travamento e interrupção têm assunto e texto próprios', () => {
+  const stalled = buildScheduledExecutionAlert({ ...base, kind: 'stalled' });
+  assert.match(stalled.subject, /Agendamento travou/);
+  assert.match(stalled.text, /travou e foi encerrada/);
+  const interrupted = buildScheduledExecutionAlert({ ...base, kind: 'interrupted' });
+  assert.match(interrupted.subject, /Agendamento interrompido/);
+  assert.match(interrupted.text, /foi interrompida/);
+});
+
+test('sem endereço do Hub o e-mail sai sem link, e sem motivo avisa', () => {
+  const mail = buildScheduledExecutionAlert({ ...base, baseUrl: null, errorMessage: null });
+  assert.doesNotMatch(mail.text, /Abrir a execução/);
+  assert.doesNotMatch(mail.html, /<a href/);
+  assert.match(mail.text, /Sem detalhes registrados\./);
+});
+
+test('o motivo é encurtado e o HTML escapa o que veio do robô', () => {
+  const longo = buildScheduledExecutionAlert({ ...base, errorMessage: `x${'a'.repeat(2000)}` });
+  const motivo = longo.text.split('\n').find((l) => l.startsWith('Motivo: '))!;
+  assert.ok(motivo.length <= 'Motivo: '.length + 600, String(motivo.length));
+  const xss = buildScheduledExecutionAlert({ ...base, errorMessage: '<script>alert(1)</script> "x"', robotName: '<b>Robô</b>' });
+  assert.doesNotMatch(xss.html, /<script>alert/);
+  assert.doesNotMatch(xss.html, /<b>Robô<\/b>/);
+  assert.match(xss.html, /&lt;script&gt;/);
+});
+
+test('início nulo (execução que nem começou) não quebra o e-mail', () => {
+  const mail = buildScheduledExecutionAlert({ ...base, startedAt: null });
+  assert.match(mail.text, /Início: —/);
+  assert.match(mail.text, /Duração: —/);
+});

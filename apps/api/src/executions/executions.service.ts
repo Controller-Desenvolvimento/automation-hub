@@ -514,6 +514,34 @@ export class ExecutionsService {
     });
   }
 
+  // Dados para o e-mail de alerta de uma execução AGENDADA (null para execuções manuais ou inexistentes).
+  async getScheduledExecutionForAlert(id: string) {
+    const execution = await this.prisma.execution.findUnique({
+      where: { id },
+      select: {
+        scheduledTaskId: true,
+        startedAt: true,
+        finishedAt: true,
+        errorMessage: true,
+        robot: { select: { name: true } },
+      },
+    });
+    if (!execution?.scheduledTaskId) return null;
+
+    const task = await this.prisma.scheduledTask.findUnique({
+      where: { id: execution.scheduledTaskId },
+      select: { name: true },
+    });
+
+    return {
+      robotName: execution.robot.name,
+      scheduleName: task?.name ?? execution.robot.name,
+      startedAt: execution.startedAt,
+      finishedAt: execution.finishedAt,
+      errorMessage: execution.errorMessage,
+    };
+  }
+
   async getStatus(id: string) {
     const execution = await this.prisma.execution.findUnique({
       where: { id },

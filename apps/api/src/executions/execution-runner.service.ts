@@ -10,6 +10,8 @@ import { ExecutionsService } from './executions.service';
 import { failureReason, isPythonExceptionLine } from './failure-reason';
 import { findStalledExecutions, getStallTimeoutMs, stallMessage } from './stall-watchdog';
 import { NotificationsService } from '../notifications/notifications.service';
+import { MailService } from '../mail/mail.service';
+import { resolveHubBaseUrl, type ScheduledExecutionAlertKind } from '../mail/scheduled-execution-alert';
 import { listFilesRecursively, sanitizeFileName, toUserFileName } from '../shared/files';
 import { WINDOWS_HIDE } from '../shared/process-options';
 import { readDeployPendingSync } from '../system/deploy-state';
@@ -51,6 +53,7 @@ export class ExecutionRunnerService implements OnModuleInit, OnModuleDestroy {
   constructor(
     private readonly executionsService: ExecutionsService,
     private readonly notificationsService: NotificationsService,
+    private readonly mailService: MailService,
   ) {}
 
   async onModuleInit() {
@@ -115,6 +118,7 @@ export class ExecutionRunnerService implements OnModuleInit, OnModuleDestroy {
       await this.executionsService.markAsError(execution.id, message);
       await this.executionsService.log(execution.id, 'error', message);
       await this.maybeNotify(execution.id, execution.robot.name, 'error');
+      this.alertScheduledFailure(execution.id, 'interrupted');
     }
   }
 
@@ -355,6 +359,7 @@ export class ExecutionRunnerService implements OnModuleInit, OnModuleDestroy {
         await this.executionsService.markAsError(execution.id, message);
         await this.executionsService.log(execution.id, 'error', message);
         await this.maybeNotify(execution.id, execution.robot.name, 'error');
+        this.alertScheduledFailure(execution.id, this.stalledExecutions.has(execution.id) ? 'stalled' : 'error');
       }
     } finally {
       this.runningProcesses.delete(execution.id);
@@ -362,6 +367,24 @@ export class ExecutionRunnerService implements OnModuleInit, OnModuleDestroy {
       this.stalledExecutions.delete(execution.id);
       void this.processQueue();
     }
+  }
+
+  // E-mail para a Inovação quando uma execução AGENDADA termina mal (erro, travamento ou interrupção).
+  // Execuções manuais não entram (getScheduledExecutionForAlert devolve null). Dispara e esquece: o envio
+  // por SMTP pode demorar e não pode segurar a fila nem o encerramento da execução.
+  private alertScheduledFailure(executionId: string, kind: ScheduledExecutionAlertKind) {
+    void (async () => {
+      const data = await this.executionsService.getScheduledExecutionForAlert(executionId);
+      if (!data) return;
+      await this.mailService.sendScheduledExecutionAlert({
+        kind,
+        executionId,
+        baseUrl: resolveHubBaseUrl(),
+        ...data,
+      });
+    })().catch((error) => {
+      this.logger.warn(`Alerta de e-mail do agendamento falhou para a execucao ${executionId}: ${String(error)}`);
+    });
   }
 
   private async maybeNotify(executionId: string, robotName: string, status: 'success' | 'error') {

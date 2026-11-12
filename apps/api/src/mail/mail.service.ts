@@ -1,5 +1,10 @@
 import { Injectable, Logger } from '@nestjs/common';
 import * as nodemailer from 'nodemailer';
+import {
+  buildScheduledExecutionAlert,
+  scheduleAlertsEnabled,
+  type ScheduledExecutionAlertInput,
+} from './scheduled-execution-alert';
 
 const FROM    = process.env.MAIL_FROM     ?? 'inovacao01@controller-rnc.com.br';
 const PASS    = process.env.MAIL_PASSWORD ?? '';
@@ -40,6 +45,30 @@ export class MailService {
       this.logger.log(`Alerta de falha BI enviado para: ${BI_TO.join(', ')} — ${siteName}`);
     } catch (err) {
       this.logger.error(`Falha ao enviar email de alerta BI (${siteName}): ${(err as Error).message}`);
+    }
+  }
+
+  // Execução AGENDADA que falhou, travou ou foi interrompida → mesma lista de destinatários dos alertas de BI.
+  // Nunca lança: um problema de e-mail não pode atrapalhar o fluxo de execuções.
+  async sendScheduledExecutionAlert(input: ScheduledExecutionAlertInput): Promise<void> {
+    if (!scheduleAlertsEnabled()) return;
+    if (!PASS || BI_TO.length === 0) {
+      this.logger.warn('Email de alerta de agendamento não configurado (MAIL_PASSWORD ou MAIL_BI_ALERT_TO ausente).');
+      return;
+    }
+
+    const mail = buildScheduledExecutionAlert(input);
+    try {
+      await this.transporter.sendMail({
+        from: `"Automation Hub" <${FROM}>`,
+        to: BI_TO.join(', '),
+        subject: mail.subject,
+        text: mail.text,
+        html: mail.html,
+      });
+      this.logger.log(`Alerta de agendamento (${input.kind}) enviado para: ${BI_TO.join(', ')} — ${input.robotName} / ${input.scheduleName}`);
+    } catch (err) {
+      this.logger.error(`Falha ao enviar email de alerta de agendamento (${input.robotName}): ${(err as Error).message}`);
     }
   }
 }
