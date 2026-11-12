@@ -303,11 +303,23 @@ model Execution {
   externalId             String?
 
   scheduledTaskId String?
+  // 1 = execução agendada original; 2 = reinício automático da verificação por tempo (só acontece uma vez).
+  attempt         Int            @default(1)
+  // Execução (tentativa 1) que esta (tentativa 2) está refazendo.
+  restartOfId     String?
+  // Qual aviso por tempo já foi enviado: 0 = nenhum, 1 = T0, 2 = T1 (evita e-mail repetido).
+  checkStage      Int            @default(0)
+  // Execução retida por dependência: id da 1ª execução do ciclo do agendamento de que depende. Enquanto preenchido, a
+  // fila não a inicia; é limpo quando esse ciclo termina com sucesso (ou a execução é cancelada se ele falhar).
+  waitingOnExecutionId String?
+  // O e-mail do agendamento do qual dependia já informou que esta execução não rodou (evita avisar duas vezes).
+  dependencyNotified   Boolean       @default(false)
   logs            ExecutionLog[]
   files           ExecutionFile[]
   notifications   Notification[]
 
   @@unique([robotId, externalId])
+  @@index([restartOfId])
   @@index([robotId])
   @@index([userId, createdAt])
   @@index([status, createdAt])
@@ -370,9 +382,24 @@ model ScheduledTask {
   nextRunAt            DateTime
   lastError            String?
   lastExecutionId      String?
+  // Verificação por tempo (todos null = "sem verificação"). Contada a partir do INÍCIO da execução:
+  // T0 = verifyT0Minutes; T1 = T0 + verifyT1Minutes; T2 = T1 + verifyT2Minutes.
+  // T0 e T1 avisam por e-mail que ainda está rodando; em T2 a execução é cancelada e reiniciada (1 vez).
+  verifyT0Minutes      Int?
+  verifyT1Minutes      Int?
+  verifyT2Minutes      Int?
+  // Teto de tempo para quem está "sem verificação": passou disso rodando, a execução é cancelada e avisa (sem reinício).
+  // Fica null quando há T0/T1/T2 (o T2 já é o teto).
+  maxRuntimeMinutes    Int?
+  // Dependência: a execução agendada só começa depois que o ciclo do agendamento indicado terminar com sucesso
+  // (ex.: Atualizar Planilhas depende de Gestta). Se esse agendamento for apagado, o campo é limpo.
+  dependsOnTaskId      String?
+  dependsOn            ScheduledTask?    @relation("TaskDependency", fields: [dependsOnTaskId], references: [id], onDelete: SetNull)
+  dependents           ScheduledTask[]   @relation("TaskDependency")
   createdAt            DateTime          @default(now())
   updatedAt            DateTime          @updatedAt
 
+  @@index([dependsOnTaskId])
   @@index([isActive, nextRunAt])
   @@index([userId, createdAt])
   @@index([robotId, createdAt])
@@ -467,6 +494,11 @@ model Dashboard {
   updateDayOfMonth      Int?
   lastUpdateAt          DateTime?
   lastUpdateStatus      String?
+  // Motivo da última falha de atualização (some quando uma atualização dá certo). Só admin vê.
+  lastUpdateError       String?
+  // Segunda tentativa agendada depois de uma falha da atualização programada (null = nada pendente).
+  // Fica no banco para sobreviver a um reinício do Hub entre as duas tentativas.
+  updateRetryAt         DateTime?
   // Envio do rastreamento ("traces") do SDK openai-agents à OpenAI. Desligado por padrão: o rastreamento leva as
   // perguntas e o que o assistente leu dos dados do painel. Vale a partir do próximo (re)início do painel.
   aiTracing             Boolean       @default(false)

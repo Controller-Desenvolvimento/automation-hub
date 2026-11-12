@@ -222,6 +222,14 @@ export type ScheduledTask = {
   lastRunAt?: string | null;
   nextRunAt: string;
   lastError?: string | null;
+  /** Verificação por tempo (minutos): T0; T1 = T0 + verifyT1Minutes; T2 = T1 + verifyT2Minutes. Todos null = sem verificação. */
+  verifyT0Minutes?: number | null;
+  verifyT1Minutes?: number | null;
+  verifyT2Minutes?: number | null;
+  /** Teto de tempo (só para "sem verificação"): cancela e avisa, sem reiniciar. */
+  maxRuntimeMinutes?: number | null;
+  /** Só inicia depois que o ciclo deste outro agendamento terminar com sucesso. */
+  dependsOnTaskId?: string | null;
   lastExecutionId?: string | null;
   lastExecutionStatus?: 'queued' | 'running' | 'success' | 'error' | 'canceled' | null;
   createdAt: string;
@@ -530,6 +538,9 @@ export type Dashboard = {
   updateDayOfMonth?: number | null;
   lastUpdateAt?: string | null;
   lastUpdateStatus?: string | null;
+  /** Motivo da última falha de atualização e repetição pendente. Só vêm para administradores. */
+  lastUpdateError?: string | null;
+  updateRetryAt?: string | null;
   /** Envia o rastreamento (traces) do assistente de IA à OpenAI; desligado por padrão, vale no próximo reinício do painel. */
   aiTracing?: boolean;
   createdAt: string;

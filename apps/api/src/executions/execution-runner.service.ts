@@ -8,8 +8,12 @@ import { fileURLToPath } from 'node:url';
 import { ExecutionStatus } from '@prisma/client';
 import { ExecutionsService } from './executions.service';
 import { failureReason, isPythonExceptionLine } from './failure-reason';
+import { INTERRUPTED_BY_RESTART_MESSAGE } from './interrupted';
 import { findStalledExecutions, getStallTimeoutMs, stallMessage } from './stall-watchdog';
 import { NotificationsService } from '../notifications/notifications.service';
+import { MailService } from '../mail/mail.service';
+import { restartFailedInputFrom } from '../mail/schedule-check-alert';
+import { resolveHubBaseUrl, type ScheduledExecutionAlertKind } from '../mail/scheduled-execution-alert';
 import { listFilesRecursively, sanitizeFileName, toUserFileName } from '../shared/files';
 import { WINDOWS_HIDE } from '../shared/process-options';
 import { readDeployPendingSync } from '../system/deploy-state';
@@ -51,6 +55,7 @@ export class ExecutionRunnerService implements OnModuleInit, OnModuleDestroy {
   constructor(
     private readonly executionsService: ExecutionsService,
     private readonly notificationsService: NotificationsService,
+    private readonly mailService: MailService,
   ) {}
 
   async onModuleInit() {
@@ -111,10 +116,11 @@ export class ExecutionRunnerService implements OnModuleInit, OnModuleDestroy {
         this.logger.error(`registerOutputFiles (reconciliacao) falhou para execucao ${execution.id}: ${String(regError)}`);
       }
 
-      const message = 'Execução interrompida: o servidor do Hub foi reiniciado enquanto esta automação rodava. Se o robô salva progresso incrementalmente, os arquivos de saída já gerados foram recuperados — confira antes de reiniciar do zero.';
+      const message = INTERRUPTED_BY_RESTART_MESSAGE;
       await this.executionsService.markAsError(execution.id, message);
       await this.executionsService.log(execution.id, 'error', message);
       await this.maybeNotify(execution.id, execution.robot.name, 'error');
+      this.alertScheduledFailure(execution.id, 'interrupted');
     }
   }
 
@@ -143,7 +149,8 @@ export class ExecutionRunnerService implements OnModuleInit, OnModuleDestroy {
       running.child.stderr?.destroy();
       this.runningProcesses.delete(executionId);
       this.logger.log(`stopExecution: processo terminado pid=${running.child.pid}`);
-      await this.executionsService.log(executionId, 'warn', 'Processo interrompido pelo usuario.');
+      // Neutra de propósito: quem pediu (usuário, ou o sistema pelo limite T2) registra o motivo na sua própria linha.
+      await this.executionsService.log(executionId, 'warn', 'Processo da automação encerrado.');
     } else {
       this.logger.warn(`stopExecution: execucao ${executionId} nao encontrada em runningProcesses`);
     }
@@ -239,6 +246,11 @@ export class ExecutionRunnerService implements OnModuleInit, OnModuleDestroy {
     projectedExecutions: Awaited<ReturnType<ExecutionsService['listRunningExecutions']>>,
     globalLimit: number,
   ) {
+    // Retida por dependência: espera o ciclo de outro agendamento terminar (quem a libera é o ScheduleChecksService).
+    if (execution.waitingOnExecutionId) {
+      return execution.currentStep || 'Aguardando o agendamento do qual depende terminar.';
+    }
+
     if (projectedExecutions.length >= globalLimit) {
       return `Aguardando capacidade do servidor (${projectedExecutions.length}/${globalLimit} em execucao).`;
     }
@@ -265,12 +277,13 @@ export class ExecutionRunnerService implements OnModuleInit, OnModuleDestroy {
   }
 
   private async updateQueuedReasons(
-    queuedExecutions: Array<{ id: string }>,
+    queuedExecutions: Array<{ id: string; waitingOnExecutionId?: string | null }>,
     fallbackReason?: string,
     explicitReasons?: Map<string, string>,
   ) {
     await Promise.all(
-      queuedExecutions.map(async (execution) => {
+      // Retidas por dependência têm o motivo próprio (quem espera por quem): não são sobrescritas pelo da fila.
+      queuedExecutions.filter((execution) => !execution.waitingOnExecutionId).map(async (execution) => {
         const reason = explicitReasons?.get(execution.id) ?? fallbackReason;
         if (!reason) {
           return;
@@ -355,6 +368,7 @@ export class ExecutionRunnerService implements OnModuleInit, OnModuleDestroy {
         await this.executionsService.markAsError(execution.id, message);
         await this.executionsService.log(execution.id, 'error', message);
         await this.maybeNotify(execution.id, execution.robot.name, 'error');
+        this.alertScheduledFailure(execution.id, this.stalledExecutions.has(execution.id) ? 'stalled' : 'error');
       }
     } finally {
       this.runningProcesses.delete(execution.id);
@@ -362,6 +376,44 @@ export class ExecutionRunnerService implements OnModuleInit, OnModuleDestroy {
       this.stalledExecutions.delete(execution.id);
       void this.processQueue();
     }
+  }
+
+  // E-mail para a Inovação quando uma execução AGENDADA termina mal (erro, travamento ou interrupção).
+  // Execuções manuais não entram (getScheduledExecutionForAlert devolve null). Dispara e esquece: o envio
+  // por SMTP pode demorar e não pode segurar a fila nem o encerramento da execução.
+  private alertScheduledFailure(executionId: string, kind: ScheduledExecutionAlertKind) {
+    void (async () => {
+      const data = await this.executionsService.getScheduledExecutionForAlert(executionId);
+      if (!data) return;
+      const baseUrl = resolveHubBaseUrl();
+
+      // É o fim definitivo deste ciclo? A 2ª tentativa sempre é; na 1ª, só se nenhum reinício vem a caminho (uma
+      // interrupção pelo reinício do Hub, com verificação por tempo, ainda será refeita). Se for definitivo, quem
+      // esperava por este ciclo não vai rodar: o e-mail já os cita ("Não executou") e eles são marcados como avisados.
+      const isFinal = data.attempt >= 2 || kind !== 'interrupted' || !data.restartExpected;
+      const skipped = isFinal ? await this.executionsService.collectSkippedDependents(data.cycleFirstId) : [];
+
+      // Reinício automático (2ª tentativa) que também terminou mal: UM e-mail final, com a história toda.
+      const restartInput = data.attempt >= 2 ? restartFailedInputFrom(data, executionId, baseUrl, skipped) : null;
+      if (restartInput) {
+        await this.mailService.sendRestartFailedAlert(restartInput);
+        return;
+      }
+
+      await this.mailService.sendScheduledExecutionAlert({
+        kind,
+        executionId,
+        baseUrl,
+        robotName: data.robotName,
+        scheduleName: data.scheduleName,
+        startedAt: data.startedAt,
+        finishedAt: data.finishedAt,
+        errorMessage: data.errorMessage,
+        skipped,
+      });
+    })().catch((error) => {
+      this.logger.warn(`Alerta de e-mail do agendamento falhou para a execucao ${executionId}: ${String(error)}`);
+    });
   }
 
   private async maybeNotify(executionId: string, robotName: string, status: 'success' | 'error') {

@@ -1189,7 +1189,7 @@ export function SitesPage() {
                           </TableCell>
                           <TableCell>
                             {d.updatePath ? (
-                              <DashboardStatusBadge status={d.lastUpdateStatus} lastUpdateAt={d.lastUpdateAt} />
+                              <DashboardStatusBadge status={d.lastUpdateStatus} lastUpdateAt={d.lastUpdateAt} error={isAdmin ? d.lastUpdateError : null} retryAt={isAdmin ? d.updateRetryAt : null} />
                             ) : (
                               <span className="text-sm text-slate-400 dark:text-zinc-500">—</span>
                             )}
@@ -1343,7 +1343,7 @@ export function SitesPage() {
   );
 }
 
-function DashboardStatusBadge({ status, lastUpdateAt }: { status?: string | null; lastUpdateAt?: string | null }) {
+function DashboardStatusBadge({ status, lastUpdateAt, error, retryAt }: { status?: string | null; lastUpdateAt?: string | null; error?: string | null; retryAt?: string | null }) {
   if (status === 'running') {
     return (
       <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-sky-50 px-2 py-0.5 text-xs font-medium text-sky-600 dark:bg-sky-900/20 dark:text-sky-400">
@@ -1362,7 +1362,11 @@ function DashboardStatusBadge({ status, lastUpdateAt }: { status?: string | null
   if (status === 'error') {
     return (
       <span
-        title="Ocorreu um erro ao atualizar os dados do painel."
+        title={
+          error
+            ? `${error}${retryAt ? ` — nova tentativa automática às ${new Date(retryAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}.` : ''}`
+            : 'Ocorreu um erro ao atualizar os dados do painel.'
+        }
         className="inline-flex shrink-0 cursor-help items-center gap-1 rounded-full bg-red-50 px-2 py-0.5 text-xs font-medium text-red-600 dark:bg-red-900/20 dark:text-red-400"
       >
         Falha na atualização

@@ -10,6 +10,9 @@ import AdmZip from 'adm-zip';
 import { access, copyFile, readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import { extname, join, relative } from 'node:path';
 import { PrismaService } from '../prisma/prisma.service';
+import { INTERRUPTED_PREFIX } from './interrupted';
+import { checkConfigFromTask } from '../scheduled-tasks/schedule-checks';
+import type { ExecSnap } from '../scheduled-tasks/schedule-dependency';
 import { buildExecutionScope, canAccessExecution, canAccessRobot, isAdmin } from '../shared/access';
 import { parametersForViewer, withoutParameters } from '../shared/execution-parameters';
 import { fixMulterFilename, toUserFileName, uniqueStoredFileName } from '../shared/files';
@@ -63,6 +66,11 @@ type CreateExecutionInput = {
   priority?: number;
   parameters?: Record<string, unknown>;
   scheduledTaskId?: string;
+  // Reinício automático da verificação por tempo: 2 = refazendo a execução `restartOfId` (padrão 1 = original).
+  attempt?: number;
+  restartOfId?: string;
+  // Execução retida por dependência: não começa até o ciclo (1ª execução id) do agendamento de que depende terminar.
+  waitingOnExecutionId?: string;
 };
 
 @Injectable()
@@ -105,6 +113,9 @@ export class ExecutionsService {
         priority: payload.priority ?? 0,
         inputJson: (payload.parameters ?? {}) as Prisma.InputJsonValue,
         scheduledTaskId: payload.scheduledTaskId,
+        attempt: payload.attempt ?? 1,
+        restartOfId: payload.restartOfId,
+        waitingOnExecutionId: payload.waitingOnExecutionId,
       },
     });
 
@@ -512,6 +523,211 @@ export class ExecutionsService {
       where: { id },
       select: { scheduledTaskId: true },
     });
+  }
+
+  // Dados para o e-mail de alerta de uma execução AGENDADA (null para execuções manuais ou inexistentes).
+  async getScheduledExecutionForAlert(id: string) {
+    const execution = await this.prisma.execution.findUnique({
+      where: { id },
+      select: {
+        scheduledTaskId: true,
+        attempt: true,
+        restartOfId: true,
+        startedAt: true,
+        finishedAt: true,
+        errorMessage: true,
+        robot: { select: { name: true } },
+      },
+    });
+    if (!execution?.scheduledTaskId) return null;
+
+    const task = await this.prisma.scheduledTask.findUnique({
+      where: { id: execution.scheduledTaskId },
+      select: { name: true, verifyT0Minutes: true, verifyT1Minutes: true, verifyT2Minutes: true },
+    });
+
+    // Para o e-mail final do reinício: como terminou a tentativa original que esta refez.
+    const first = execution.restartOfId
+      ? await this.prisma.execution.findUnique({
+          where: { id: execution.restartOfId },
+          select: { id: true, startedAt: true, finishedAt: true, errorMessage: true },
+        })
+      : null;
+
+    return {
+      robotName: execution.robot.name,
+      scheduleName: task?.name ?? execution.robot.name,
+      scheduledTaskId: execution.scheduledTaskId,
+      attempt: execution.attempt,
+      // Id da 1ª execução do ciclo (a própria, se for a 1ª tentativa): chave pela qual os dependentes ficam retidos.
+      cycleFirstId: execution.restartOfId ?? id,
+      // O agendamento tem verificação por tempo? Só então uma interrupção/cancelamento em T2 ainda vai ser reiniciado.
+      restartExpected: task ? checkConfigFromTask(task) !== null : false,
+      startedAt: execution.startedAt,
+      finishedAt: execution.finishedAt,
+      errorMessage: execution.errorMessage,
+      first: first
+        ? { executionId: first.id, startedAt: first.startedAt, finishedAt: first.finishedAt, outcome: first.errorMessage }
+        : null,
+    };
+  }
+
+  // ---- verificação por tempo (T0, T1, T2) das execuções agendadas ----
+
+  async listRunningScheduledExecutions() {
+    return this.prisma.execution.findMany({
+      where: { status: ExecutionStatus.running, scheduledTaskId: { not: null }, startedAt: { not: null } },
+      select: {
+        id: true,
+        scheduledTaskId: true,
+        startedAt: true,
+        attempt: true,
+        checkStage: true,
+        robot: { select: { name: true } },
+      },
+    });
+  }
+
+  // Marca que o aviso `stage` já foi enviado. Devolve false se outro ciclo já o tinha marcado (não enviar de novo).
+  async advanceCheckStage(id: string, stage: number): Promise<boolean> {
+    const result = await this.prisma.execution.updateMany({
+      where: { id, checkStage: { lt: stage } },
+      data: { checkStage: stage },
+    });
+    return result.count > 0;
+  }
+
+  // Cancelamento feito pelo sistema (limite T2): só atinge execução que ainda está rodando. false = já terminou.
+  async cancelBySystem(id: string, reason: string): Promise<boolean> {
+    const now = new Date();
+    const result = await this.prisma.execution.updateMany({
+      where: { id, status: ExecutionStatus.running },
+      data: {
+        status: ExecutionStatus.canceled,
+        canceledAt: now,
+        finishedAt: now,
+        currentStep: 'Cancelado automaticamente',
+        errorMessage: reason,
+      },
+    });
+    return result.count > 0;
+  }
+
+  // ---- dependência entre agendamentos ----
+
+  // Execuções retidas esperando o ciclo de outro agendamento.
+  async listHeldExecutions() {
+    return this.prisma.execution.findMany({
+      where: { status: ExecutionStatus.queued, waitingOnExecutionId: { not: null } },
+      select: {
+        id: true,
+        waitingOnExecutionId: true,
+        scheduledTaskId: true,
+        dependencyNotified: true,
+        robot: { select: { name: true } },
+      },
+    });
+  }
+
+  // A 1ª execução de um ciclo e o reinício dela (se houver), no formato que resolveCycle espera.
+  async getCycleSnapshots(firstId: string): Promise<{
+    first: ExecSnap;
+    restart: ExecSnap | null;
+    scheduledTaskId: string | null;
+    robotName: string;
+  } | null> {
+    const select = { id: true, status: true, attempt: true, finishedAt: true, errorMessage: true } as const;
+    const first = await this.prisma.execution.findUnique({
+      where: { id: firstId },
+      select: { ...select, scheduledTaskId: true, robot: { select: { name: true } } },
+    });
+    if (!first) return null;
+    const restart = await this.prisma.execution.findFirst({
+      where: { restartOfId: firstId },
+      orderBy: { createdAt: 'desc' },
+      select,
+    });
+    return { first, restart, scheduledTaskId: first.scheduledTaskId, robotName: first.robot.name };
+  }
+
+  // A 1ª execução AGENDADA (tentativa 1) mais recente de um agendamento criada depois de `since`: é o "ciclo" de que um
+  // agendamento dependente deve esperar. Execuções manuais não têm agendamento, então nunca contam.
+  async findCycleExecutionId(taskId: string, since: Date | null): Promise<string | null> {
+    const found = await this.prisma.execution.findFirst({
+      where: { scheduledTaskId: taskId, attempt: 1, ...(since ? { createdAt: { gt: since } } : {}) },
+      orderBy: { createdAt: 'desc' },
+      select: { id: true },
+    });
+    return found?.id ?? null;
+  }
+
+  // O ciclo de que dependia terminou com sucesso: a execução retida pode começar (a fila a pega em instantes).
+  async releaseHeld(id: string): Promise<boolean> {
+    const result = await this.prisma.execution.updateMany({
+      where: { id, status: ExecutionStatus.queued, waitingOnExecutionId: { not: null } },
+      data: { waitingOnExecutionId: null, currentStep: 'Aguardando processamento', progress: 5 },
+    });
+    return result.count > 0;
+  }
+
+  // O ciclo de que dependia falhou: a execução retida não roda (dados antigos não adiantam) e fica no histórico como
+  // cancelada, com o motivo.
+  async cancelHeld(id: string, reason: string): Promise<boolean> {
+    const now = new Date();
+    const result = await this.prisma.execution.updateMany({
+      where: { id, status: ExecutionStatus.queued },
+      data: {
+        status: ExecutionStatus.canceled,
+        canceledAt: now,
+        finishedAt: now,
+        currentStep: 'Pulada: o agendamento de que depende não terminou com sucesso',
+        errorMessage: reason,
+      },
+    });
+    return result.count > 0;
+  }
+
+  // Quando um ciclo falha de vez, os agendamentos que esperavam por ele são citados no e-mail dessa falha ("Não executou").
+  // Devolve os nomes e marca essas execuções como já avisadas, para o resolvedor não mandar um segundo e-mail.
+  async collectSkippedDependents(cycleFirstId: string): Promise<string[]> {
+    const held = await this.prisma.execution.findMany({
+      where: { status: ExecutionStatus.queued, waitingOnExecutionId: cycleFirstId, dependencyNotified: false },
+      select: { id: true, scheduledTaskId: true, robot: { select: { name: true } } },
+    });
+    if (held.length === 0) return [];
+
+    const taskIds = [...new Set(held.map((h) => h.scheduledTaskId).filter((v): v is string => Boolean(v)))];
+    const tasks = taskIds.length
+      ? await this.prisma.scheduledTask.findMany({ where: { id: { in: taskIds } }, select: { id: true, name: true } })
+      : [];
+    const taskName = new Map(tasks.map((t) => [t.id, t.name]));
+
+    await this.prisma.execution.updateMany({
+      where: { id: { in: held.map((h) => h.id) } },
+      data: { dependencyNotified: true },
+    });
+    return held.map((h) => `${h.robot.name}${h.scheduledTaskId && taskName.get(h.scheduledTaskId) ? ` — ${taskName.get(h.scheduledTaskId)}` : ''}`);
+  }
+
+  // Execuções agendadas (1ª tentativa) interrompidas pelo reinício do Hub nos últimos `sinceMs` e ainda sem reinício.
+  async listInterruptedToRestart(sinceMs: number, now = new Date()) {
+    const candidates = await this.prisma.execution.findMany({
+      where: {
+        status: ExecutionStatus.error,
+        scheduledTaskId: { not: null },
+        attempt: 1,
+        errorMessage: { startsWith: INTERRUPTED_PREFIX },
+        finishedAt: { gte: new Date(now.getTime() - sinceMs) },
+      },
+      select: { id: true, scheduledTaskId: true },
+    });
+    if (candidates.length === 0) return [];
+    const restarted = await this.prisma.execution.findMany({
+      where: { restartOfId: { in: candidates.map((c) => c.id) } },
+      select: { restartOfId: true },
+    });
+    const done = new Set(restarted.map((r) => r.restartOfId));
+    return candidates.filter((c) => !done.has(c.id));
   }
 
   async getStatus(id: string) {

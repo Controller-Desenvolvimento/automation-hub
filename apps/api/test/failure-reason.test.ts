@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { limparTmp } from './_limpar-tmp';
 import test from 'node:test';
 import { ExecutionRunnerService } from '../src/executions/execution-runner.service';
 import { failureReason, isPythonExceptionLine } from '../src/executions/failure-reason';
@@ -39,7 +40,7 @@ async function rodar(script: string) {
     updateProgress: async () => undefined,
   };
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const runner = new ExecutionRunnerService(executionsService as any, {} as any);
+  const runner = new ExecutionRunnerService(executionsService as any, {} as any, {} as any);
   try {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     await (runner as any).runCommandExecution('exec-teste', 'python robo.py', dir);
@@ -47,7 +48,7 @@ async function rodar(script: string) {
   } catch (e) {
     return { erro: (e as Error).message, logs };
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    limparTmp(dir);
   }
 }
 

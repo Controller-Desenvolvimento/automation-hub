@@ -1,4 +1,4 @@
-import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import { Injectable, Logger, OnModuleDestroy, OnModuleInit, Optional } from '@nestjs/common';
 import { Dashboard, DashboardType, UserRole } from '@prisma/client';
 import AdmZip from 'adm-zip';
 import { createProxyMiddleware, fixRequestBody } from 'http-proxy-middleware';
@@ -11,6 +11,9 @@ import { mkdir, readdir, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { Agent, fetch as undiciFetch } from 'undici';
 import { PrismaService } from '../prisma/prisma.service';
+import { MailService } from '../mail/mail.service';
+import { resolveHubBaseUrl } from '../mail/scheduled-execution-alert';
+import { describeUpdateError, getRetryDelayMs } from './update-policy';
 import { panelProcessEnv } from '../shared/panel-env';
 import { WINDOWS_HIDE } from '../shared/process-options';
 import { dashboardRoot, dashboardsRoot } from '../shared/storage';
@@ -57,6 +60,28 @@ const PYCACHE_MAX_DIRS = 5000;
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// Já existe uma atualização em andamento para este painel (clique duplo, agendador junto com o botão...).
+export class UpdateInProgressError extends Error {
+  constructor() {
+    super('Já existe uma atualização em andamento para este painel.');
+    this.name = 'UpdateInProgressError';
+  }
+}
+
+interface ProxyUpdateTracker {
+  readonly done: boolean;
+  finish(statusCode: number | undefined, errorText?: string): Promise<void>;
+  abort(): Promise<void>;
+}
+
+// Rede de segurança: se nem o fim nem o erro do "Atualizar" de dentro do painel forem vistos pelo proxy,
+// a marca de "atualizando" é solta depois disso (o proxy já corta a conexão em 20 min).
+const PROXY_UPDATE_SAFETY_MS = 35 * 60 * 1000;
+
+function pathOnly(path: string | undefined): string {
+  return (path ?? '').split('?')[0].replace(/\/+$/, '');
 }
 
 @Injectable()
@@ -128,10 +153,34 @@ export class DashboardService implements OnModuleInit, OnModuleDestroy {
     this.lastErrors.delete(id);
   }
 
-  constructor(private readonly prisma: PrismaService) {}
+  // Painéis com atualização em curso (programada, botão do Hub ou "Atualizar" de dentro do painel).
+  private readonly updating = new Set<string>();
+  // updatePath de cada painel, para o proxy reconhecer o "Atualizar" de dentro do painel sem ir ao banco a cada POST.
+  private readonly updatePaths = new Map<string, string | null>();
+
+  constructor(
+    private readonly prisma: PrismaService,
+    @Optional() private readonly mailService?: MailService,
+  ) {}
+
+  isUpdating(id: string): boolean {
+    return this.updating.has(id);
+  }
 
   async onModuleInit() {
     await mkdir(dashboardsRoot, { recursive: true });
+    try {
+      const all = await this.prisma.dashboard.findMany({ select: { id: true, updatePath: true } });
+      for (const d of all) this.updatePaths.set(d.id, d.updatePath ?? null);
+      // Uma atualização que estava rodando quando o Hub reiniciou nunca termina: sem isto o selo ficaria em
+      // "Atualizando..." para sempre. Como não conta como concluída, a atualização programada a retoma.
+      await this.prisma.dashboard.updateMany({
+        where: { lastUpdateStatus: 'running' },
+        data: { lastUpdateStatus: 'error', lastUpdateError: 'Atualização interrompida: o Hub foi reiniciado enquanto ela rodava.' },
+      });
+    } catch (err) {
+      this.logger.warn(`Preparação das atualizações de painel falhou: ${String(err)}`);
+    }
     const active = await this.prisma.dashboard.findMany({
       where: { type: { in: [DashboardType.streamlit, DashboardType.server] }, isActive: true },
     });
@@ -221,12 +270,16 @@ export class DashboardService implements OnModuleInit, OnModuleDestroy {
         aiTracing: dto.aiTracing ?? false,
       },
     });
+    this.updatePaths.set(dashboard.id, dashboard.updatePath ?? null);
     await mkdir(dashboardRoot(dashboard.id), { recursive: true });
     return dashboard;
   }
 
   update(id: string, dto: Partial<Pick<Dashboard, 'name' | 'description' | 'isActive' | 'allowedDepartments' | 'minRole' | 'allowedUserIds' | 'mainFile' | 'serverCommand' | 'serverWorkingDirectory' | 'updatePath' | 'warmupPaths' | 'warmupMode' | 'updateFrequency' | 'updateTimesOfDay' | 'updateDayOfWeek' | 'updateDayOfMonth' | 'aiTracing'>>): Promise<Dashboard> {
-    return this.prisma.dashboard.update({ where: { id }, data: dto });
+    return this.prisma.dashboard.update({ where: { id }, data: dto }).then((updated) => {
+      this.updatePaths.set(id, updated.updatePath ?? null);
+      return updated;
+    });
   }
 
   async triggerUpdate(id: string): Promise<{ ok: true; updatedAt: Date }> {
@@ -235,17 +288,18 @@ export class DashboardService implements OnModuleInit, OnModuleDestroy {
     if (!dashboard.updatePath) {
       throw new Error('updatePath is not configured for this dashboard');
     }
-    if (!dashboard.streamlitPort) {
-      throw new Error('streamlitPort is not available for this dashboard');
-    }
+    if (this.updating.has(id)) throw new UpdateInProgressError();
+    this.updating.add(id);
 
-    const updatedAt = new Date();
-    await this.prisma.dashboard.update({
-      where: { id },
-      data: { lastUpdateStatus: 'running', lastUpdateAt: updatedAt },
-    });
+    // "Atualizado há..." conta a partir do FIM da atualização (antes contava do início, e uma atualização longa
+    // já nascia "velha"). Falhas também gravam o horário, que é o do último ponto em que o painel foi tentado.
+    await this.prisma.dashboard.update({ where: { id }, data: { lastUpdateStatus: 'running' } });
 
+    let bodySnippet: string | undefined;
     try {
+      if (!dashboard.streamlitPort) {
+        throw new Error('O painel não está em execução (sem porta); inicie-o em Configurações → Painéis.');
+      }
       const updateUrl = `http://localhost:${dashboard.streamlitPort}${dashboard.updatePath}`;
       const response = await undiciFetch(updateUrl, {
         method: 'POST',
@@ -254,25 +308,123 @@ export class DashboardService implements OnModuleInit, OnModuleDestroy {
       });
 
       if (!response.ok) {
+        // O corpo costuma dizer a causa (ex.: {"detail": "..."}); lê só um pedaço, sem derrubar nada se falhar.
+        bodySnippet = await response.text().then((t) => t.slice(0, 600)).catch(() => undefined);
         throw new Error(`Update endpoint responded with status ${response.status}`);
       }
 
       // Aquecimento roda em segundo plano — não atrasa a resposta desse endpoint
       void this.runWarmup(dashboard.streamlitPort, dashboard.warmupMode, dashboard.warmupPaths ?? []);
 
+      const updatedAt = new Date();
       await this.prisma.dashboard.update({
         where: { id },
-        data: { lastUpdateStatus: 'ok' },
+        data: { lastUpdateStatus: 'ok', lastUpdateAt: updatedAt, lastUpdateError: null, updateRetryAt: null },
       });
 
       return { ok: true, updatedAt };
     } catch (err) {
       await this.prisma.dashboard.update({
         where: { id },
-        data: { lastUpdateStatus: 'error' },
+        data: { lastUpdateStatus: 'error', lastUpdateAt: new Date(), lastUpdateError: describeUpdateError(err, bodySnippet) },
       }).catch(() => {});
       throw err;
+    } finally {
+      this.updating.delete(id);
     }
+  }
+
+  // Atualização PROGRAMADA (chamada pelo agendador). Tentativa 1 que falha agenda a tentativa 2 (padrão: 5 min
+  // depois, gravada no banco para sobreviver a reinício). Tentativa 2 que falha manda UM e-mail à Inovação.
+  // Atualização manual (botão do Hub ou "Atualizar" de dentro do painel) nunca passa por aqui: sem retry nem e-mail.
+  async runScheduledUpdate(id: string, attempt: 1 | 2): Promise<'ok' | 'retry-scheduled' | 'failed' | 'skipped'> {
+    if (this.updating.has(id)) return 'skipped';
+    const before = await this.prisma.dashboard.findUnique({
+      where: { id },
+      select: { name: true, slug: true, lastUpdateAt: true, lastUpdateError: true },
+    });
+    if (!before) return 'skipped';
+    // Já registra que a repetição está sendo feita agora, para o próximo ciclo do agendador não repeti-la.
+    if (attempt === 2) await this.prisma.dashboard.update({ where: { id }, data: { updateRetryAt: null } });
+
+    try {
+      await this.triggerUpdate(id);
+      return 'ok';
+    } catch (err) {
+      if (err instanceof UpdateInProgressError) return 'skipped';
+      const after = await this.prisma.dashboard.findUnique({ where: { id }, select: { lastUpdateAt: true, lastUpdateError: true } });
+
+      if (attempt === 1) {
+        const retryAt = new Date(Date.now() + getRetryDelayMs());
+        await this.prisma.dashboard.update({ where: { id }, data: { updateRetryAt: retryAt } });
+        this.logger.warn(`Atualização programada de ${before.slug} falhou (${after?.lastUpdateError ?? String(err)}); nova tentativa às ${retryAt.toISOString()}.`);
+        return 'retry-scheduled';
+      }
+
+      this.logger.warn(`Atualização programada de ${before.slug} falhou nas 2 tentativas: ${after?.lastUpdateError ?? String(err)}`);
+      void this.mailService
+        ?.sendPanelUpdateFailure({
+          panelName: before.name,
+          slug: before.slug,
+          attempts: [
+            { at: before.lastUpdateAt, error: before.lastUpdateError },
+            { at: after?.lastUpdateAt ?? new Date(), error: after?.lastUpdateError ?? describeUpdateError(err) },
+          ],
+          baseUrl: resolveHubBaseUrl(),
+        })
+        .catch((mailErr: unknown) => this.logger.warn(`Alerta de e-mail do painel ${before.slug} falhou: ${String(mailErr)}`));
+      return 'failed';
+    }
+  }
+
+  // "Atualizar" de DENTRO do painel (POST no updatePath, pelo proxy /d/<slug>): não passa por triggerUpdate, então
+  // antes o selo nunca mudava. O proxy chama isto ao ver o POST e finish()/abort() ao ver o fim da resposta.
+  private trackProxyUpdate(id: string): ProxyUpdateTracker | null {
+    if (this.updating.has(id)) return null; // já há outra atualização em curso: deixa passar sem mexer no estado
+    this.updating.add(id);
+    let done = false;
+    const previous = this.prisma.dashboard.findUnique({ where: { id }, select: { lastUpdateStatus: true } }).catch(() => null);
+    // O fim (finish/abort) espera esta gravação, para nunca chegar ao banco antes dela.
+    const started = previous
+      .then(() => this.prisma.dashboard.update({ where: { id }, data: { lastUpdateStatus: 'running' } }))
+      .catch(() => undefined);
+
+    const release = () => {
+      done = true;
+      this.updating.delete(id);
+      clearTimeout(safety);
+    };
+    const safety = setTimeout(() => { if (!done) void tracker.abort(); }, PROXY_UPDATE_SAFETY_MS);
+    safety.unref?.();
+
+    const tracker: ProxyUpdateTracker = {
+      get done() { return done; },
+      // Resposta completa do painel: 2xx = atualizou; outro status = falhou (o motivo é o próprio código HTTP).
+      finish: async (statusCode: number | undefined, errorText?: string) => {
+        if (done) return;
+        release();
+        await started;
+        const ok = typeof statusCode === 'number' && statusCode >= 200 && statusCode < 300;
+        await this.prisma.dashboard.update({
+          where: { id },
+          data: ok
+            ? { lastUpdateStatus: 'ok', lastUpdateAt: new Date(), lastUpdateError: null, updateRetryAt: null }
+            : { lastUpdateStatus: 'error', lastUpdateAt: new Date(), lastUpdateError: errorText ?? `O painel respondeu ao "Atualizar" com o status ${statusCode ?? 'desconhecido'}.` },
+        }).catch((err: unknown) => this.logger.warn(`Registro do "Atualizar" do painel ${id} falhou: ${String(err)}`));
+      },
+      // O navegador fechou antes do fim: não dá para saber o resultado, então volta o estado de antes.
+      abort: async () => {
+        if (done) return;
+        release();
+        await started;
+        const prev = await previous;
+        await this.prisma.dashboard.update({
+          where: { id },
+          data: { lastUpdateStatus: prev?.lastUpdateStatus ?? null },
+        }).catch(() => undefined);
+      },
+    };
+    return tracker;
   }
 
   private async runWarmup(port: number, mode: string, manualPaths: string[]) {
@@ -359,13 +511,31 @@ export class DashboardService implements OnModuleInit, OnModuleDestroy {
       proxyTimeout: 20 * 60 * 1000,
       ...(slug ? { pathRewrite: { [`^/d/${slug}`]: '' } } : {}),
       on: {
-        proxyReq: (proxyReq, req) => {
-          const user = (req as unknown as Record<string, unknown>).hubUser as { name?: string; email?: string } | undefined;
+        proxyReq: (proxyReq, req, res) => {
+          const user =(req as unknown as Record<string, unknown>).hubUser as { name?: string; email?: string } | undefined;
           if (user?.name) proxyReq.setHeader('X-Hub-User-Name', user.name);
           if (user?.email) proxyReq.setHeader('X-Hub-User-Email', user.email);
+          // "Atualizar" de dentro do painel: POST no updatePath do painel → o selo do Hub passa a acompanhá-lo.
+          const configuredPath = this.updatePaths.get(dashboardId);
+          if (configuredPath && proxyReq.method === 'POST' && pathOnly(proxyReq.path) === pathOnly(configuredPath)) {
+            const tracker = this.trackProxyUpdate(dashboardId);
+            if (tracker) {
+              (req as unknown as Record<string, unknown>).panelUpdateTracker = tracker;
+              // Navegador que fecha antes de a resposta chegar: a biblioteca de proxy nem chama o tratador de erro
+              // nesse caso, então é aqui, desde o começo, que se observa o fechamento. Se a resposta já terminou
+              // (finish marcou "done"), isto não faz nada.
+              (res as import('node:http').ServerResponse).on('close', () => { if (!tracker.done) void tracker.abort(); });
+            }
+          }
           fixRequestBody(proxyReq, req);
         },
-        proxyRes: (proxyRes) => {
+        proxyRes: (proxyRes, req) => {
+          const tracker = (req as unknown as Record<string, unknown>).panelUpdateTracker as ProxyUpdateTracker | undefined;
+          if (tracker) {
+            proxyRes.on('end', () => void tracker.finish(proxyRes.statusCode));
+            // resposta cortada no meio, ou navegador que fechou antes do fim: resultado desconhecido
+            proxyRes.on('close', () => { if (!proxyRes.complete) void tracker.abort(); });
+          }
           // Respostas SSE (ex.: POST /chatkit dos BIs, que mandam sinal de vida
           // a cada 15s): sem esses cabeçalhos, proxies à frente do hub (IIS/ARR,
           // nginx etc.) podem reter a resposta até o fim e o navegador desiste
@@ -386,9 +556,15 @@ export class DashboardService implements OnModuleInit, OnModuleDestroy {
             proxyRes.headers['location'] = `/d/${slug}${loc}`;
           }
         },
-        error: (err, _req, res) => {
+        error: (err, req, res) => {
           this.logger.warn(`Proxy error [${dashboardId}]: ${(err as Error).message}`);
           const sr = res as import('node:http').ServerResponse;
+          const tracker = (req as unknown as Record<string, unknown>).panelUpdateTracker as ProxyUpdateTracker | undefined;
+          if (tracker) {
+            // navegador que desistiu: resultado desconhecido; painel que não respondeu/caiu: falha de verdade
+            if (sr.destroyed) void tracker.abort();
+            else void tracker.finish(undefined, `Falha ao falar com o painel: ${(err as Error).message}`);
+          }
           if (!sr.headersSent) {
             sr.writeHead(502, { 'Content-Type': 'application/json' });
             sr.end(JSON.stringify({ statusCode: 502, message: 'Dashboard indisponível.' }));

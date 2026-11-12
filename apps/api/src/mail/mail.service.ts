@@ -1,5 +1,20 @@
 import { Injectable, Logger } from '@nestjs/common';
 import * as nodemailer from 'nodemailer';
+import { buildPanelUpdateAlert, type PanelUpdateAlertInput } from './panel-update-alert';
+import {
+  buildDependencySkippedAlert,
+  buildRestartFailedAlert,
+  buildScheduleSlowAlert,
+  type DependencySkippedInput,
+  type RestartFailedInput,
+  type SlowAlertInput,
+} from './schedule-check-alert';
+import {
+  buildScheduledExecutionAlert,
+  scheduleAlertsEnabled,
+  type BuiltEmail,
+  type ScheduledExecutionAlertInput,
+} from './scheduled-execution-alert';
 
 const FROM    = process.env.MAIL_FROM     ?? 'inovacao01@controller-rnc.com.br';
 const PASS    = process.env.MAIL_PASSWORD ?? '';
@@ -40,6 +55,89 @@ export class MailService {
       this.logger.log(`Alerta de falha BI enviado para: ${BI_TO.join(', ')} — ${siteName}`);
     } catch (err) {
       this.logger.error(`Falha ao enviar email de alerta BI (${siteName}): ${(err as Error).message}`);
+    }
+  }
+
+  // Envio comum dos alertas da verificação por tempo. Nunca lança.
+  private async deliverAlert(mail: BuiltEmail, label: string): Promise<void> {
+    if (!scheduleAlertsEnabled()) return;
+    if (!PASS || BI_TO.length === 0) {
+      this.logger.warn(`Email de alerta (${label}) não configurado (MAIL_PASSWORD ou MAIL_BI_ALERT_TO ausente).`);
+      return;
+    }
+    try {
+      await this.transporter.sendMail({
+        from: `"Automation Hub" <${FROM}>`,
+        to: BI_TO.join(', '),
+        subject: mail.subject,
+        text: mail.text,
+        html: mail.html,
+      });
+      this.logger.log(`Alerta (${label}) enviado para: ${BI_TO.join(', ')} — ${mail.subject}`);
+    } catch (err) {
+      this.logger.error(`Falha ao enviar email de alerta (${label}): ${(err as Error).message}`);
+    }
+  }
+
+  // T0/T1: a execução agendada ainda está rodando além do esperado.
+  sendScheduleSlowAlert(input: SlowAlertInput): Promise<void> {
+    return this.deliverAlert(buildScheduleSlowAlert(input), `demora T${input.stage - 1}`);
+  }
+
+  // Agendamento pulado porque aquele de que depende não terminou com sucesso.
+  sendDependencySkippedAlert(input: DependencySkippedInput): Promise<void> {
+    return this.deliverAlert(buildDependencySkippedAlert(input), 'agendamento pulado');
+  }
+
+  // A execução foi reiniciada e a 2ª tentativa também não deu certo: um e-mail só, com tudo.
+  sendRestartFailedAlert(input: RestartFailedInput): Promise<void> {
+    return this.deliverAlert(buildRestartFailedAlert(input), 'reiniciada com problema');
+  }
+
+  // Atualização PROGRAMADA de painel que falhou nas duas tentativas → mesma lista dos alertas de BI. Nunca lança.
+  async sendPanelUpdateFailure(input: PanelUpdateAlertInput): Promise<void> {
+    if (!scheduleAlertsEnabled()) return;
+    if (!PASS || BI_TO.length === 0) {
+      this.logger.warn('Email de alerta de painel não configurado (MAIL_PASSWORD ou MAIL_BI_ALERT_TO ausente).');
+      return;
+    }
+
+    const mail = buildPanelUpdateAlert(input);
+    try {
+      await this.transporter.sendMail({
+        from: `"Automation Hub" <${FROM}>`,
+        to: BI_TO.join(', '),
+        subject: mail.subject,
+        text: mail.text,
+        html: mail.html,
+      });
+      this.logger.log(`Alerta de atualização de painel enviado para: ${BI_TO.join(', ')} — ${input.panelName}`);
+    } catch (err) {
+      this.logger.error(`Falha ao enviar email de alerta de painel (${input.panelName}): ${(err as Error).message}`);
+    }
+  }
+
+  // Execução AGENDADA que falhou, travou ou foi interrompida → mesma lista de destinatários dos alertas de BI.
+  // Nunca lança: um problema de e-mail não pode atrapalhar o fluxo de execuções.
+  async sendScheduledExecutionAlert(input: ScheduledExecutionAlertInput): Promise<void> {
+    if (!scheduleAlertsEnabled()) return;
+    if (!PASS || BI_TO.length === 0) {
+      this.logger.warn('Email de alerta de agendamento não configurado (MAIL_PASSWORD ou MAIL_BI_ALERT_TO ausente).');
+      return;
+    }
+
+    const mail = buildScheduledExecutionAlert(input);
+    try {
+      await this.transporter.sendMail({
+        from: `"Automation Hub" <${FROM}>`,
+        to: BI_TO.join(', '),
+        subject: mail.subject,
+        text: mail.text,
+        html: mail.html,
+      });
+      this.logger.log(`Alerta de agendamento (${input.kind}) enviado para: ${BI_TO.join(', ')} — ${input.robotName} / ${input.scheduleName}`);
+    } catch (err) {
+      this.logger.error(`Falha ao enviar email de alerta de agendamento (${input.robotName}): ${(err as Error).message}`);
     }
   }
 }
