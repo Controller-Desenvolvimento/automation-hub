@@ -1,0 +1,90 @@
+# Registro de mudanças
+
+Mudanças do Automation Hub por data. Este arquivo é **público**: descreve o que mudou no produto, no banco e na
+configuração, sem dados de infraestrutura. O desenho detalhado de cada funcionalidade está no `CLAUDE.md`.
+
+## 2026-11-12 — Alertas de agendamentos e painéis, verificação por tempo (T0/T1/T2), teto de tempo e dependência
+
+PR #1 (`8748a95`), PR #2 (`2781272`). Marco de restauração no GitHub: tag `alertas-agendamentos-2026-11-12`.
+
+### Novo
+
+**E-mails de alerta para a Inovação (só execuções agendadas)**
+- Erro, travamento (vigia de inatividade) e interrupção por reinício do Hub mandam e-mail com robô, agendamento,
+  horários, motivo e link da execução. Execuções manuais e canceladas pelo usuário nunca enviam. Sem e-mail de recuperação.
+- Destinatários: a lista `MAIL_BI_ALERT_TO` (a mesma dos alertas de BI). Envio em segundo plano: falha de e-mail não
+  atrapalha a fila.
+- O link usa `HUB_PUBLIC_URL`; endereço local (`localhost`, `127.x`...) nunca vai para o e-mail (sem endereço válido o
+  e-mail sai sem link).
+
+**Verificação por tempo (T0/T1/T2), por agendamento (só administrador edita)**
+- Tempos em minutos desde o **início** da execução: T0; T1 = T0 + valor de T1; T2 = T1 + valor de T2.
+- T0 e T1 avisam por e-mail que ainda está rodando. Em T2 a execução é cancelada e **reiniciada do começo, uma única vez**
+  (prioridade na fila, mesmos parâmetros e arquivos-modelo).
+- O reinício não manda avisos intermediários: se falhar, travar ou passar do próprio T2, sai **um** e-mail final
+  ("REINICIADA — continua com problema") com as duas tentativas.
+- Execução agendada interrompida pelo reinício do Hub é refeita uma vez (só em agendamentos com verificação).
+- Em branco = "sem verificação" (comportamento anterior). Salvar sem enviar os campos preserva a configuração existente.
+
+**Teto de tempo** (só para agendamentos sem T0/T1/T2): passou do teto rodando, a execução é cancelada e avisa por e-mail,
+**sem reiniciar**.
+
+**Dependência entre agendamentos**
+- Um agendamento pode depender de outro (ex.: "Atualizar Planilhas Excel" depende de "Gestta"). A execução entra na fila no
+  horário dela, fica **retida** e só começa quando o ciclo do outro agendamento (incluindo o reinício) terminar com sucesso.
+- Qualquer outro desfecho (erro, cancelado em T2/teto, cancelado à mão) **pula** aquele ciclo: fica no histórico como
+  cancelada, com o motivo; o ciclo seguinte recomeça normal.
+- Execuções manuais nunca ficam retidas, e uma execução manual do outro agendamento não libera a agendada.
+- Regras ao salvar: só se depende de agendamento com T0/T1/T2 ou teto; sem auto-dependência nem ciclos; não dá para tirar o
+  limite de tempo de quem tem dependentes. Agendamento desativado: dependência ignorada; apagado: campo limpo.
+- Os e-mails de falha definitiva citam quem deixou de rodar ("Não executou"); se o dependente é pulado sem ter sido citado,
+  sai um e-mail próprio de "agendamento pulado".
+
+**Painéis (atualização programada)**
+- Falhou: nova tentativa após 5 min (`PANEL_UPDATE_RETRY_MINUTES`); se a 2ª falhar, **um** e-mail com as duas tentativas e
+  motivos. Botão do Hub e "Atualizar" de dentro do painel não repetem nem enviam e-mail.
+- O "Atualizar" de dentro do painel passa a mover o selo "Atualizado há…", que conta a partir do **fim** da atualização.
+- Horário perdido (Hub fora do ar ou deploy no minuto exato) é recuperado até 60 min depois
+  (`PANEL_UPDATE_CATCHUP_MINUTES`), uma vez. Painel parado de propósito não é atualizado nem avisa.
+- Atualização que ficou "Atualizando…" por causa de um reinício vira erro e é retomada. O motivo da falha só aparece para
+  administradores.
+
+**Fila de execuções:** execuções retidas por dependência não são iniciadas e mantêm o motivo próprio.
+
+**Tela de agendamentos (administrador):** campos T0/T1/T2 com exemplo de horários ao vivo, teto de tempo e "Depende de outro
+agendamento?" (só lista agendamentos com limite de tempo).
+
+### Banco de dados (migrações aditivas, compatíveis com a versão anterior)
+| Migração | O que adiciona |
+|---|---|
+| `20261112150000_add_dashboard_update_retry` | `Dashboard.lastUpdateError`, `Dashboard.updateRetryAt` |
+| `20261112160000_add_schedule_time_checks` | `ScheduledTask.verifyT0/T1/T2Minutes`; `Execution.attempt`, `restartOfId`, `checkStage` |
+| `20261112170000_add_schedule_dependency_and_limit` | `ScheduledTask.maxRuntimeMinutes`, `dependsOnTaskId` (FK `ON DELETE SET NULL`); `Execution.waitingOnExecutionId`, `dependencyNotified` |
+
+### Configuração (`apps/api/.env`, todas opcionais)
+`HUB_PUBLIC_URL`, `SCHEDULE_ALERT_EMAILS` (`false` desliga todos os e-mails de agendamentos/painéis),
+`PANEL_UPDATE_RETRY_MINUTES` (5), `PANEL_UPDATE_CATCHUP_MINUTES` (60).
+
+### Deploy
+- **Correção do script de auto-deploy** (PR #2): quando o `schema.prisma` muda, a API só é compilada depois do
+  `prisma generate` (antes a compilação usava o cliente antigo e falhava com `TS2339`); o rollback regenera o cliente a partir
+  do esquema antigo. Ver a seção do auto-deploy no `CLAUDE.md`, que também traz a recuperação manual.
+
+### Robôs (repositório separado)
+- **Atualizar Planilhas Excel (BI):** cópia de segurança das planilhas antes de atualizar (pasta `BackupPlanilhas`, extensão
+  `.bak`) e restauração automática se a original sumir ou corromper. Proposta como PR no repositório de robôs.
+
+### Testes
+- Suíte da API: 246 testes (245 passam, 1 opcional é ignorado). 23 usam um PostgreSQL descartável e só rodam com
+  `TEST_DATABASE_URL` apontando para um banco chamado `hub_dev` (a trava recusa qualquer outro).
+- Corrigida uma falha intermitente nos testes no Windows (limpeza de pasta temporária com `EPERM` reprovava o arquivo inteiro).
+
+### Como desligar ou reverter
+- Todos os e-mails de agendamentos/painéis: `SCHEDULE_ALERT_EMAILS=false` e reiniciar o Hub.
+- Verificação por tempo, teto e dependência de um agendamento: esvaziar T0/T1/T2 e o teto, e escolher "Nenhum" em "Depende de".
+- Código: as migrações só adicionam colunas, então a versão anterior continua funcionando se a PR #1 for revertida.
+
+### Limites conhecidos
+- Os marcos de T0/T1/T2, o teto e a liberação de dependentes são conferidos a cada 30 s: podem atrasar até ~30 s.
+- O tempo conta a partir do início da execução; tempo de espera na fila não entra.
+- O Hub só enxerga o código de saída do robô: um robô que termina com código 0 mesmo tendo falhado parcialmente conta como sucesso.
