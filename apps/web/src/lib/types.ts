@@ -530,6 +530,9 @@ export type Dashboard = {
   updateDayOfMonth?: number | null;
   lastUpdateAt?: string | null;
   lastUpdateStatus?: string | null;
+  /** Motivo da última falha de atualização e repetição pendente. Só vêm para administradores. */
+  lastUpdateError?: string | null;
+  updateRetryAt?: string | null;
   /** Envia o rastreamento (traces) do assistente de IA à OpenAI; desligado por padrão, vale no próximo reinício do painel. */
   aiTracing?: boolean;
   createdAt: string;

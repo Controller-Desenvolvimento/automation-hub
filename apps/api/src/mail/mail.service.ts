@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import * as nodemailer from 'nodemailer';
+import { buildPanelUpdateAlert, type PanelUpdateAlertInput } from './panel-update-alert';
 import {
   buildScheduledExecutionAlert,
   scheduleAlertsEnabled,
@@ -45,6 +46,29 @@ export class MailService {
       this.logger.log(`Alerta de falha BI enviado para: ${BI_TO.join(', ')} — ${siteName}`);
     } catch (err) {
       this.logger.error(`Falha ao enviar email de alerta BI (${siteName}): ${(err as Error).message}`);
+    }
+  }
+
+  // Atualização PROGRAMADA de painel que falhou nas duas tentativas → mesma lista dos alertas de BI. Nunca lança.
+  async sendPanelUpdateFailure(input: PanelUpdateAlertInput): Promise<void> {
+    if (!scheduleAlertsEnabled()) return;
+    if (!PASS || BI_TO.length === 0) {
+      this.logger.warn('Email de alerta de painel não configurado (MAIL_PASSWORD ou MAIL_BI_ALERT_TO ausente).');
+      return;
+    }
+
+    const mail = buildPanelUpdateAlert(input);
+    try {
+      await this.transporter.sendMail({
+        from: `"Automation Hub" <${FROM}>`,
+        to: BI_TO.join(', '),
+        subject: mail.subject,
+        text: mail.text,
+        html: mail.html,
+      });
+      this.logger.log(`Alerta de atualização de painel enviado para: ${BI_TO.join(', ')} — ${input.panelName}`);
+    } catch (err) {
+      this.logger.error(`Falha ao enviar email de alerta de painel (${input.panelName}): ${(err as Error).message}`);
     }
   }
 

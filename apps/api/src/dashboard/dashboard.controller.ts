@@ -37,8 +37,11 @@ export class DashboardController {
   async list(@Req() req: Request) {
     const user = await this.authService.requireUser(req);
     const all = await (isAdmin(user) ? this.svc.findAll() : this.svc.findAllActive());
-    return all.filter((d) => canAccessDashboard(user, d)).map((d) => ({
+    const admin = isAdmin(user);
+    return all.filter((d) => canAccessDashboard(user, d)).map(({ lastUpdateError, updateRetryAt, ...d }) => ({
       ...d,
+      // O motivo técnico da falha e a repetição pendente só interessam a quem administra.
+      ...(admin ? { lastUpdateError, updateRetryAt } : {}),
       streamlitRunning: (d.type === DashboardType.streamlit || d.type === DashboardType.server)
         ? this.svc.isRunning(d.id)
         : null,

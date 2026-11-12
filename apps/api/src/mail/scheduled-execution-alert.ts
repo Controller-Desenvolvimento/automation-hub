@@ -79,7 +79,7 @@ export function executionLink(baseUrl: string | null, executionId: string): stri
   return baseUrl && !isLocalAddress(baseUrl) ? `${baseUrl}/executions/${encodeURIComponent(executionId)}` : null;
 }
 
-function truncate(text: string, max: number): string {
+export function truncate(text: string, max: number): string {
   const clean = text.replace(/\s+/g, ' ').trim();
   return clean.length > max ? `${clean.slice(0, max - 1)}…` : clean;
 }
@@ -169,6 +169,6 @@ function buildHtml(
 </html>`.trim();
 }
 
-function esc(value: string): string {
+export function esc(value: string): string {
   return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }

@@ -467,6 +467,11 @@ model Dashboard {
   updateDayOfMonth      Int?
   lastUpdateAt          DateTime?
   lastUpdateStatus      String?
+  // Motivo da última falha de atualização (some quando uma atualização dá certo). Só admin vê.
+  lastUpdateError       String?
+  // Segunda tentativa agendada depois de uma falha da atualização programada (null = nada pendente).
+  // Fica no banco para sobreviver a um reinício do Hub entre as duas tentativas.
+  updateRetryAt         DateTime?
   // Envio do rastreamento ("traces") do SDK openai-agents à OpenAI. Desligado por padrão: o rastreamento leva as
   // perguntas e o que o assistente leu dos dados do painel. Vale a partir do próximo (re)início do painel.
   aiTracing             Boolean       @default(false)
