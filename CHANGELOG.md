@@ -72,7 +72,7 @@ agendamento?" (só lista agendamentos com limite de tempo).
 
 ### Robôs (repositório separado)
 - **Atualizar Planilhas Excel (BI):** cópia de segurança das planilhas antes de atualizar (pasta `BackupPlanilhas`, extensão
-  `.bak`) e restauração automática se a original sumir ou corromper. Proposta como PR no repositório de robôs.
+  `.bak`) e restauração automática se a original sumir ou corromper. Já estava aplicada na pasta de robôs do servidor desde 12/11/2026 e agora também está versionada no repositório de robôs (PR #3, mesclada em 12/11/2026).
 
 ### Testes
 - Suíte da API: 246 testes (245 passam, 1 opcional é ignorado). 23 usam um PostgreSQL descartável e só rodam com
