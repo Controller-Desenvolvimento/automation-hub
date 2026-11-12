@@ -13,6 +13,7 @@ import { ExecutionsService } from '../executions/executions.service';
 import { fixMulterFilename, listFilesRecursively, sanitizeFileName, uniqueStoredFileName } from '../shared/files';
 import { ensureScheduleDirs, scheduleInputDir, scheduleRoot } from '../shared/storage';
 import { computeNextRunAt, computeNextRunAtMultiple, parseTimeOfDay } from './schedule-utils';
+import { parseCheckFields, RESTART_PRIORITY, type TaskCheckFields } from './schedule-checks';
 
 type SaveTaskInput = {
   id?: string;
@@ -33,6 +34,10 @@ type SaveTaskInput = {
   creditMode?: string;
   creditUserIds?: string[];
   creditDepartment?: string;
+  // Verificação por tempo (T0/T1/T2, em minutos). undefined = não enviado (preserva); vazio/null = "sem verificação".
+  verifyT0Minutes?: unknown;
+  verifyT1Minutes?: unknown;
+  verifyT2Minutes?: unknown;
 };
 
 type UploadedFile = {
@@ -188,6 +193,15 @@ export class ScheduledTasksService {
     const { recipientScope, recipientDepartments, recipientUserIds } =
       parseRecipients(user, input);
 
+    // T0/T1/T2: só administrador altera. Campo não enviado (tela antiga em cache, por exemplo) preserva o que existe:
+    // por isso só entra no payload quando foi enviado de verdade.
+    const checkParsed = parseCheckFields(input);
+    let checkData: Partial<TaskCheckFields> = {};
+    if (isAdmin(user) && checkParsed.present) {
+      if (!checkParsed.ok) throw new BadRequestException(checkParsed.message);
+      checkData = checkParsed.value;
+    }
+
     const payload: Prisma.ScheduledTaskUncheckedCreateInput = {
       name,
       robotId,
@@ -213,6 +227,7 @@ export class ScheduledTasksService {
         : 'creator',
       creditUserIds: input.creditUserIds ?? [],
       creditDepartment: input.creditDepartment?.trim() || null,
+      ...checkData,
     };
 
     if (existing) {
@@ -401,6 +416,35 @@ export class ScheduledTasksService {
         },
       });
     }
+  }
+
+  // Reinício automático da verificação por tempo: refaz do começo a execução agendada `failedExecutionId`
+  // (2ª e última tentativa), com os mesmos parâmetros e arquivos-modelo do disparo normal e prioridade na fila.
+  // Devolve null se o agendamento não existe mais ou foi desativado (nada a reiniciar).
+  async restartScheduledRun(taskId: string, failedExecutionId: string) {
+    const task = await this.prisma.scheduledTask.findUnique({ where: { id: taskId } });
+    if (!task || !task.isActive) return null;
+
+    const templateFiles = await this.loadTemplateFiles(task.id);
+    const execution = await this.executionsService.createExecution(
+      task.robotId,
+      {
+        userId: task.userId,
+        notes: task.notes ?? undefined,
+        priority: RESTART_PRIORITY,
+        parameters: (task.parameters as Record<string, unknown>) ?? {},
+        scheduledTaskId: task.id,
+        attempt: 2,
+        restartOfId: failedExecutionId,
+      },
+      templateFiles,
+    );
+
+    await this.prisma.scheduledTask.update({
+      where: { id: task.id },
+      data: { lastRunAt: new Date(), lastExecutionId: execution.id },
+    });
+    return execution;
   }
 
   private async persistTemplateFiles(taskId: string, uploadedFiles: UploadedFile[]) {

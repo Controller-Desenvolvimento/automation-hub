@@ -10,6 +10,7 @@ import AdmZip from 'adm-zip';
 import { access, copyFile, readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import { extname, join, relative } from 'node:path';
 import { PrismaService } from '../prisma/prisma.service';
+import { INTERRUPTED_PREFIX } from './interrupted';
 import { buildExecutionScope, canAccessExecution, canAccessRobot, isAdmin } from '../shared/access';
 import { parametersForViewer, withoutParameters } from '../shared/execution-parameters';
 import { fixMulterFilename, toUserFileName, uniqueStoredFileName } from '../shared/files';
@@ -63,6 +64,9 @@ type CreateExecutionInput = {
   priority?: number;
   parameters?: Record<string, unknown>;
   scheduledTaskId?: string;
+  // Reinício automático da verificação por tempo: 2 = refazendo a execução `restartOfId` (padrão 1 = original).
+  attempt?: number;
+  restartOfId?: string;
 };
 
 @Injectable()
@@ -105,6 +109,8 @@ export class ExecutionsService {
         priority: payload.priority ?? 0,
         inputJson: (payload.parameters ?? {}) as Prisma.InputJsonValue,
         scheduledTaskId: payload.scheduledTaskId,
+        attempt: payload.attempt ?? 1,
+        restartOfId: payload.restartOfId,
       },
     });
 
@@ -520,6 +526,8 @@ export class ExecutionsService {
       where: { id },
       select: {
         scheduledTaskId: true,
+        attempt: true,
+        restartOfId: true,
         startedAt: true,
         finishedAt: true,
         errorMessage: true,
@@ -533,13 +541,88 @@ export class ExecutionsService {
       select: { name: true },
     });
 
+    // Para o e-mail final do reinício: como terminou a tentativa original que esta refez.
+    const first = execution.restartOfId
+      ? await this.prisma.execution.findUnique({
+          where: { id: execution.restartOfId },
+          select: { id: true, startedAt: true, finishedAt: true, errorMessage: true },
+        })
+      : null;
+
     return {
       robotName: execution.robot.name,
       scheduleName: task?.name ?? execution.robot.name,
+      scheduledTaskId: execution.scheduledTaskId,
+      attempt: execution.attempt,
       startedAt: execution.startedAt,
       finishedAt: execution.finishedAt,
       errorMessage: execution.errorMessage,
+      first: first
+        ? { executionId: first.id, startedAt: first.startedAt, finishedAt: first.finishedAt, outcome: first.errorMessage }
+        : null,
     };
+  }
+
+  // ---- verificação por tempo (T0, T1, T2) das execuções agendadas ----
+
+  async listRunningScheduledExecutions() {
+    return this.prisma.execution.findMany({
+      where: { status: ExecutionStatus.running, scheduledTaskId: { not: null }, startedAt: { not: null } },
+      select: {
+        id: true,
+        scheduledTaskId: true,
+        startedAt: true,
+        attempt: true,
+        checkStage: true,
+        robot: { select: { name: true } },
+      },
+    });
+  }
+
+  // Marca que o aviso `stage` já foi enviado. Devolve false se outro ciclo já o tinha marcado (não enviar de novo).
+  async advanceCheckStage(id: string, stage: number): Promise<boolean> {
+    const result = await this.prisma.execution.updateMany({
+      where: { id, checkStage: { lt: stage } },
+      data: { checkStage: stage },
+    });
+    return result.count > 0;
+  }
+
+  // Cancelamento feito pelo sistema (limite T2): só atinge execução que ainda está rodando. false = já terminou.
+  async cancelBySystem(id: string, reason: string): Promise<boolean> {
+    const now = new Date();
+    const result = await this.prisma.execution.updateMany({
+      where: { id, status: ExecutionStatus.running },
+      data: {
+        status: ExecutionStatus.canceled,
+        canceledAt: now,
+        finishedAt: now,
+        currentStep: 'Cancelado automaticamente',
+        errorMessage: reason,
+      },
+    });
+    return result.count > 0;
+  }
+
+  // Execuções agendadas (1ª tentativa) interrompidas pelo reinício do Hub nos últimos `sinceMs` e ainda sem reinício.
+  async listInterruptedToRestart(sinceMs: number, now = new Date()) {
+    const candidates = await this.prisma.execution.findMany({
+      where: {
+        status: ExecutionStatus.error,
+        scheduledTaskId: { not: null },
+        attempt: 1,
+        errorMessage: { startsWith: INTERRUPTED_PREFIX },
+        finishedAt: { gte: new Date(now.getTime() - sinceMs) },
+      },
+      select: { id: true, scheduledTaskId: true },
+    });
+    if (candidates.length === 0) return [];
+    const restarted = await this.prisma.execution.findMany({
+      where: { restartOfId: { in: candidates.map((c) => c.id) } },
+      select: { restartOfId: true },
+    });
+    const done = new Set(restarted.map((r) => r.restartOfId));
+    return candidates.filter((c) => !done.has(c.id));
   }
 
   async getStatus(id: string) {

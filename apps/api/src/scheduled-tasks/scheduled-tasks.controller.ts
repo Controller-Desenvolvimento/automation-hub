@@ -77,6 +77,10 @@ export class ScheduledTasksController {
         creditMode: typeof body.creditMode === 'string' ? body.creditMode : undefined,
         creditUserIds: parseStringArray(body.creditUserIds),
         creditDepartment: typeof body.creditDepartment === 'string' ? body.creditDepartment : undefined,
+        // Passados como vieram: ausente = não enviado (preserva), vazio = "sem verificação" (o serviço interpreta).
+        verifyT0Minutes: body.verifyT0Minutes,
+        verifyT1Minutes: body.verifyT1Minutes,
+        verifyT2Minutes: body.verifyT2Minutes,
       },
       files,
     );

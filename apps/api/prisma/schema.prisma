@@ -303,11 +303,18 @@ model Execution {
   externalId             String?
 
   scheduledTaskId String?
+  // 1 = execução agendada original; 2 = reinício automático da verificação por tempo (só acontece uma vez).
+  attempt         Int            @default(1)
+  // Execução (tentativa 1) que esta (tentativa 2) está refazendo.
+  restartOfId     String?
+  // Qual aviso por tempo já foi enviado: 0 = nenhum, 1 = T0, 2 = T1 (evita e-mail repetido).
+  checkStage      Int            @default(0)
   logs            ExecutionLog[]
   files           ExecutionFile[]
   notifications   Notification[]
 
   @@unique([robotId, externalId])
+  @@index([restartOfId])
   @@index([robotId])
   @@index([userId, createdAt])
   @@index([status, createdAt])
@@ -370,6 +377,12 @@ model ScheduledTask {
   nextRunAt            DateTime
   lastError            String?
   lastExecutionId      String?
+  // Verificação por tempo (todos null = "sem verificação"). Contada a partir do INÍCIO da execução:
+  // T0 = verifyT0Minutes; T1 = T0 + verifyT1Minutes; T2 = T1 + verifyT2Minutes.
+  // T0 e T1 avisam por e-mail que ainda está rodando; em T2 a execução é cancelada e reiniciada (1 vez).
+  verifyT0Minutes      Int?
+  verifyT1Minutes      Int?
+  verifyT2Minutes      Int?
   createdAt            DateTime          @default(now())
   updatedAt            DateTime          @updatedAt
 

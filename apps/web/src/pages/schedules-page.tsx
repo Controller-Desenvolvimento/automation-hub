@@ -36,6 +36,10 @@ type Draft = {
   creditMode: 'creator' | 'users' | 'department';
   creditUserIds: string[];
   creditDepartment: string;
+  // Verificação por tempo (minutos, como texto do campo). Os três em branco = "sem verificação".
+  verifyT0: string;
+  verifyT1: string;
+  verifyT2: string;
 };
 
 export function SchedulesPage() {
@@ -107,6 +111,9 @@ export function SchedulesPage() {
       creditMode: (selectedTask.creditMode as Draft['creditMode']) ?? 'creator',
       creditUserIds: selectedTask.creditUserIds ?? [],
       creditDepartment: selectedTask.creditDepartment ?? '',
+      verifyT0: selectedTask.verifyT0Minutes != null ? String(selectedTask.verifyT0Minutes) : '',
+      verifyT1: selectedTask.verifyT1Minutes != null ? String(selectedTask.verifyT1Minutes) : '',
+      verifyT2: selectedTask.verifyT2Minutes != null ? String(selectedTask.verifyT2Minutes) : '',
     });
     setTemplateFiles({});
   }, [selectedTask, robots]);
@@ -163,6 +170,15 @@ export function SchedulesPage() {
         const day = Number(draft.dayOfMonth);
         if (!Number.isInteger(day) || day < 1 || day > 31) { notify('Informe um dia do mês entre 1 e 31.'); return; }
       }
+      if (user?.role === 'admin') {
+        const t = [draft.verifyT0, draft.verifyT1, draft.verifyT2].map((v) => v.trim());
+        const filled = t.filter(Boolean).length;
+        if (filled > 0 && filled < 3) { notify('Verificação por tempo: preencha T0, T1 e T2, ou deixe os três em branco.'); return; }
+        if (filled === 3 && !t.every((v) => /^\d+$/.test(v) && Number(v) >= 1 && Number(v) <= 1440)) {
+          notify('Verificação por tempo: use minutos inteiros de 1 a 1440.');
+          return;
+        }
+      }
       const now = new Date();
       const testDate = new Date(`${draft.startDate}T${validTimes[0]}:00`);
       if (Number.isNaN(testDate.getTime())) { notify('Data ou horário inválido.'); return; }
@@ -195,6 +211,10 @@ export function SchedulesPage() {
       formData.append('isActive', String(draft.isActive));
       formData.append('parameters', JSON.stringify(draft.parameters));
       if (user?.role === 'admin') {
+        // Sempre enviados (em branco = "sem verificação"); quem não é admin não os envia e o servidor preserva o que existe.
+        formData.append('verifyT0Minutes', draft.verifyT0.trim());
+        formData.append('verifyT1Minutes', draft.verifyT1.trim());
+        formData.append('verifyT2Minutes', draft.verifyT2.trim());
         const apiScope = draft.recipientScope === 'none' ? 'specific' : draft.recipientScope;
         formData.append('recipientScope', apiScope);
         formData.append('recipientDepartments', JSON.stringify(draft.recipientScope === 'departments' ? draft.recipientDepartments : []));
@@ -581,6 +601,56 @@ export function SchedulesPage() {
                   <Separator />
                   <div className="grid grid-cols-1 gap-4">
                     <div className="flex items-center gap-2">
+                      <Clock className="h-4 w-4 text-slate-500 dark:text-zinc-400" />
+                      <h3 className="text-lg font-semibold">Verificação por tempo</h3>
+                    </div>
+                    <p className="text-sm text-slate-500 dark:text-zinc-400">
+                      Deixe os três em branco para &quot;sem verificação&quot; (só o e-mail de erro comum). Os tempos contam a partir do
+                      início da execução. Em T0 e T1 a Inovação recebe um e-mail avisando que ainda está rodando; em T2 a execução é
+                      cancelada e reiniciada do começo (uma única vez). Se o reinício também não terminar, sai um e-mail final.
+                    </p>
+                    <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+                      <Field label="T0 — 1º aviso (min desde o início)">
+                        <Input
+                          inputMode="numeric"
+                          placeholder="ex.: 20"
+                          value={draft.verifyT0}
+                          onChange={(e) => setDraft({ ...draft, verifyT0: e.target.value.replace(/\D/g, '') })}
+                        />
+                      </Field>
+                      <Field label="T1 — 2º aviso (min depois do T0)">
+                        <Input
+                          inputMode="numeric"
+                          placeholder="ex.: 15"
+                          value={draft.verifyT1}
+                          onChange={(e) => setDraft({ ...draft, verifyT1: e.target.value.replace(/\D/g, '') })}
+                        />
+                      </Field>
+                      <Field label="T2 — cancelar e reiniciar (min depois do T1)">
+                        <Input
+                          inputMode="numeric"
+                          placeholder="ex.: 10"
+                          value={draft.verifyT2}
+                          onChange={(e) => setDraft({ ...draft, verifyT2: e.target.value.replace(/\D/g, '') })}
+                        />
+                      </Field>
+                    </div>
+                    {(() => {
+                      const [a, b, c] = [draft.verifyT0, draft.verifyT1, draft.verifyT2].map((v) => Number(v));
+                      if (![a, b, c].every((n) => Number.isInteger(n) && n >= 1)) return null;
+                      const start = draft.timesOfDay[0] || '--:--';
+                      return (
+                        <p className="rounded-2xl border border-slate-200 px-4 py-3 text-sm text-slate-600 dark:border-slate-800 dark:text-zinc-300">
+                          Exemplo: se começar às {start}, avisa às {clockPlus(start, a)} (T0) e às {clockPlus(start, a + b)} (T1), e às{' '}
+                          {clockPlus(start, a + b + c)} (T2) cancela e reinicia. Se o reinício também passar de {a + b + c} min, é
+                          cancelado de vez.
+                        </p>
+                      );
+                    })()}
+                  </div>
+                  <Separator />
+                  <div className="grid grid-cols-1 gap-4">
+                    <div className="flex items-center gap-2">
                       <Users className="h-4 w-4 text-slate-500 dark:text-zinc-400" />
                       <h3 className="text-lg font-semibold">Destinatários do resultado</h3>
                     </div>
@@ -788,6 +858,7 @@ export function SchedulesPage() {
                 <InfoRow label="Próxima execução" value={formatDate(selectedTask.nextRunAt)} />
                 <InfoRow label="Última execução" value={selectedTask.lastRunAt ? formatDate(selectedTask.lastRunAt) : 'Ainda não executou'} />
                 <InfoRow label="Último erro" value={selectedTask.lastError || 'Nenhum'} />
+                <InfoRow label="Verificação por tempo" value={describeChecks(selectedTask)} />
                 {selectedTask.lastExecutionId ? (
                   <Button asChild variant="outline" size="sm" className="justify-center">
                     <Link to={`/executions/${selectedTask.lastExecutionId}`}>Abrir última execução</Link>
@@ -964,7 +1035,27 @@ function emptyDraft(): Draft {
     creditMode: 'creator',
     creditUserIds: [],
     creditDepartment: '',
+    verifyT0: '',
+    verifyT1: '',
+    verifyT2: '',
   };
+}
+
+// Hora do dia (HH:mm) somada a minutos, para o exemplo da verificação por tempo. "+1 dia" quando passa da meia-noite.
+function clockPlus(time: string, minutes: number): string {
+  const match = /^(\d{2}):(\d{2})$/.exec(time);
+  if (!match) return '--:--';
+  const total = Number(match[1]) * 60 + Number(match[2]) + minutes;
+  const day = Math.floor(total / 1440);
+  const rest = ((total % 1440) + 1440) % 1440;
+  const label = `${String(Math.floor(rest / 60)).padStart(2, '0')}:${String(rest % 60).padStart(2, '0')}`;
+  return day > 0 ? `${label} (+${day} dia)` : label;
+}
+
+function describeChecks(task: ScheduledTask): string {
+  const { verifyT0Minutes: a, verifyT1Minutes: b, verifyT2Minutes: c } = task;
+  if (a == null || b == null || c == null) return 'Sem verificação';
+  return `T0 ${a} min · T1 +${b} · T2 +${c} (cancela e reinicia em ${a + b + c} min)`;
 }
 
 function toDateInputValue(value?: string | null) {

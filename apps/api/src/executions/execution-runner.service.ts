@@ -8,9 +8,11 @@ import { fileURLToPath } from 'node:url';
 import { ExecutionStatus } from '@prisma/client';
 import { ExecutionsService } from './executions.service';
 import { failureReason, isPythonExceptionLine } from './failure-reason';
+import { INTERRUPTED_BY_RESTART_MESSAGE } from './interrupted';
 import { findStalledExecutions, getStallTimeoutMs, stallMessage } from './stall-watchdog';
 import { NotificationsService } from '../notifications/notifications.service';
 import { MailService } from '../mail/mail.service';
+import { restartFailedInputFrom } from '../mail/schedule-check-alert';
 import { resolveHubBaseUrl, type ScheduledExecutionAlertKind } from '../mail/scheduled-execution-alert';
 import { listFilesRecursively, sanitizeFileName, toUserFileName } from '../shared/files';
 import { WINDOWS_HIDE } from '../shared/process-options';
@@ -114,7 +116,7 @@ export class ExecutionRunnerService implements OnModuleInit, OnModuleDestroy {
         this.logger.error(`registerOutputFiles (reconciliacao) falhou para execucao ${execution.id}: ${String(regError)}`);
       }
 
-      const message = 'Execução interrompida: o servidor do Hub foi reiniciado enquanto esta automação rodava. Se o robô salva progresso incrementalmente, os arquivos de saída já gerados foram recuperados — confira antes de reiniciar do zero.';
+      const message = INTERRUPTED_BY_RESTART_MESSAGE;
       await this.executionsService.markAsError(execution.id, message);
       await this.executionsService.log(execution.id, 'error', message);
       await this.maybeNotify(execution.id, execution.robot.name, 'error');
@@ -147,7 +149,8 @@ export class ExecutionRunnerService implements OnModuleInit, OnModuleDestroy {
       running.child.stderr?.destroy();
       this.runningProcesses.delete(executionId);
       this.logger.log(`stopExecution: processo terminado pid=${running.child.pid}`);
-      await this.executionsService.log(executionId, 'warn', 'Processo interrompido pelo usuario.');
+      // Neutra de propósito: quem pediu (usuário, ou o sistema pelo limite T2) registra o motivo na sua própria linha.
+      await this.executionsService.log(executionId, 'warn', 'Processo da automação encerrado.');
     } else {
       this.logger.warn(`stopExecution: execucao ${executionId} nao encontrada em runningProcesses`);
     }
@@ -376,11 +379,24 @@ export class ExecutionRunnerService implements OnModuleInit, OnModuleDestroy {
     void (async () => {
       const data = await this.executionsService.getScheduledExecutionForAlert(executionId);
       if (!data) return;
+      const baseUrl = resolveHubBaseUrl();
+
+      // Reinício automático (2ª tentativa) que também terminou mal: UM e-mail final, com a história toda.
+      const restartInput = data.attempt >= 2 ? restartFailedInputFrom(data, executionId, baseUrl) : null;
+      if (restartInput) {
+        await this.mailService.sendRestartFailedAlert(restartInput);
+        return;
+      }
+
       await this.mailService.sendScheduledExecutionAlert({
         kind,
         executionId,
-        baseUrl: resolveHubBaseUrl(),
-        ...data,
+        baseUrl,
+        robotName: data.robotName,
+        scheduleName: data.scheduleName,
+        startedAt: data.startedAt,
+        finishedAt: data.finishedAt,
+        errorMessage: data.errorMessage,
       });
     })().catch((error) => {
       this.logger.warn(`Alerta de e-mail do agendamento falhou para a execucao ${executionId}: ${String(error)}`);

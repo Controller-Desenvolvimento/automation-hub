@@ -122,3 +122,37 @@ test('execução órfã após reinício do Hub dispara alerta "interrupted"', as
   assert.equal(alertas[0].kind, 'interrupted');
   assert.equal(alertas[0].executionId, 'orfa-1');
 });
+
+// ---- reinício automático (2ª tentativa): vira o e-mail final consolidado, não o simples ----
+function montarReinicio() {
+  const base = montar({ agendada: true });
+  const final: any[] = [];
+  const simples: any[] = [];
+  base.runner.executionsService.getScheduledExecutionForAlert = async () => ({
+    robotName: 'Robô X', scheduleName: 'Agendamento X', scheduledTaskId: 't1', attempt: 2,
+    startedAt: new Date(), finishedAt: new Date(), errorMessage: 'falhou de novo',
+    first: { executionId: 'e0', startedAt: new Date(), finishedAt: new Date(), outcome: 'travou na 1ª' },
+  });
+  base.runner.mailService.sendRestartFailedAlert = async (i: unknown) => { final.push(i); };
+  base.runner.mailService.sendScheduledExecutionAlert = async (i: unknown) => { simples.push(i); };
+  return { ...base, final, simples };
+}
+
+test('2ª tentativa (reinício) que falha: UM e-mail final com as duas tentativas, e nenhum e-mail simples', async () => {
+  const { runner, final, simples } = montarReinicio();
+  await runner.runExecution('exec-r1');
+  await esperar();
+  assert.equal(simples.length, 0);
+  assert.equal(final.length, 1);
+  assert.equal(final[0].first.executionId, 'e0');
+  assert.equal(final[0].second.executionId, 'exec-r1');
+  assert.equal(final[0].second.outcome, 'falhou de novo');
+});
+
+test('2ª tentativa interrompida pelo reinício do Hub também vira o e-mail final', async () => {
+  const { runner, final, simples } = montarReinicio();
+  await runner.reconcileOrphanedExecutions();
+  await esperar();
+  assert.equal(simples.length, 0);
+  assert.equal(final.length, 1);
+});

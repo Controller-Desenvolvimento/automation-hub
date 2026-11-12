@@ -2,8 +2,15 @@ import { Injectable, Logger } from '@nestjs/common';
 import * as nodemailer from 'nodemailer';
 import { buildPanelUpdateAlert, type PanelUpdateAlertInput } from './panel-update-alert';
 import {
+  buildRestartFailedAlert,
+  buildScheduleSlowAlert,
+  type RestartFailedInput,
+  type SlowAlertInput,
+} from './schedule-check-alert';
+import {
   buildScheduledExecutionAlert,
   scheduleAlertsEnabled,
+  type BuiltEmail,
   type ScheduledExecutionAlertInput,
 } from './scheduled-execution-alert';
 
@@ -47,6 +54,37 @@ export class MailService {
     } catch (err) {
       this.logger.error(`Falha ao enviar email de alerta BI (${siteName}): ${(err as Error).message}`);
     }
+  }
+
+  // Envio comum dos alertas da verificação por tempo. Nunca lança.
+  private async deliverAlert(mail: BuiltEmail, label: string): Promise<void> {
+    if (!scheduleAlertsEnabled()) return;
+    if (!PASS || BI_TO.length === 0) {
+      this.logger.warn(`Email de alerta (${label}) não configurado (MAIL_PASSWORD ou MAIL_BI_ALERT_TO ausente).`);
+      return;
+    }
+    try {
+      await this.transporter.sendMail({
+        from: `"Automation Hub" <${FROM}>`,
+        to: BI_TO.join(', '),
+        subject: mail.subject,
+        text: mail.text,
+        html: mail.html,
+      });
+      this.logger.log(`Alerta (${label}) enviado para: ${BI_TO.join(', ')} — ${mail.subject}`);
+    } catch (err) {
+      this.logger.error(`Falha ao enviar email de alerta (${label}): ${(err as Error).message}`);
+    }
+  }
+
+  // T0/T1: a execução agendada ainda está rodando além do esperado.
+  sendScheduleSlowAlert(input: SlowAlertInput): Promise<void> {
+    return this.deliverAlert(buildScheduleSlowAlert(input), `demora T${input.stage - 1}`);
+  }
+
+  // A execução foi reiniciada e a 2ª tentativa também não deu certo: um e-mail só, com tudo.
+  sendRestartFailedAlert(input: RestartFailedInput): Promise<void> {
+    return this.deliverAlert(buildRestartFailedAlert(input), 'reiniciada com problema');
   }
 
   // Atualização PROGRAMADA de painel que falhou nas duas tentativas → mesma lista dos alertas de BI. Nunca lança.

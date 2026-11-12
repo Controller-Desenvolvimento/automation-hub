@@ -222,6 +222,10 @@ export type ScheduledTask = {
   lastRunAt?: string | null;
   nextRunAt: string;
   lastError?: string | null;
+  /** Verificação por tempo (minutos): T0; T1 = T0 + verifyT1Minutes; T2 = T1 + verifyT2Minutes. Todos null = sem verificação. */
+  verifyT0Minutes?: number | null;
+  verifyT1Minutes?: number | null;
+  verifyT2Minutes?: number | null;
   lastExecutionId?: string | null;
   lastExecutionStatus?: 'queued' | 'running' | 'success' | 'error' | 'canceled' | null;
   createdAt: string;
