@@ -4,6 +4,7 @@ import {
   buildScheduledExecutionAlert,
   executionLink,
   formatDuration,
+  isLocalAddress,
   resolveHubBaseUrl,
   scheduleAlertsEnabled,
   type ScheduledExecutionAlertInput,
@@ -28,6 +29,20 @@ test('resolveHubBaseUrl: HUB_PUBLIC_URL tem prioridade, senão o primeiro ALLOWE
   assert.equal(resolveHubBaseUrl({ HUB_PUBLIC_URL: 'hubcontroller.com.br' }), null);
 });
 
+test('resolveHubBaseUrl nunca devolve endereço local: pula para o próximo ou fica sem link', () => {
+  for (const local of ['http://localhost:3100', 'http://127.0.0.1:3000', 'http://[::1]:3000', 'http://0.0.0.0:3000', 'http://hub.localhost']) {
+    assert.equal(resolveHubBaseUrl({ HUB_PUBLIC_URL: local }), null, local);
+  }
+  // HUB_PUBLIC_URL local é ignorado e o ALLOWED_ORIGIN não local assume
+  assert.equal(resolveHubBaseUrl({ HUB_PUBLIC_URL: 'http://localhost:3100', ALLOWED_ORIGIN: 'http://10.100.1.18:3000' }), 'http://10.100.1.18:3000');
+  // ALLOWED_ORIGIN com vários: pula os locais
+  assert.equal(resolveHubBaseUrl({ ALLOWED_ORIGIN: 'http://localhost:5173, https://hubcontroller.com.br' }), 'https://hubcontroller.com.br');
+  // só local (ambiente de desenvolvimento) → sem link
+  assert.equal(resolveHubBaseUrl({ ALLOWED_ORIGIN: 'http://localhost:5173' }), null);
+  assert.equal(isLocalAddress('https://hubcontroller.com.br'), false);
+  assert.equal(isLocalAddress('http://10.100.1.18:3000'), false);
+});
+
 test('scheduleAlertsEnabled: ligado por padrão, desliga com false/0/off', () => {
   assert.equal(scheduleAlertsEnabled({}), true);
   assert.equal(scheduleAlertsEnabled({ SCHEDULE_ALERT_EMAILS: 'true' }), true);
@@ -39,6 +54,10 @@ test('scheduleAlertsEnabled: ligado por padrão, desliga com false/0/off', () =>
 test('executionLink aponta para a tela da execução e some sem endereço', () => {
   assert.equal(executionLink('https://h.com', 'abc'), 'https://h.com/executions/abc');
   assert.equal(executionLink(null, 'abc'), null);
+  assert.equal(executionLink('http://localhost:3100', 'abc'), null);   // local nunca vira link
+  const local = buildScheduledExecutionAlert({ ...base, baseUrl: 'http://127.0.0.1:3000' });
+  assert.doesNotMatch(local.text, /localhost|127\.0\.0\.1|Abrir a execução/);
+  assert.doesNotMatch(local.html, /localhost|127\.0\.0\.1|<a href/);
 });
 
 test('formatDuration', () => {

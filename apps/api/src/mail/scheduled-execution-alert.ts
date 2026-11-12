@@ -32,13 +32,24 @@ const KIND_INFO: Record<
   interrupted: { emoji: '🔌', title: 'Agendamento interrompido', verb: 'foi interrompida', color: '#7c3aed', soft: '#f5f3ff', border: '#ddd6fe' },
 };
 
+// Endereço local (a pessoa que recebe o e-mail não consegue abrir): localhost, 127.x, ::1, 0.0.0.0.
+export function isLocalAddress(url: string): boolean {
+  try {
+    const host = new URL(url).hostname.toLowerCase().replace(/^\[|\]$/g, '');
+    return host === 'localhost' || host.endsWith('.localhost') || host === '::1' || host === '0.0.0.0' || /^127\./.test(host);
+  } catch {
+    return true;
+  }
+}
+
 // Endereço pelo qual as pessoas abrem o Hub. HUB_PUBLIC_URL tem prioridade; senão usa o primeiro
-// ALLOWED_ORIGIN (no servidor é o endereço que os gestores usam). Só aceita http(s).
+// ALLOWED_ORIGIN que não seja local (no servidor é o endereço que os gestores usam). Só aceita http(s).
+// Endereço local nunca vai para o e-mail: sem nenhum endereço válido, o e-mail sai sem o link.
 export function resolveHubBaseUrl(env: Record<string, string | undefined> = process.env): string | null {
-  const candidates = [env.HUB_PUBLIC_URL, (env.ALLOWED_ORIGIN ?? '').split(',')[0]];
+  const candidates = [env.HUB_PUBLIC_URL, ...(env.ALLOWED_ORIGIN ?? '').split(',')];
   for (const raw of candidates) {
     const value = (raw ?? '').trim().replace(/\/+$/, '');
-    if (/^https?:\/\/[^\s/]+/i.test(value)) return value;
+    if (/^https?:\/\/[^\s/]+/i.test(value) && !isLocalAddress(value)) return value;
   }
   return null;
 }
@@ -65,7 +76,7 @@ export function formatDuration(start: Date | null, end: Date | null): string {
 }
 
 export function executionLink(baseUrl: string | null, executionId: string): string | null {
-  return baseUrl ? `${baseUrl}/executions/${encodeURIComponent(executionId)}` : null;
+  return baseUrl && !isLocalAddress(baseUrl) ? `${baseUrl}/executions/${encodeURIComponent(executionId)}` : null;
 }
 
 function truncate(text: string, max: number): string {
