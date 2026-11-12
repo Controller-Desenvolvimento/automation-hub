@@ -39,6 +39,7 @@ PROMPT_NOVO_DASHBOARD.md
 LOGIN_ATHENAS_REFERENCIA.md
 relatorio-bug-pgfn-veri.md
 CLAUDE.local.md
+AUDITORIA-*.md
 
 # Builds paralelos do auto deploy
 dist-next/
