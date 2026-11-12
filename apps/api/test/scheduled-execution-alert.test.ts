@@ -23,7 +23,7 @@ const base: ScheduledExecutionAlertInput = {
 
 test('resolveHubBaseUrl: HUB_PUBLIC_URL tem prioridade, senão o primeiro ALLOWED_ORIGIN; sem barra no fim', () => {
   assert.equal(resolveHubBaseUrl({ HUB_PUBLIC_URL: 'https://hub.exemplo.com/', ALLOWED_ORIGIN: 'http://10.0.0.1:3000' }), 'https://hub.exemplo.com');
-  assert.equal(resolveHubBaseUrl({ ALLOWED_ORIGIN: 'http://10.100.1.18:3000, http://outro' }), 'http://10.100.1.18:3000');
+  assert.equal(resolveHubBaseUrl({ ALLOWED_ORIGIN: 'http://10.0.0.2:3000, http://outro' }), 'http://10.0.0.2:3000');
   assert.equal(resolveHubBaseUrl({}), null);
   assert.equal(resolveHubBaseUrl({ HUB_PUBLIC_URL: 'javascript:alert(1)', ALLOWED_ORIGIN: '' }), null);
   assert.equal(resolveHubBaseUrl({ HUB_PUBLIC_URL: 'hubcontroller.com.br' }), null);
@@ -34,13 +34,13 @@ test('resolveHubBaseUrl nunca devolve endereço local: pula para o próximo ou f
     assert.equal(resolveHubBaseUrl({ HUB_PUBLIC_URL: local }), null, local);
   }
   // HUB_PUBLIC_URL local é ignorado e o ALLOWED_ORIGIN não local assume
-  assert.equal(resolveHubBaseUrl({ HUB_PUBLIC_URL: 'http://localhost:3100', ALLOWED_ORIGIN: 'http://10.100.1.18:3000' }), 'http://10.100.1.18:3000');
+  assert.equal(resolveHubBaseUrl({ HUB_PUBLIC_URL: 'http://localhost:3100', ALLOWED_ORIGIN: 'http://10.0.0.2:3000' }), 'http://10.0.0.2:3000');
   // ALLOWED_ORIGIN com vários: pula os locais
   assert.equal(resolveHubBaseUrl({ ALLOWED_ORIGIN: 'http://localhost:5173, https://hubcontroller.com.br' }), 'https://hubcontroller.com.br');
   // só local (ambiente de desenvolvimento) → sem link
   assert.equal(resolveHubBaseUrl({ ALLOWED_ORIGIN: 'http://localhost:5173' }), null);
   assert.equal(isLocalAddress('https://hubcontroller.com.br'), false);
-  assert.equal(isLocalAddress('http://10.100.1.18:3000'), false);
+  assert.equal(isLocalAddress('http://10.0.0.2:3000'), false);
 });
 
 test('scheduleAlertsEnabled: ligado por padrão, desliga com false/0/off', () => {
