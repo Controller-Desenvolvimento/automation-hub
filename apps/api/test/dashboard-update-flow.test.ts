@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { limparTmp } from './_limpar-tmp';
 import test, { after, before } from 'node:test';
 
 // O serviço grava em <cwd>/storage: aponta para uma pasta temporária ANTES de importar o módulo.
@@ -24,7 +25,7 @@ before(async () => {
 
 after(() => {
   process.chdir(cwdOriginal);
-  rmSync(tmp, { recursive: true, force: true });
+  limparTmp(tmp);
 });
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));

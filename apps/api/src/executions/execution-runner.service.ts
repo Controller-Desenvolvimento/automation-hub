@@ -246,6 +246,11 @@ export class ExecutionRunnerService implements OnModuleInit, OnModuleDestroy {
     projectedExecutions: Awaited<ReturnType<ExecutionsService['listRunningExecutions']>>,
     globalLimit: number,
   ) {
+    // Retida por dependência: espera o ciclo de outro agendamento terminar (quem a libera é o ScheduleChecksService).
+    if (execution.waitingOnExecutionId) {
+      return execution.currentStep || 'Aguardando o agendamento do qual depende terminar.';
+    }
+
     if (projectedExecutions.length >= globalLimit) {
       return `Aguardando capacidade do servidor (${projectedExecutions.length}/${globalLimit} em execucao).`;
     }
@@ -272,12 +277,13 @@ export class ExecutionRunnerService implements OnModuleInit, OnModuleDestroy {
   }
 
   private async updateQueuedReasons(
-    queuedExecutions: Array<{ id: string }>,
+    queuedExecutions: Array<{ id: string; waitingOnExecutionId?: string | null }>,
     fallbackReason?: string,
     explicitReasons?: Map<string, string>,
   ) {
     await Promise.all(
-      queuedExecutions.map(async (execution) => {
+      // Retidas por dependência têm o motivo próprio (quem espera por quem): não são sobrescritas pelo da fila.
+      queuedExecutions.filter((execution) => !execution.waitingOnExecutionId).map(async (execution) => {
         const reason = explicitReasons?.get(execution.id) ?? fallbackReason;
         if (!reason) {
           return;
@@ -381,8 +387,14 @@ export class ExecutionRunnerService implements OnModuleInit, OnModuleDestroy {
       if (!data) return;
       const baseUrl = resolveHubBaseUrl();
 
+      // É o fim definitivo deste ciclo? A 2ª tentativa sempre é; na 1ª, só se nenhum reinício vem a caminho (uma
+      // interrupção pelo reinício do Hub, com verificação por tempo, ainda será refeita). Se for definitivo, quem
+      // esperava por este ciclo não vai rodar: o e-mail já os cita ("Não executou") e eles são marcados como avisados.
+      const isFinal = data.attempt >= 2 || kind !== 'interrupted' || !data.restartExpected;
+      const skipped = isFinal ? await this.executionsService.collectSkippedDependents(data.cycleFirstId) : [];
+
       // Reinício automático (2ª tentativa) que também terminou mal: UM e-mail final, com a história toda.
-      const restartInput = data.attempt >= 2 ? restartFailedInputFrom(data, executionId, baseUrl) : null;
+      const restartInput = data.attempt >= 2 ? restartFailedInputFrom(data, executionId, baseUrl, skipped) : null;
       if (restartInput) {
         await this.mailService.sendRestartFailedAlert(restartInput);
         return;
@@ -397,6 +409,7 @@ export class ExecutionRunnerService implements OnModuleInit, OnModuleDestroy {
         startedAt: data.startedAt,
         finishedAt: data.finishedAt,
         errorMessage: data.errorMessage,
+        skipped,
       });
     })().catch((error) => {
       this.logger.warn(`Alerta de e-mail do agendamento falhou para a execucao ${executionId}: ${String(error)}`);

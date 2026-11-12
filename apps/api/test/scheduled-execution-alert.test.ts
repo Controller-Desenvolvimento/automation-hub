@@ -109,3 +109,19 @@ test('início nulo (execução que nem começou) não quebra o e-mail', () => {
   assert.match(mail.text, /Início: —/);
   assert.match(mail.text, /Duração: —/);
 });
+
+test('cancelado por tempo máximo: assunto próprio e motivo', () => {
+  const m = buildScheduledExecutionAlert({ ...base, kind: 'limit', errorMessage: 'Cancelada automaticamente: passou do tempo máximo (60 min desde o início). Não foi reiniciada.' });
+  assert.equal(m.subject, '⛔ Agendamento cancelado por tempo: Atualização BI - Gestta — Gestta 06:30');
+  assert.match(m.text, /passou do tempo máximo e foi cancelada/);
+  assert.match(m.text, /Não foi reiniciada/);
+});
+
+test('"Não executou" aparece no e-mail de erro quando há agendamentos que dependiam desta execução', () => {
+  const m = buildScheduledExecutionAlert({ ...base, skipped: ['Atualizar Planilhas Excel (BI) — Excel 06:55'] });
+  assert.match(m.text, /Não executou: Atualizar Planilhas Excel \(BI\) — Excel 06:55/);
+  assert.match(m.html, /Não executou/);
+  const sem = buildScheduledExecutionAlert(base);
+  assert.doesNotMatch(sem.text, /Não executou/);
+  assert.doesNotMatch(sem.html, /Não executou/);
+});

@@ -18,6 +18,7 @@ function montar(existing: Record<string, any> | null) {
     robot: { findUnique: async () => ({ id: 'r1', name: 'Robô', schema: {}, allowedDepartments: [], isActive: true }) },
     scheduledTask: {
       findUnique: async () => existing,
+      findMany: async () => [],
       create: async ({ data }: any) => { writes.create = data; return { id: 'novo', ...data }; },
       update: async ({ data }: any) => { writes.update = data; return { id: existing?.id, ...data }; },
     },

@@ -309,6 +309,11 @@ model Execution {
   restartOfId     String?
   // Qual aviso por tempo já foi enviado: 0 = nenhum, 1 = T0, 2 = T1 (evita e-mail repetido).
   checkStage      Int            @default(0)
+  // Execução retida por dependência: id da 1ª execução do ciclo do agendamento de que depende. Enquanto preenchido, a
+  // fila não a inicia; é limpo quando esse ciclo termina com sucesso (ou a execução é cancelada se ele falhar).
+  waitingOnExecutionId String?
+  // O e-mail do agendamento do qual dependia já informou que esta execução não rodou (evita avisar duas vezes).
+  dependencyNotified   Boolean       @default(false)
   logs            ExecutionLog[]
   files           ExecutionFile[]
   notifications   Notification[]
@@ -383,9 +388,18 @@ model ScheduledTask {
   verifyT0Minutes      Int?
   verifyT1Minutes      Int?
   verifyT2Minutes      Int?
+  // Teto de tempo para quem está "sem verificação": passou disso rodando, a execução é cancelada e avisa (sem reinício).
+  // Fica null quando há T0/T1/T2 (o T2 já é o teto).
+  maxRuntimeMinutes    Int?
+  // Dependência: a execução agendada só começa depois que o ciclo do agendamento indicado terminar com sucesso
+  // (ex.: Atualizar Planilhas depende de Gestta). Se esse agendamento for apagado, o campo é limpo.
+  dependsOnTaskId      String?
+  dependsOn            ScheduledTask?    @relation("TaskDependency", fields: [dependsOnTaskId], references: [id], onDelete: SetNull)
+  dependents           ScheduledTask[]   @relation("TaskDependency")
   createdAt            DateTime          @default(now())
   updatedAt            DateTime          @updatedAt
 
+  @@index([dependsOnTaskId])
   @@index([isActive, nextRunAt])
   @@index([userId, createdAt])
   @@index([robotId, createdAt])

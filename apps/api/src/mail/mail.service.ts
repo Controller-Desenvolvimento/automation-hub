@@ -2,8 +2,10 @@ import { Injectable, Logger } from '@nestjs/common';
 import * as nodemailer from 'nodemailer';
 import { buildPanelUpdateAlert, type PanelUpdateAlertInput } from './panel-update-alert';
 import {
+  buildDependencySkippedAlert,
   buildRestartFailedAlert,
   buildScheduleSlowAlert,
+  type DependencySkippedInput,
   type RestartFailedInput,
   type SlowAlertInput,
 } from './schedule-check-alert';
@@ -80,6 +82,11 @@ export class MailService {
   // T0/T1: a execução agendada ainda está rodando além do esperado.
   sendScheduleSlowAlert(input: SlowAlertInput): Promise<void> {
     return this.deliverAlert(buildScheduleSlowAlert(input), `demora T${input.stage - 1}`);
+  }
+
+  // Agendamento pulado porque aquele de que depende não terminou com sucesso.
+  sendDependencySkippedAlert(input: DependencySkippedInput): Promise<void> {
+    return this.deliverAlert(buildDependencySkippedAlert(input), 'agendamento pulado');
   }
 
   // A execução foi reiniciada e a 2ª tentativa também não deu certo: um e-mail só, com tudo.

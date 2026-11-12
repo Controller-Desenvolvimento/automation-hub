@@ -40,6 +40,10 @@ type Draft = {
   verifyT0: string;
   verifyT1: string;
   verifyT2: string;
+  // Teto de tempo (só vale sem T0/T1/T2) e dependência de outro agendamento.
+  limitEnabled: boolean;
+  limitMinutes: string;
+  dependsOn: string;
 };
 
 export function SchedulesPage() {
@@ -114,6 +118,9 @@ export function SchedulesPage() {
       verifyT0: selectedTask.verifyT0Minutes != null ? String(selectedTask.verifyT0Minutes) : '',
       verifyT1: selectedTask.verifyT1Minutes != null ? String(selectedTask.verifyT1Minutes) : '',
       verifyT2: selectedTask.verifyT2Minutes != null ? String(selectedTask.verifyT2Minutes) : '',
+      limitEnabled: selectedTask.maxRuntimeMinutes != null,
+      limitMinutes: selectedTask.maxRuntimeMinutes != null ? String(selectedTask.maxRuntimeMinutes) : '',
+      dependsOn: selectedTask.dependsOnTaskId ?? '',
     });
     setTemplateFiles({});
   }, [selectedTask, robots]);
@@ -178,6 +185,19 @@ export function SchedulesPage() {
           notify('Verificação por tempo: use minutos inteiros de 1 a 1440.');
           return;
         }
+        const semT = filled === 0;
+        if (semT && draft.limitEnabled && !(/^\d+$/.test(draft.limitMinutes.trim()) && Number(draft.limitMinutes) >= 1 && Number(draft.limitMinutes) <= 1440)) {
+          notify('Teto de tempo: informe minutos inteiros de 1 a 1440.');
+          return;
+        }
+        if (draft.dependsOn) {
+          const target = tasks.find((t) => t.id === draft.dependsOn);
+          if (!target) { notify('O agendamento indicado em "Depende de" não existe mais.'); return; }
+          if (!hasTimeLimit(target)) {
+            notify(`O agendamento "${target.name}" precisa ter verificação por tempo ou teto de tempo para que outro dependa dele.`);
+            return;
+          }
+        }
       }
       const now = new Date();
       const testDate = new Date(`${draft.startDate}T${validTimes[0]}:00`);
@@ -215,6 +235,9 @@ export function SchedulesPage() {
         formData.append('verifyT0Minutes', draft.verifyT0.trim());
         formData.append('verifyT1Minutes', draft.verifyT1.trim());
         formData.append('verifyT2Minutes', draft.verifyT2.trim());
+        const semT = [draft.verifyT0, draft.verifyT1, draft.verifyT2].every((v) => v.trim() === '');
+        formData.append('maxRuntimeMinutes', semT && draft.limitEnabled ? draft.limitMinutes.trim() : '');
+        formData.append('dependsOnTaskId', draft.dependsOn);
         const apiScope = draft.recipientScope === 'none' ? 'specific' : draft.recipientScope;
         formData.append('recipientScope', apiScope);
         formData.append('recipientDepartments', JSON.stringify(draft.recipientScope === 'departments' ? draft.recipientDepartments : []));
@@ -635,6 +658,35 @@ export function SchedulesPage() {
                         />
                       </Field>
                     </div>
+                    {[draft.verifyT0, draft.verifyT1, draft.verifyT2].every((v) => v.trim() === '') ? (
+                      <div className="grid grid-cols-1 gap-3 rounded-2xl border border-slate-200 px-4 py-3 dark:border-slate-800">
+                        <label className="flex items-center gap-3 text-sm font-medium">
+                          <input
+                            type="checkbox"
+                            className="h-4 w-4"
+                            checked={draft.limitEnabled}
+                            onChange={(e) => setDraft({ ...draft, limitEnabled: e.target.checked })}
+                          />
+                          Definir um teto de tempo
+                        </label>
+                        <p className="text-sm text-slate-500 dark:text-zinc-400">
+                          Sem teto, se o robô travar ele segura a fila. Com teto, passou desse tempo rodando a execução é cancelada e a
+                          Inovação recebe um e-mail (sem reiniciar).
+                        </p>
+                        {draft.limitEnabled ? (
+                          <Field label="Teto de tempo (minutos desde o início)">
+                            <Input
+                              inputMode="numeric"
+                              placeholder="ex.: 60"
+                              value={draft.limitMinutes}
+                              onChange={(e) => setDraft({ ...draft, limitMinutes: e.target.value.replace(/\D/g, '') })}
+                            />
+                          </Field>
+                        ) : null}
+                      </div>
+                    ) : (
+                      <p className="text-sm text-slate-500 dark:text-zinc-400">Com T0, T1 e T2 preenchidos, o T2 já é o teto de tempo.</p>
+                    )}
                     {(() => {
                       const [a, b, c] = [draft.verifyT0, draft.verifyT1, draft.verifyT2].map((v) => Number(v));
                       if (![a, b, c].every((n) => Number.isInteger(n) && n >= 1)) return null;
@@ -647,6 +699,36 @@ export function SchedulesPage() {
                         </p>
                       );
                     })()}
+                  </div>
+                  <Separator />
+                  <div className="grid grid-cols-1 gap-4">
+                    <div className="flex items-center gap-2">
+                      <Clock className="h-4 w-4 text-slate-500 dark:text-zinc-400" />
+                      <h3 className="text-lg font-semibold">Depende de outro agendamento?</h3>
+                    </div>
+                    <p className="text-sm text-slate-500 dark:text-zinc-400">
+                      Quando escolhido, esta execução entra na fila no seu horário mas só começa depois que o agendamento indicado
+                      terminar com sucesso (incluindo o reinício dele). Se ele terminar de outro jeito, esta execução é pulada naquele
+                      ciclo, para não usar dados antigos. Execuções manuais nunca ficam presas. Só aparecem agendamentos com
+                      verificação por tempo ou teto de tempo.
+                    </p>
+                    <Field label="Depende de">
+                      <select
+                        className="flex h-12 w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-sky-400 focus:ring-4 focus:ring-sky-100 dark:border-[#2b2b31] dark:bg-[#0f0f10] dark:text-zinc-100 dark:focus:ring-sky-900/35"
+                        value={draft.dependsOn}
+                        onChange={(e) => setDraft({ ...draft, dependsOn: e.target.value })}
+                      >
+                        <option value="">Nenhum (roda no seu horário)</option>
+                        {tasks
+                          .filter((t) => t.id !== draft.id)
+                          .map((t) => (
+                            <option key={t.id} value={t.id} disabled={!hasTimeLimit(t) && t.id !== draft.dependsOn}>
+                              {t.name} — {t.robot?.name ?? 'automação'}
+                              {hasTimeLimit(t) ? '' : ' (sem limite de tempo)'}
+                            </option>
+                          ))}
+                      </select>
+                    </Field>
                   </div>
                   <Separator />
                   <div className="grid grid-cols-1 gap-4">
@@ -859,6 +941,7 @@ export function SchedulesPage() {
                 <InfoRow label="Última execução" value={selectedTask.lastRunAt ? formatDate(selectedTask.lastRunAt) : 'Ainda não executou'} />
                 <InfoRow label="Último erro" value={selectedTask.lastError || 'Nenhum'} />
                 <InfoRow label="Verificação por tempo" value={describeChecks(selectedTask)} />
+                <InfoRow label="Depende de" value={describeDependency(selectedTask, tasks)} />
                 {selectedTask.lastExecutionId ? (
                   <Button asChild variant="outline" size="sm" className="justify-center">
                     <Link to={`/executions/${selectedTask.lastExecutionId}`}>Abrir última execução</Link>
@@ -1038,7 +1121,16 @@ function emptyDraft(): Draft {
     verifyT0: '',
     verifyT1: '',
     verifyT2: '',
+    limitEnabled: false,
+    limitMinutes: '',
+    dependsOn: '',
   };
+}
+
+// O agendamento tem alguma forma de limite de tempo (T0/T1/T2 ou teto)? Condição para outro depender dele.
+function hasTimeLimit(task: ScheduledTask): boolean {
+  const t = [task.verifyT0Minutes, task.verifyT1Minutes, task.verifyT2Minutes];
+  return t.every((v) => v != null) || task.maxRuntimeMinutes != null;
 }
 
 // Hora do dia (HH:mm) somada a minutos, para o exemplo da verificação por tempo. "+1 dia" quando passa da meia-noite.
@@ -1054,8 +1146,18 @@ function clockPlus(time: string, minutes: number): string {
 
 function describeChecks(task: ScheduledTask): string {
   const { verifyT0Minutes: a, verifyT1Minutes: b, verifyT2Minutes: c } = task;
-  if (a == null || b == null || c == null) return 'Sem verificação';
+  if (a == null || b == null || c == null) {
+    return task.maxRuntimeMinutes != null
+      ? `Sem verificação · teto de ${task.maxRuntimeMinutes} min (cancela e avisa, sem reiniciar)`
+      : 'Sem verificação';
+  }
   return `T0 ${a} min · T1 +${b} · T2 +${c} (cancela e reinicia em ${a + b + c} min)`;
+}
+
+function describeDependency(task: ScheduledTask, all: ScheduledTask[]): string {
+  if (!task.dependsOnTaskId) return 'Nenhuma';
+  const target = all.find((t) => t.id === task.dependsOnTaskId);
+  return target ? `Espera "${target.name}" terminar` : 'Outro agendamento';
 }
 
 function toDateInputValue(value?: string | null) {

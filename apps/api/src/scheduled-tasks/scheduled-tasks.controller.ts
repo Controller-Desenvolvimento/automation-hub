@@ -81,6 +81,8 @@ export class ScheduledTasksController {
         verifyT0Minutes: body.verifyT0Minutes,
         verifyT1Minutes: body.verifyT1Minutes,
         verifyT2Minutes: body.verifyT2Minutes,
+        maxRuntimeMinutes: body.maxRuntimeMinutes,
+        dependsOnTaskId: body.dependsOnTaskId,
       },
       files,
     );

@@ -222,3 +222,54 @@ export function restartFailedInputFrom(
     baseUrl,
   };
 }
+
+// ---------------------------------------------------------------------------------------------------------------
+// Agendamento pulado por dependência (o agendamento de que ele depende não terminou com sucesso)
+// ---------------------------------------------------------------------------------------------------------------
+export interface DependencySkippedInput {
+  dependentRobot: string;
+  dependentSchedule: string;
+  dependencyRobot: string;
+  dependencySchedule: string;
+  // Como o agendamento de que depende terminou (ou por que não rodou), em uma frase.
+  detail: string;
+  // Execução do agendamento de que depende (para o botão do e-mail); null se nem chegou a existir.
+  dependencyExecutionId: string | null;
+  baseUrl: string | null;
+}
+
+const SKIPPED_PALETTE: Palette = { emoji: '⏭️', title: 'Agendamento pulado', color: '#475569', soft: '#f1f5f9', border: '#cbd5e1' };
+
+export function buildDependencySkippedAlert(input: DependencySkippedInput): BuiltEmail {
+  const palette = SKIPPED_PALETTE;
+  const link = input.dependencyExecutionId ? executionLink(input.baseUrl, input.dependencyExecutionId) : null;
+  const detail = truncate(input.detail, MAX_REASON_CHARS);
+  const dependsOn = `${input.dependencyRobot} — ${input.dependencySchedule}`;
+  const footnote = 'Não rodou para não atualizar com dados antigos. O próximo horário do agendamento segue normal.';
+  const subject = `⏭️ Agendamento pulado: ${input.dependentRobot} — ${input.dependentSchedule}`;
+
+  const lines = [
+    `A execução agendada "${input.dependentRobot}" NÃO rodou neste ciclo porque o agendamento de que depende não terminou com sucesso.`,
+    '',
+    `Agendamento: ${input.dependentSchedule}`,
+    `Dependia de: ${dependsOn}`,
+    `O que aconteceu: ${detail}`,
+    '',
+    footnote,
+  ];
+  if (link) lines.push('', `Abrir a execução de que dependia: ${link}`);
+  lines.push('', 'Este é um e-mail automático do Automation Hub.');
+
+  const html = renderCard({
+    palette,
+    introHtml: `A execução agendada de <strong>${esc(input.dependentRobot)}</strong> <strong style="color:${palette.color};">não rodou neste ciclo</strong> porque o agendamento de que depende não terminou com sucesso.`,
+    rows: [
+      { label: 'Agendamento', value: input.dependentSchedule },
+      { label: 'Dependia de', value: dependsOn },
+      { label: 'O que aconteceu', value: detail },
+    ],
+    footnote,
+    buttons: link ? [{ label: 'Abrir a execução de que dependia', url: link }] : [],
+  });
+  return { subject, text: lines.join('\n'), html };
+}

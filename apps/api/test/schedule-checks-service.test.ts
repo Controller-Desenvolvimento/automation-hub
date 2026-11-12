@@ -37,11 +37,13 @@ function montar(opts: Setup = {}) {
     cancelBySystem: async (id: string, reason: string) => { calls.cancel.push([id, reason]); return opts.cancelOk ?? true; },
     log: async (id: string, level: string, msg: string) => { calls.logs.push([id, level, msg]); },
     getScheduledExecutionForAlert: async () => ({
-      robotName: 'Robô X', scheduleName: 'Agendamento X', scheduledTaskId: 't1', attempt: opts.attempt ?? 1,
+      robotName: 'Robô X', scheduleName: 'Agendamento X', scheduledTaskId: 't1', attempt: opts.attempt ?? 1, cycleFirstId: 'e1', restartExpected: true,
       startedAt: start, finishedAt: at(45), errorMessage: 'Cancelada automaticamente: ...',
       first: (opts.attempt ?? 1) >= 2 ? { executionId: 'e0', startedAt: at(-60), finishedAt: at(-15), outcome: 'primeira tentativa travou' } : null,
     }),
     listInterruptedToRestart: async () => opts.interrupted ?? [],
+    listHeldExecutions: async () => [],
+    collectSkippedDependents: async () => [] as string[],
   };
   const prisma = {
     scheduledTask: { findMany: async () => [task] },

@@ -88,3 +88,33 @@ test('e-mail final sem endereço válido sai sem links, e motivo vazio avisa', (
   assert.doesNotMatch(m.html, /<a href/);
   assert.match(m.text, /sem detalhes registrados/);
 });
+
+import { buildDependencySkippedAlert } from '../src/mail/schedule-check-alert';
+
+test('e-mail de agendamento pulado: quem não rodou, de quem dependia, o motivo e o link', () => {
+  const m = buildDependencySkippedAlert({
+    dependentRobot: 'Atualizar Planilhas Excel (BI)',
+    dependentSchedule: 'Excel 06:55',
+    dependencyRobot: 'Atualização BI - Gestta',
+    dependencySchedule: 'Gestta 06:30',
+    detail: 'foi cancelado: Cancelada automaticamente: passou do limite de verificação (T2 = 45 min).',
+    dependencyExecutionId: 'cmgestta1',
+    baseUrl: 'https://hubcontroller.com.br',
+  });
+  assert.equal(m.subject, '⏭️ Agendamento pulado: Atualizar Planilhas Excel (BI) — Excel 06:55');
+  assert.match(m.text, /NÃO rodou neste ciclo/);
+  assert.match(m.text, /Dependia de: Atualização BI - Gestta — Gestta 06:30/);
+  assert.match(m.text, /O que aconteceu: foi cancelado/);
+  assert.match(m.text, /não atualizar com dados antigos/);
+  assert.match(m.text, /Abrir a execução de que dependia: https:\/\/hubcontroller\.com\.br\/executions\/cmgestta1/);
+  assert.match(m.html, /href="https:\/\/hubcontroller\.com\.br\/executions\/cmgestta1"/);
+});
+
+test('e-mail de pulado sem execução do outro lado ou sem endereço válido sai sem link', () => {
+  const base = { dependentRobot: 'A', dependentSchedule: 'a', dependencyRobot: 'B', dependencySchedule: 'b', detail: 'não rodou neste ciclo' };
+  for (const extra of [{ dependencyExecutionId: null, baseUrl: 'https://h.com' }, { dependencyExecutionId: 'x', baseUrl: 'http://localhost:3000' }]) {
+    const m = buildDependencySkippedAlert({ ...base, ...extra });
+    assert.doesNotMatch(m.text, /Abrir a execução/);
+    assert.doesNotMatch(m.html, /<a href|localhost/);
+  }
+});

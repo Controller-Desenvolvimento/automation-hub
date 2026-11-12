@@ -2,7 +2,9 @@ import {
   BadRequestException,
   ForbiddenException,
   Injectable,
+  Logger,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
 import { readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -10,10 +12,21 @@ import { Prisma, RecipientScope, ScheduleFrequency, type ScheduledTask, type Use
 import { PrismaService } from '../prisma/prisma.service';
 import { canAccessRobot, isAdmin, isManager } from '../shared/access';
 import { ExecutionsService } from '../executions/executions.service';
+import { MailService } from '../mail/mail.service';
+import { resolveHubBaseUrl } from '../mail/scheduled-execution-alert';
 import { fixMulterFilename, listFilesRecursively, sanitizeFileName, uniqueStoredFileName } from '../shared/files';
 import { ensureScheduleDirs, scheduleInputDir, scheduleRoot } from '../shared/storage';
 import { computeNextRunAt, computeNextRunAtMultiple, parseTimeOfDay } from './schedule-utils';
-import { parseCheckFields, RESTART_PRIORITY, type TaskCheckFields } from './schedule-checks';
+import {
+  checkConfigFromTask,
+  hasTimeLimit,
+  parseCheckFields,
+  parseLimitField,
+  RESTART_PRIORITY,
+  type TaskCheckFields,
+  type TaskLimitFields,
+} from './schedule-checks';
+import { dependencyFailureText, resolveCycle } from './schedule-dependency';
 
 type SaveTaskInput = {
   id?: string;
@@ -38,6 +51,9 @@ type SaveTaskInput = {
   verifyT0Minutes?: unknown;
   verifyT1Minutes?: unknown;
   verifyT2Minutes?: unknown;
+  // Teto de tempo (só para "sem verificação") e dependência de outro agendamento. undefined = não enviado (preserva).
+  maxRuntimeMinutes?: unknown;
+  dependsOnTaskId?: unknown;
 };
 
 type UploadedFile = {
@@ -49,10 +65,94 @@ type UploadedFile = {
 
 @Injectable()
 export class ScheduledTasksService {
+  private readonly logger = new Logger(ScheduledTasksService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly executionsService: ExecutionsService,
+    @Optional() private readonly mailService?: MailService,
   ) {}
+
+  // Regras da dependência entre agendamentos (ver schedule-dependency.ts). Lança BadRequestException com a mensagem.
+  private async validateDependencyRules(selfId: string | null, dependsOnId: string | null, finalChecks: TaskLimitFields) {
+    if (dependsOnId) {
+      if (selfId && dependsOnId === selfId) {
+        throw new BadRequestException('Um agendamento não pode depender dele mesmo.');
+      }
+      const target = await this.prisma.scheduledTask.findUnique({
+        where: { id: dependsOnId },
+        select: {
+          id: true, name: true, dependsOnTaskId: true,
+          verifyT0Minutes: true, verifyT1Minutes: true, verifyT2Minutes: true, maxRuntimeMinutes: true,
+        },
+      });
+      if (!target) throw new BadRequestException('O agendamento indicado em "Depende de" não existe.');
+      // Sem limite de tempo, o agendamento de que se depende poderia travar e segurar este para sempre.
+      if (!hasTimeLimit(target)) {
+        throw new BadRequestException(
+          `O agendamento "${target.name}" precisa ter verificação por tempo (T0/T1/T2) ou um teto de tempo para que outro dependa dele; sem isso ele poderia travar e segurar este para sempre.`,
+        );
+      }
+      if (selfId) {
+        let current = target.dependsOnTaskId;
+        for (let depth = 0; current && depth < 20; depth++) {
+          if (current === selfId) {
+            throw new BadRequestException('Dependência circular: o agendamento indicado já depende (direta ou indiretamente) deste.');
+          }
+          current = (await this.prisma.scheduledTask.findUnique({ where: { id: current }, select: { dependsOnTaskId: true } }))?.dependsOnTaskId ?? null;
+        }
+      }
+    }
+
+    // Outros dependem deste: ele não pode ficar sem nenhum limite de tempo.
+    if (selfId && !hasTimeLimit(finalChecks)) {
+      const dependents = await this.prisma.scheduledTask.findMany({ where: { dependsOnTaskId: selfId }, select: { name: true }, take: 5 });
+      if (dependents.length > 0) {
+        throw new BadRequestException(
+          `Este agendamento precisa manter verificação por tempo ou um teto de tempo porque outros dependem dele (${dependents.map((d) => d.name).join(', ')}). Remova antes a dependência deles.`,
+        );
+      }
+    }
+  }
+
+  // No disparo de um agendamento que depende de outro: roda normal, fica retido esperando, ou é pulado.
+  private async evaluateDependency(task: ScheduledTask): Promise<
+    | { kind: 'none' }
+    | { kind: 'hold'; cycleFirstId: string; dependencyName: string }
+    | { kind: 'skip'; detail: string; dependencyName: string; dependencyRobot: string; dependencyExecutionId: string | null }
+  > {
+    if (!task.dependsOnTaskId) return { kind: 'none' };
+    const dep = await this.prisma.scheduledTask.findUnique({ where: { id: task.dependsOnTaskId }, include: { robot: true } });
+    // Desativado de propósito: a dependência é ignorada (apagado: o campo já foi limpo pelo banco).
+    if (!dep || !dep.isActive) return { kind: 'none' };
+
+    const cycleFirstId = await this.executionsService.findCycleExecutionId(dep.id, task.lastRunAt);
+    if (!cycleFirstId) {
+      // O outro agendamento não disparou neste ciclo. Se foi por erro ao iniciar, é falha dele; senão simplesmente não estava marcado.
+      if (dep.lastError) {
+        return { kind: 'skip', detail: `falhou ao iniciar (${dep.lastError})`, dependencyName: dep.name, dependencyRobot: dep.robot.name, dependencyExecutionId: null };
+      }
+      return { kind: 'none' };
+    }
+    const snaps = await this.executionsService.getCycleSnapshots(cycleFirstId);
+    if (!snaps) return { kind: 'none' };
+
+    const state = resolveCycle({
+      first: snaps.first,
+      restart: snaps.restart,
+      now: new Date(),
+      restartExpected: checkConfigFromTask(dep) !== null,
+    });
+    if (state.state === 'success') return { kind: 'none' };
+    if (state.state === 'pending') return { kind: 'hold', cycleFirstId, dependencyName: dep.name };
+    return {
+      kind: 'skip',
+      detail: state.detail,
+      dependencyName: dep.name,
+      dependencyRobot: dep.robot.name,
+      dependencyExecutionId: snaps.restart?.id ?? snaps.first.id,
+    };
+  }
 
   async listTasks(user: User) {
     const tasks = await this.prisma.scheduledTask.findMany({
@@ -202,6 +302,33 @@ export class ScheduledTasksService {
       checkData = checkParsed.value;
     }
 
+    // Teto de tempo e dependência (também só administrador; ausente = preserva).
+    const limitParsed = parseLimitField(input.maxRuntimeMinutes);
+    let limitData: { maxRuntimeMinutes?: number | null } = {};
+    if (isAdmin(user) && limitParsed.present) {
+      if (!limitParsed.ok) throw new BadRequestException(limitParsed.message);
+      limitData = { maxRuntimeMinutes: limitParsed.value };
+    }
+    let dependencyData: { dependsOnTaskId?: string | null } = {};
+    if (isAdmin(user) && input.dependsOnTaskId !== undefined) {
+      dependencyData = { dependsOnTaskId: typeof input.dependsOnTaskId === 'string' && input.dependsOnTaskId.trim() ? input.dependsOnTaskId.trim() : null };
+    }
+
+    // Como o agendamento ficará depois de salvar: valores novos quando enviados, senão os que já existem.
+    const finalChecks: TaskLimitFields = {
+      verifyT0Minutes: 'verifyT0Minutes' in checkData ? checkData.verifyT0Minutes ?? null : existing?.verifyT0Minutes ?? null,
+      verifyT1Minutes: 'verifyT1Minutes' in checkData ? checkData.verifyT1Minutes ?? null : existing?.verifyT1Minutes ?? null,
+      verifyT2Minutes: 'verifyT2Minutes' in checkData ? checkData.verifyT2Minutes ?? null : existing?.verifyT2Minutes ?? null,
+      maxRuntimeMinutes: 'maxRuntimeMinutes' in limitData ? limitData.maxRuntimeMinutes ?? null : existing?.maxRuntimeMinutes ?? null,
+    };
+    // Com T0/T1/T2 o T2 já é o teto: não guarda um segundo limite que ficaria sem efeito.
+    if (checkConfigFromTask(finalChecks) && finalChecks.maxRuntimeMinutes !== null) {
+      limitData = { maxRuntimeMinutes: null };
+      finalChecks.maxRuntimeMinutes = null;
+    }
+    const finalDependsOn = 'dependsOnTaskId' in dependencyData ? dependencyData.dependsOnTaskId ?? null : existing?.dependsOnTaskId ?? null;
+    await this.validateDependencyRules(existing?.id ?? null, finalDependsOn, finalChecks);
+
     const payload: Prisma.ScheduledTaskUncheckedCreateInput = {
       name,
       robotId,
@@ -228,6 +355,8 @@ export class ScheduledTasksService {
       creditUserIds: input.creditUserIds ?? [],
       creditDepartment: input.creditDepartment?.trim() || null,
       ...checkData,
+      ...limitData,
+      ...dependencyData,
     };
 
     if (existing) {
@@ -379,6 +508,16 @@ export class ScheduledTasksService {
 
     try {
       const templateFiles = await this.loadTemplateFiles(task.id);
+
+      // Depende de outro agendamento? Roda normal, fica retido esperando o ciclo dele, ou é pulado (dados antigos não
+      // adiantam). Se a avaliação falhar, segue como se não houvesse dependência: perder o horário seria pior.
+      let dependency: Awaited<ReturnType<ScheduledTasksService['evaluateDependency']>> = { kind: 'none' };
+      try {
+        dependency = await this.evaluateDependency(task);
+      } catch (error) {
+        this.logger.error(`Dependência do agendamento ${task.id} não pôde ser avaliada: ${String(error)}`);
+      }
+
       const execution = await this.executionsService.createExecution(
         task.robotId,
         {
@@ -387,9 +526,35 @@ export class ScheduledTasksService {
           priority: 0,
           parameters: (task.parameters as Record<string, unknown>) ?? {},
           scheduledTaskId: task.id,
+          waitingOnExecutionId: dependency.kind === 'hold' ? dependency.cycleFirstId : undefined,
         },
         templateFiles,
       );
+
+      let lastError: string | null = null;
+      if (dependency.kind === 'hold') {
+        await this.executionsService.updateQueueReason(
+          execution.id,
+          `Aguardando o agendamento "${dependency.dependencyName}" terminar (retida até lá).`,
+        );
+        await this.executionsService.log(execution.id, 'info', `Retida: espera o agendamento "${dependency.dependencyName}" terminar com sucesso.`);
+      } else if (dependency.kind === 'skip') {
+        const what = dependencyFailureText(dependency.dependencyName, dependency.detail);
+        await this.executionsService.cancelHeld(execution.id, `Pulada: ${what}`);
+        await this.executionsService.log(execution.id, 'warn', `Pulada: ${what}`);
+        lastError = `Pulada neste ciclo: ${what}`.slice(0, 500);
+        void this.mailService
+          ?.sendDependencySkippedAlert({
+            dependentRobot: task.robot.name,
+            dependentSchedule: task.name,
+            dependencyRobot: dependency.dependencyRobot,
+            dependencySchedule: dependency.dependencyName,
+            detail: what,
+            dependencyExecutionId: dependency.dependencyExecutionId,
+            baseUrl: resolveHubBaseUrl(),
+          })
+          .catch((err: unknown) => this.logger.warn(`E-mail de agendamento pulado (${task.id}) falhou: ${String(err)}`));
+      }
 
       await this.prisma.scheduledTask.update({
         where: { id: task.id },
@@ -398,7 +563,7 @@ export class ScheduledTasksService {
           nextRunAt,
           isActive:
             task.frequency === ScheduleFrequency.once ? false : task.isActive,
-          lastError: null,
+          lastError,
           lastExecutionId: execution.id,
         },
       });

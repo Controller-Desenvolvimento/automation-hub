@@ -226,6 +226,10 @@ export type ScheduledTask = {
   verifyT0Minutes?: number | null;
   verifyT1Minutes?: number | null;
   verifyT2Minutes?: number | null;
+  /** Teto de tempo (só para "sem verificação"): cancela e avisa, sem reiniciar. */
+  maxRuntimeMinutes?: number | null;
+  /** Só inicia depois que o ciclo deste outro agendamento terminar com sucesso. */
+  dependsOnTaskId?: string | null;
   lastExecutionId?: string | null;
   lastExecutionStatus?: 'queued' | 'running' | 'success' | 'error' | 'canceled' | null;
   createdAt: string;

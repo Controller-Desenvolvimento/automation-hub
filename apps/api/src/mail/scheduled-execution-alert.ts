@@ -1,7 +1,7 @@
 // E-mail para a Inovação quando uma execução AGENDADA falha, trava ou é interrompida.
 // Só montagem de texto (sem rede, sem banco) para poder ser testada isoladamente; o envio é do MailService.
 
-export type ScheduledExecutionAlertKind = 'error' | 'stalled' | 'interrupted';
+export type ScheduledExecutionAlertKind = 'error' | 'stalled' | 'interrupted' | 'limit';
 
 export interface ScheduledExecutionAlertInput {
   kind: ScheduledExecutionAlertKind;
@@ -11,6 +11,8 @@ export interface ScheduledExecutionAlertInput {
   startedAt: Date | null;
   finishedAt: Date | null;
   errorMessage: string | null;
+  // Agendamentos que dependiam desta execução e por isso NÃO rodaram (ex.: "Atualizar Planilhas Excel (BI) — Excel 06:55").
+  skipped?: string[];
   // Endereço público do Hub (ver resolveHubBaseUrl). Sem ele o e-mail sai sem o link.
   baseUrl: string | null;
 }
@@ -30,6 +32,7 @@ const KIND_INFO: Record<
   error: { emoji: '⚠️', title: 'Agendamento falhou', verb: 'terminou com erro', color: '#dc2626', soft: '#fef2f2', border: '#fecaca' },
   stalled: { emoji: '⏱️', title: 'Agendamento travou', verb: 'travou e foi encerrada', color: '#d97706', soft: '#fffbeb', border: '#fde68a' },
   interrupted: { emoji: '🔌', title: 'Agendamento interrompido', verb: 'foi interrompida', color: '#7c3aed', soft: '#f5f3ff', border: '#ddd6fe' },
+  limit: { emoji: '⛔', title: 'Agendamento cancelado por tempo', verb: 'passou do tempo máximo e foi cancelada', color: '#b45309', soft: '#fffbeb', border: '#fcd34d' },
 };
 
 // Endereço local (a pessoa que recebe o e-mail não consegue abrir): localhost, 127.x, ::1, 0.0.0.0.
@@ -103,6 +106,8 @@ export function buildScheduledExecutionAlert(input: ScheduledExecutionAlertInput
     `Duração: ${duration}`,
     `Motivo: ${reason}`,
   ];
+  const skipped = (input.skipped ?? []).filter(Boolean);
+  if (skipped.length > 0) lines.push(`Não executou: ${skipped.join('; ')}`);
   if (link) lines.push('', `Abrir a execução: ${link}`);
   lines.push('', 'Este é um e-mail automático do Automation Hub.');
   const text = lines.join('\n');
@@ -150,6 +155,7 @@ function buildHtml(
                   ${row('Fim', d.finished)}
                   ${row('Duração', d.duration)}
                   ${row('Motivo', d.reason)}
+                  ${(input.skipped ?? []).length > 0 ? row('Não executou', (input.skipped ?? []).join('; ')) : ''}
                 </table>
               </td></tr>
             </table>

@@ -101,3 +101,53 @@ export function parseCheckFields(input: {
     value: { verifyT0Minutes: nums[0], verifyT1Minutes: nums[1], verifyT2Minutes: nums[2] },
   };
 }
+
+// ---------------------------------------------------------------------------------------------------------------
+// Teto de tempo (para agendamento "sem verificação") e prefixos dos motivos de cancelamento pelo sistema
+// ---------------------------------------------------------------------------------------------------------------
+
+// Prefixos fixos dos motivos gravados em Execution.errorMessage ao cancelar pelo sistema: o resolvedor de dependência
+// os reconhece para saber se um reinício ainda vem a caminho.
+export const T2_REASON_PREFIX = 'Cancelada automaticamente: passou do limite de verificação';
+export const LIMIT_REASON_PREFIX = 'Cancelada automaticamente: passou do tempo máximo';
+
+export function t2Reason(cfg: CheckConfig): string {
+  return `${T2_REASON_PREFIX} (T2 = ${checkMarks(cfg).t2} min desde o início).`;
+}
+
+export function limitReason(maxRuntimeMinutes: number): string {
+  return `${LIMIT_REASON_PREFIX} (${maxRuntimeMinutes} min desde o início). Não foi reiniciada.`;
+}
+
+export interface TaskLimitFields extends TaskCheckFields {
+  maxRuntimeMinutes: number | null;
+}
+
+// Só vale sem T0/T1/T2: com verificação, o T2 já é o teto.
+export function effectiveMaxRuntime(task: TaskLimitFields): number | null {
+  if (checkConfigFromTask(task)) return null;
+  const m = task.maxRuntimeMinutes;
+  return m != null && Number.isInteger(m) && m >= 1 ? m : null;
+}
+
+export function isOverLimit(startedAt: Date, now: Date, maxRuntimeMinutes: number): boolean {
+  return (now.getTime() - startedAt.getTime()) / 60_000 >= maxRuntimeMinutes;
+}
+
+// O agendamento tem alguma forma de limite de tempo? (condição para outros dependerem dele)
+export function hasTimeLimit(task: TaskLimitFields): boolean {
+  return checkConfigFromTask(task) !== null || effectiveMaxRuntime(task) !== null;
+}
+
+// Interpreta o teto vindo do formulário. undefined = não enviado (preserva); vazio/null = sem teto.
+export function parseLimitField(
+  value: unknown,
+): { present: false } | { present: true; ok: true; value: number | null } | { present: true; ok: false; message: string } {
+  if (value === undefined) return { present: false };
+  if (value === null || (typeof value === 'string' && value.trim() === '')) return { present: true, ok: true, value: null };
+  const n = Number(value);
+  if (!Number.isInteger(n) || n < 1 || n > MAX_CHECK_MINUTES) {
+    return { present: true, ok: false, message: 'Teto de tempo: informe minutos inteiros (1 a 1440) ou deixe em branco.' };
+  }
+  return { present: true, ok: true, value: n };
+}
