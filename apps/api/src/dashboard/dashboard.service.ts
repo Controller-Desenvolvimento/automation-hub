@@ -14,6 +14,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { MailService } from '../mail/mail.service';
 import { resolveHubBaseUrl } from '../mail/scheduled-execution-alert';
 import { describeUpdateError, getRetryDelayMs } from './update-policy';
+import { headerSafe } from '../shared/header-value';
 import { panelProcessEnv } from '../shared/panel-env';
 import { WINDOWS_HIDE } from '../shared/process-options';
 import { dashboardRoot, dashboardsRoot } from '../shared/storage';
@@ -513,8 +514,10 @@ export class DashboardService implements OnModuleInit, OnModuleDestroy {
       on: {
         proxyReq: (proxyReq, req, res) => {
           const user =(req as unknown as Record<string, unknown>).hubUser as { name?: string; email?: string } | undefined;
-          if (user?.name) proxyReq.setHeader('X-Hub-User-Name', user.name);
-          if (user?.email) proxyReq.setHeader('X-Hub-User-Email', user.email);
+          // headerSafe: um nome com "�" (acento perdido no Athenas) fazia setHeader lançar ERR_INVALID_CHAR
+          // e derrubava TODO acesso do usuário aos painéis.
+          if (user?.name) proxyReq.setHeader('X-Hub-User-Name', headerSafe(user.name));
+          if (user?.email) proxyReq.setHeader('X-Hub-User-Email', headerSafe(user.email));
           // "Atualizar" de dentro do painel: POST no updatePath do painel → o selo do Hub passa a acompanhá-lo.
           const configuredPath = this.updatePaths.get(dashboardId);
           if (configuredPath && proxyReq.method === 'POST' && pathOnly(proxyReq.path) === pathOnly(configuredPath)) {

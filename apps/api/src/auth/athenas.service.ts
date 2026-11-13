@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { Injectable, Logger } from '@nestjs/common';
+import { ATHENAS_NAME_SELECT, describeRawName, readAthenasName } from '../shared/athenas-identity';
 
 // node-firebird is a CJS module without bundled types
 // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -88,7 +89,7 @@ export class AthenasService {
         }
 
         const nomeCol = 'NOME';
-        const cols = [this.senhaCol, nomeCol, ...(this.inativoCol ? [this.inativoCol] : [])].join(', ');
+        const cols = [this.senhaCol, ATHENAS_NAME_SELECT, ...(this.inativoCol ? [this.inativoCol] : [])].join(', ');
         const sql = `SELECT ${cols} FROM ${this.userTable} WHERE UPPER(TRIM(${this.loginCol})) = ?`;
 
         db.query(sql, [normalizedLogin], (qErr, rows) => {
@@ -118,10 +119,13 @@ export class AthenasService {
           if (!this.checkPassword(password, stored)) { resolve({ ok: false }); return; }
 
           const rawNome = row[nomeCol];
-          // node-firebird pode retornar Buffer quando a coluna tem charset NONE
-          const nome = Buffer.isBuffer(rawNome)
-            ? decodeAthenasBuffer(rawNome).trim() || undefined
-            : fixAthenasName(String(rawNome ?? '')).trim() || undefined;
+          const nome = readAthenasName(rawNome);
+          if (nome?.includes('�')) {
+            // Diagnóstico da causa (só os caracteres/bytes fora do ASCII, nunca o nome inteiro).
+            this.logger.warn(
+              `Athenas: nome de ${normalizedLogin} chegou com U+FFFD. Recebido como ${describeRawName(rawNome)}.`,
+            );
+          }
           resolve({ ok: true, nome });
         });
       });
@@ -147,7 +151,7 @@ export class AthenasService {
         }
 
         const nomeCol = 'NOME';
-        const cols = [nomeCol, ...(this.inativoCol ? [this.inativoCol] : [])].join(', ');
+        const cols = [ATHENAS_NAME_SELECT, ...(this.inativoCol ? [this.inativoCol] : [])].join(', ');
         const sql = `SELECT ${cols} FROM ${this.userTable} WHERE UPPER(TRIM(${this.loginCol})) = ?`;
 
         db.query(sql, [normalizedLogin], (qErr, rows) => {
@@ -185,38 +189,8 @@ export class AthenasService {
   }
 }
 
-// Colunas com charset NONE no Firebird chegam como Buffer com os bytes brutos.
-// O Athenas costuma armazenar UTF-8 nessas colunas mesmo sem declarar — tenta
-// decodificar como UTF-8 e só cai no latin1 se houver bytes inválidos.
-function decodeAthenasBuffer(buf: Buffer): string {
-  const utf8 = buf.toString('utf8');
-  if (!utf8.includes('�')) return utf8;
-  return buf.toString('latin1');
-}
-
-// Quando o driver já decodificou a string (charset WIN1252), tenta desfazer
-// mojibake: bytes UTF-8 interpretados como latin1 viram "ARAÃšJO" → "ARAÚJO".
-// Funciona re-codificando cada char como seu byte latin1 e relendo como UTF-8.
-function fixAthenasName(name: string): string {
-  if (!name || !name.split('').some((c) => c.charCodeAt(0) > 0x7f)) return name;
-  try {
-    const bytes = Buffer.from(name, 'latin1');
-    const utf8 = bytes.toString('utf8');
-    if (!utf8.includes('�')) return utf8;
-  } catch {
-    // não era UTF-8 válido — devolve o original
-  }
-  return name;
-}
-
 function isInactiveAthenasUser(row: Record<string, unknown>, inactiveColumn: string) {
   if (!inactiveColumn) return false;
   const value = String(row[inactiveColumn] ?? '').trim().toUpperCase();
   return ['1', 'S', 'SIM', 'T', 'TRUE', 'Y'].includes(value);
-}
-
-function readAthenasName(value: unknown) {
-  return Buffer.isBuffer(value)
-    ? decodeAthenasBuffer(value).trim() || undefined
-    : fixAthenasName(String(value ?? '')).trim() || undefined;
 }
