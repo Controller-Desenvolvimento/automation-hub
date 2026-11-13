@@ -16,6 +16,12 @@ configuração, sem dados de infraestrutura. O desenho detalhado de cada funcion
 - **Nome bom não é mais sobrescrito por um quebrado.** No login, se o nome que chega do Athenas tem "�" e o salvo não tem,
   mantém o salvo; se o salvo estava quebrado e chega um bom, corrige sozinho. O log registra o caso (só os bytes fora do ASCII).
 
+- **Acesso direto ao painel (`/d/<painel>/`) agora segue a mesma regra do resto do Hub.** O guarda dessa rota só olhava
+  departamentos: ignorava a lista de pessoas e o "só gestor" e, com a lista de departamentos vazia (painel restrito a
+  pessoas), deixava entrar qualquer usuário logado. Agora usa `canAccessDashboard` (admin/Inovação, lista de pessoas,
+  "só gestor" e departamentos), como a lista de painéis, o chat e os downloads. Quem abria um painel pelo endereço
+  direto sem ter acesso pela regra do Hub passa a receber "Acesso negado".
+
 Sem mudança de banco. Quem já estava com o nome quebrado se corrige no próximo login (ou por `UPDATE` pontual).
 Testes: `test/athenas-name-header.test.ts`.
 
