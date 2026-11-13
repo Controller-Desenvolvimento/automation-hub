@@ -423,13 +423,173 @@ test('proxy: navegador que fecha antes do fim → estado volta ao que era e a ma
   } finally { await h.close(); await panel.close(); }
 });
 
-test('proxy: se já há atualização em curso, o POST passa sem criar uma segunda marca', async () => {
+// POST completo (status + corpo), para conferir a mensagem da recusa
+function postFull(port: number, path: string) {
+  return new Promise<{ status: number; body: string; type: string }>((resolve, reject) => {
+    const r = http.request({ host: '127.0.0.1', port, path, method: 'POST', headers: { 'content-length': '0' } }, (res) => {
+      let body = '';
+      res.setEncoding('utf8');
+      res.on('data', (c) => { body += c; });
+      res.on('end', () => resolve({ status: res.statusCode ?? 0, body, type: String(res.headers['content-type'] ?? '') }));
+    });
+    r.on('error', reject);
+    r.end();
+  });
+}
+const postsRecebidos = (panel: FakePanel) => panel.hits.filter((x) => x.startsWith('POST')).length;
+
+test('proxy: se já há atualização em curso (agendador, botão do Hub), o "Atualizar" de dentro é recusado com 409 e NÃO chega ao painel', async () => {
   const panel = await startPanel();
-  panel.delayMs = 200;
   const h = await proxyHarness(panel);
   try {
-    h.svc.updating.set('d1', new Date()); // por exemplo, o agendador já está atualizando
-    assert.equal((await h.post('/d/meu-painel/api/atualizar')).status, 200);
-    assert.equal(h.svc.isUpdating('d1'), true, 'a marca do outro continua sendo dele');
+    const desde = new Date('2026-11-13T17:32:00Z');
+    h.svc.updating.set('d1', desde); // por exemplo, o agendador já está atualizando
+    const r = await postFull(h.port, '/d/meu-painel/api/atualizar');
+    assert.equal(r.status, 409);
+    assert.match(r.type, /application\/json/);
+    const corpo = JSON.parse(r.body);
+    assert.equal(corpo.statusCode, 409);
+    assert.match(corpo.message, /já está sendo atualizado \(desde 14:32\)/);
+    assert.equal(corpo.detail, corpo.message, 'telas que leem "detail" (FastAPI) também acham o texto');
+    assert.equal(postsRecebidos(panel), 0, 'o painel não recebeu nada: nada de segunda carga');
+    assert.equal(h.svc.updatingSince('d1')?.getTime(), desde.getTime(), 'a marca do outro continua sendo dele');
+  } finally { await h.close(); await panel.close(); }
+});
+
+test('proxy: dois cliques de dentro: o 1º atualiza, o 2º é recusado (1 carga só); depois que termina, um novo clique passa', async () => {
+  const panel = await startPanel();
+  panel.delayMs = 300;
+  const h = await proxyHarness(panel);
+  try {
+    const primeiro = postFull(h.port, '/d/meu-painel/api/atualizar');
+    await sleep(80);
+    const segundo = await postFull(h.port, '/d/meu-painel/api/atualizar');
+    assert.equal(segundo.status, 409);
+    assert.equal(postsRecebidos(panel), 1);
+    assert.equal((await primeiro).status, 200);
+    await sleep(80);
+    assert.equal(h.svc.isUpdating('d1'), false);
+    assert.equal((await postFull(h.port, '/d/meu-painel/api/atualizar')).status, 200, 'terminou: liberado');
+    assert.equal(postsRecebidos(panel), 2);
+  } finally { await h.close(); await panel.close(); }
+});
+
+test('proxy: com a atualização em curso, só o "Atualizar" é recusado; chat, outras rotas e a leitura do status seguem', async () => {
+  const panel = await startPanel();
+  const h = await proxyHarness(panel);
+  try {
+    h.svc.updating.set('d1', new Date());
+    assert.equal((await postFull(h.port, '/d/meu-painel/api/chat')).status, 200);
+    assert.equal((await postFull(h.port, '/d/meu-painel/api/atualizar-outra-coisa')).status, 200);
+    assert.equal((await postFull(h.port, '/d/meu-painel/api/atualizar/banco')).status, 200, 'por fonte não é o updatePath configurado');
+    // GET no updatePath (ex.: status) não é recusado
+    const get = await new Promise<number>((resolve, reject) => {
+      http.get({ host: '127.0.0.1', port: h.port, path: '/d/meu-painel/api/atualizar' }, (res) => { res.resume(); res.on('end', () => resolve(res.statusCode ?? 0)); }).on('error', reject);
+    });
+    assert.notEqual(get, 409);
+  } finally { await h.close(); await panel.close(); }
+});
+
+test('proxy: a recusa vale também com barra no fim, com query string, e sem o prefixo /d/<slug> (como o proxy é montado)', async () => {
+  const panel = await startPanel();
+  const h = await proxyHarness(panel);
+  try {
+    h.svc.updating.set('d1', new Date());
+    assert.equal((await postFull(h.port, '/d/meu-painel/api/atualizar/')).status, 409);
+    assert.equal((await postFull(h.port, '/d/meu-painel/api/atualizar?x=1')).status, 409);
+    assert.equal((await postFull(h.port, '/api/atualizar')).status, 409);
+    // outro painel com prefixo parecido não é confundido
+    assert.equal((await postFull(h.port, '/d/meu-painel-2/api/atualizar')).status, 200);
+    assert.equal(postsRecebidos(panel), 1);
+  } finally { await h.close(); await panel.close(); }
+});
+
+test('proxy: painel sem updatePath configurado nunca é recusado (não há como reconhecer o "Atualizar")', async () => {
+  const panel = await startPanel();
+  const h = await proxyHarness(panel);
+  try {
+    h.svc.updatePaths.set('d1', null);
+    h.svc.updating.set('d1', new Date());
+    assert.equal((await postFull(h.port, '/d/meu-painel/api/atualizar')).status, 200);
+  } finally { await h.close(); await panel.close(); }
+});
+
+test('proxy: navegador que fecha no meio do 1º "Atualizar" libera a marca e o próximo clique passa', async () => {
+  const panel = await startPanel();
+  panel.delayMs = 400;
+  const h = await proxyHarness(panel);
+  try {
+    await new Promise<void>((resolve) => {
+      const r = http.request({ host: '127.0.0.1', port: h.port, path: '/d/meu-painel/api/atualizar', method: 'POST', headers: { 'content-length': '0' } });
+      r.on('error', () => resolve());
+      r.end();
+      setTimeout(() => { r.destroy(); resolve(); }, 120);
+    });
+    await sleep(100);
+    assert.equal(h.svc.isUpdating('d1'), false, 'marca solta');
+    assert.equal((await postFull(h.port, '/d/meu-painel/api/atualizar')).status, 200);
+  } finally { await h.close(); await panel.close(); }
+});
+
+const getJson = (port: number, path: string) =>
+  new Promise<{ status: number; json: any; type: string; cache: string }>((resolve, reject) => {
+    http.get({ host: '127.0.0.1', port, path }, (res) => {
+      let body = '';
+      res.setEncoding('utf8');
+      res.on('data', (c) => { body += c; });
+      res.on('end', () => {
+        let json: any = null; try { json = JSON.parse(body); } catch { /* não é JSON */ }
+        resolve({ status: res.statusCode ?? 0, json, type: String(res.headers['content-type'] ?? ''), cache: String(res.headers['cache-control'] ?? '') });
+      });
+    }).on('error', reject);
+  });
+
+test('proxy: GET /__hub/atualizacao responde pelo Hub (não chega ao painel): "não está atualizando" e depois "desde quando"', async () => {
+  const panel = await startPanel();
+  const h = await proxyHarness(panel);
+  try {
+    const livre = await getJson(h.port, '/d/meu-painel/__hub/atualizacao');
+    assert.equal(livre.status, 200);
+    assert.match(livre.type, /application\/json/);
+    assert.match(livre.cache, /no-store/);
+    assert.deepEqual(livre.json, { atualizando: false, desde: null });
+    const desde = new Date('2026-11-13T17:32:00Z');
+    h.svc.updating.set('d1', desde);
+    const ocupado = await getJson(h.port, '/d/meu-painel/__hub/atualizacao?x=1');
+    assert.deepEqual(ocupado.json, { atualizando: true, desde: desde.toISOString() });
+    assert.equal(panel.hits.length, 0, 'nenhum pedido chegou ao painel');
+    h.svc.updating.delete('d1');
+    assert.equal((await getJson(h.port, '/d/meu-painel/__hub/atualizacao')).json.atualizando, false, 'terminou: libera');
+  } finally { await h.close(); await panel.close(); }
+});
+
+test('proxy: a consulta de estado só vale em GET na rota exata; outras rotas e métodos seguem para o painel', async () => {
+  const panel = await startPanel();
+  const h = await proxyHarness(panel);
+  try {
+    assert.equal((await postFull(h.port, '/d/meu-painel/__hub/atualizacao')).status, 200); // POST segue ao painel (200 "ok")
+    assert.ok(panel.hits.includes('POST /__hub/atualizacao'));
+    await getJson(h.port, '/d/meu-painel/__hub/outra-coisa');
+    assert.ok(panel.hits.includes('GET /__hub/outra-coisa'));
+  } finally { await h.close(); await panel.close(); }
+});
+
+test('proxy: a recusa 409 também diz que está atualizando e desde quando (telas novas usam isso)', async () => {
+  const panel = await startPanel();
+  const h = await proxyHarness(panel);
+  try {
+    const desde = new Date('2026-11-13T17:32:00Z');
+    h.svc.updating.set('d1', desde);
+    const corpo = JSON.parse((await postFull(h.port, '/d/meu-painel/api/atualizar')).body);
+    assert.equal(corpo.atualizando, true);
+    assert.equal(corpo.desde, desde.toISOString());
+  } finally { await h.close(); await panel.close(); }
+});
+
+test('proxy: o websocket (upgrade) continua exposto no proxy', async () => {
+  const panel = await startPanel();
+  const h = await proxyHarness(panel);
+  try {
+    assert.equal(typeof h.svc.getProxy('d1')?.upgrade, 'function');
   } finally { await h.close(); await panel.close(); }
 });

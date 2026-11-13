@@ -61,6 +61,18 @@ Testes: `test/athenas-name-header.test.ts`.
 - `POST /dashboards/:id/update` passou a conferir o acesso ao painel (antes só exigia login; a tela escondia o botão).
 - `GET /dashboards` traz `updatingSince` (desde quando está atualizando; `null` se não está).
 
+### Painéis: "Atualizar" de dentro do painel não dispara uma segunda carga
+- Se o painel **já está sendo atualizado** (outra pessoa, agendamento, botão do Hub ou o próprio usuário depois de um F5), o
+  "Atualizar" de dentro do painel passa a ser **recusado pelo Hub com 409** e não chega ao painel. Antes, dois cliques viravam
+  duas cargas completas (em paralelo nos painéis sem trava de leitura, o que dobrava RAM e consultas; uma atrás da outra nos demais).
+- Nova consulta atendida pelo próprio Hub dentro do endereço de cada painel: `GET /d/<slug>/__hub/atualizacao` →
+  `{ "atualizando": true|false, "desde": "<data ISO>"|null }` (passa pelo mesmo guarda de sessão e acesso do `/d`). A resposta 409
+  também traz `atualizando` e `desde`. Telas de painel podem usar isso para mostrar "Atualizando…" (inclusive depois de um F5) e
+  saber com certeza quando terminou.
+- Só o "Atualizar tudo" (o `updatePath` do painel) é recusado; atualizar uma fonte só (`.../atualizar/<fonte>`) segue como antes.
+- **Telas dos painéis (fora deste repositório):** para a recusa aparecer como "Atualizando…" até o fim, a tela do painel precisa
+  tratar o 409 e consultar a rota acima. Telas que não tratam continuam funcionando como antes, só sem esse efeito.
+
 ## 2026-11-12 — Alertas de agendamentos e painéis, verificação por tempo (T0/T1/T2), teto de tempo e dependência
 
 PR #1 (`8748a95`), PR #2 (`2781272`). Marco de restauração no GitHub: tag `alertas-agendamentos-2026-11-12`.
