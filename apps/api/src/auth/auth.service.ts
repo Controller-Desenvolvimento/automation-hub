@@ -2,6 +2,7 @@ import {
   BadRequestException,
   ForbiddenException,
   Injectable,
+  Logger,
   UnauthorizedException,
 } from '@nestjs/common';
 import { UserRole } from '@prisma/client';
@@ -11,8 +12,10 @@ import { ExecutionIdentitiesService } from '../execution-identities/execution-id
 import { PrismaService } from '../prisma/prisma.service';
 import { effectiveRole, isAdmin, normalizeDepartments } from '../shared/access';
 import {
+  chooseSyncedName,
   departmentsForAthenasLogin,
   formatAthenasPersonName,
+  hasBrokenNameChars,
 } from '../shared/athenas-identity';
 import { hashPassword, hashToken } from '../shared/crypto';
 import { isValidMascotSkin } from '../shared/mascot-skins';
@@ -23,6 +26,7 @@ const SSO_TTL_MS = 30_000;
 
 @Injectable()
 export class AuthService {
+  private readonly logger = new Logger(AuthService.name);
   private readonly ssoTokens = new Map<string, { userId: string; expiresAt: number }>();
 
   constructor(
@@ -132,7 +136,13 @@ export class AuthService {
       } else {
         // Sincroniza nome e departamento a cada login (Athenas é a fonte de verdade)
         const updates: Record<string, unknown> = {};
-        if (name && user.name !== name) updates.name = name;
+        const syncedName = chooseSyncedName(user.name, name);
+        if (hasBrokenNameChars(name) && syncedName !== name) {
+          this.logger.warn(
+            `Athenas devolveu o nome de ${athenasLogin} com caractere inválido (U+FFFD); mantido o nome já salvo.`,
+          );
+        }
+        if (syncedName && user.name !== syncedName) updates.name = syncedName;
         if (departments.length > 0 && JSON.stringify(user.departments) !== JSON.stringify(departments)) {
           updates.departments = departments;
         }

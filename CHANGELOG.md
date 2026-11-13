@@ -3,6 +3,22 @@
 Mudanças do Automation Hub por data. Este arquivo é **público**: descreve o que mudou no produto, no banco e na
 configuração, sem dados de infraestrutura. O desenho detalhado de cada funcionalidade está no `CLAUDE.md`.
 
+## 2026-11-13 — Nomes com acento vindos do Athenas e acesso aos painéis
+
+### Corrigido
+- **Usuário sem acesso a nenhum painel (504) por causa do nome.** O proxy dos painéis (`/d/<slug>/`) envia o nome do
+  usuário num cabeçalho HTTP (`X-Hub-User-Name`); o Node recusa o caractere "�" (`ERR_INVALID_CHAR`) e a requisição inteira
+  falhava, só para quem tinha o nome quebrado. Agora nome e e-mail passam por `headerSafe` (caractere inválido vira `?`).
+- **Nomes com acento ficavam com "�" (ex.: "Ara�jo").** Causa: a coluna `NOME` do Athenas (charset NONE) guarda bytes
+  Windows-1252 de 1 byte e o driver os lia como UTF-8, perdendo a letra. A consulta agora pede os bytes crus
+  (`CAST(NOME AS VARCHAR(255) CHARACTER SET OCTETS)`) e o Hub decodifica (UTF-8 estrito; senão Windows-1252). O cadastro do
+  Athenas não é alterado: o Hub só lê.
+- **Nome bom não é mais sobrescrito por um quebrado.** No login, se o nome que chega do Athenas tem "�" e o salvo não tem,
+  mantém o salvo; se o salvo estava quebrado e chega um bom, corrige sozinho. O log registra o caso (só os bytes fora do ASCII).
+
+Sem mudança de banco. Quem já estava com o nome quebrado se corrige no próximo login (ou por `UPDATE` pontual).
+Testes: `test/athenas-name-header.test.ts`.
+
 ## 2026-11-12 — Alertas de agendamentos e painéis, verificação por tempo (T0/T1/T2), teto de tempo e dependência
 
 PR #1 (`8748a95`), PR #2 (`2781272`). Marco de restauração no GitHub: tag `alertas-agendamentos-2026-11-12`.
