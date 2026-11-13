@@ -129,6 +129,7 @@ model Site {
   faviconStoragePath  String?
   faviconMimeType     String?
   allowedDepartments  String[]     @default([])
+  allowedUserIds      String[]     @default([])
   minRole             UserRole     @default(employee)
   powerbiGroupId          String?
   powerbiDatasetId        String?
@@ -187,6 +188,7 @@ model Robot {
   isExternal           Boolean      @default(false)
   apiKeyHash           String?      @unique
   allowedDepartments   String[]     @default([])
+  allowedUserIds       String[]     @default([])
   schema               Json?
   documentationUrl     String?
   documentationLabel   String?

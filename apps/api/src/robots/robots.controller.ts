@@ -147,6 +147,8 @@ export class RobotsController {
           ? body.workingDirectory
           : undefined,
       allowedDepartments: body.allowedDepartments,
+      // undefined = não veio no corpo (tela antiga em cache): a lista de pessoas existente é preservada.
+      allowedUserIds: Array.isArray(body.allowedUserIds) ? body.allowedUserIds : undefined,
       schema:
         body.schema && typeof body.schema === 'object'
           ? (body.schema as Record<string, unknown>)

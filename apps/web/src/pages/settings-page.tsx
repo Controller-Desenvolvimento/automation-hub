@@ -1,6 +1,7 @@
 import { Bot, Building2, Clock, ClipboardCopy, Code2, Eye, EyeOff, FolderOpen, Globe, LayoutGrid, Pencil, Play, Plus, RefreshCw, RotateCw, Search, Square, Trash2, Users, X } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useSearchParams } from 'react-router-dom';
+import { AudiencePicker } from '../components/audience-picker';
 import { Field } from '../components/field';
 import { PageHeader } from '../components/page-header';
 import { SiteFavicon } from '../components/site-favicon';
@@ -33,6 +34,7 @@ import type {
   UnlinkedExternalIdentity,
   UserRole,
 } from '../lib/types';
+import { audienceBadge } from '../lib/audience';
 import { departmentLabel, formatSecondsToHuman, siteCategoryLabel, siteStatusLabel, siteStatusVariant, timeAgo, userFileName } from '../lib/utils';
 
 type Draft = {
@@ -56,6 +58,7 @@ type Draft = {
   workingDirectory: string;
   scriptFileName: string;
   allowedDepartments: Department[];
+  allowedUserIds: string[];
   documentationUrl: string;
   documentationLabel: string;
   supportLabel: string;
@@ -75,7 +78,6 @@ type DashboardDraft = {
   allowedDepartments: Department[];
   minRole: UserRole;
   allowedUserIds: string[];
-  restrictToUsers: boolean;
   mainFile: string;
   serverCommand: string;
   serverWorkingDirectory: string;
@@ -97,6 +99,7 @@ type SiteDraft = {
   category: SiteCategory;
   maintenanceOverride: boolean;
   allowedDepartments: Department[];
+  allowedUserIds: string[];
   minRole: 'employee' | 'manager';
   powerbiGroupId: string;
   powerbiDatasetId: string;
@@ -741,6 +744,7 @@ export function SettingsPage() {
             notify,
             setSelectedRobotId,
             departments,
+            users,
             exampleFile,
             setExampleFile,
             exampleInputName,
@@ -900,6 +904,7 @@ export function SettingsPage() {
             loadSites,
             setSelectedSiteId,
             notify,
+            users,
           })}
           </div>
         </div>
@@ -1011,7 +1016,7 @@ export function SettingsPage() {
                                 isActive: dashboardDraft.isActive,
                                 allowedDepartments: dashboardDraft.allowedDepartments,
                                 minRole: dashboardDraft.minRole,
-                                allowedUserIds: dashboardDraft.restrictToUsers ? dashboardDraft.allowedUserIds : [],
+                                allowedUserIds: dashboardDraft.allowedUserIds,
                                 mainFile: dashboardDraft.mainFile,
                                 serverCommand: dashboardDraft.serverCommand || null,
                                 serverWorkingDirectory: dashboardDraft.serverWorkingDirectory || null,
@@ -1036,7 +1041,7 @@ export function SettingsPage() {
                                 isActive: dashboardDraft.isActive,
                                 allowedDepartments: dashboardDraft.allowedDepartments,
                                 minRole: dashboardDraft.minRole,
-                                allowedUserIds: dashboardDraft.restrictToUsers ? dashboardDraft.allowedUserIds : [],
+                                allowedUserIds: dashboardDraft.allowedUserIds,
                                 mainFile: dashboardDraft.mainFile,
                                 serverCommand: dashboardDraft.serverCommand || null,
                                 serverWorkingDirectory: dashboardDraft.serverWorkingDirectory || null,
@@ -1157,73 +1162,52 @@ export function SettingsPage() {
                       </div>
                     )}
                     <div className="md:col-span-2 grid gap-4">
-                      <label className="flex items-center gap-2 text-sm">
-                        <input
-                          type="checkbox"
-                          checked={dashboardDraft.restrictToUsers}
-                          onChange={(e) =>
+                      <div>
+                        <AudiencePicker
+                          label="Quem pode ver este painel"
+                          hint="Marque departamentos, pessoas ou os dois: quem estiver em qualquer um terá acesso. Nada marcado = todos."
+                          users={users}
+                          selectedUsers={dashboardDraft.allowedUserIds}
+                          onToggleUser={(userId) =>
                             setDashboardDraft((prev) => ({
                               ...prev,
-                              restrictToUsers: e.target.checked,
-                              allowedUserIds: e.target.checked ? prev.allowedUserIds : [],
+                              allowedUserIds: prev.allowedUserIds.includes(userId)
+                                ? prev.allowedUserIds.filter((id) => id !== userId)
+                                : [...prev.allowedUserIds, userId],
+                            }))
+                          }
+                          selectedDepartments={dashboardDraft.allowedDepartments}
+                          onToggleDepartment={(dept) =>
+                            setDashboardDraft((prev) => ({
+                              ...prev,
+                              allowedDepartments: prev.allowedDepartments.includes(dept as Department)
+                                ? prev.allowedDepartments.filter((d) => d !== dept)
+                                : [...prev.allowedDepartments, dept as Department],
                             }))
                           }
                         />
-                        Restringir a usuários específicos (ignora hierarquia e departamentos abaixo)
-                      </label>
-
-                      {dashboardDraft.restrictToUsers ? (
-                        <Field
-                          label="Usuários com acesso"
-                          hint={dashboardDraft.allowedUserIds.length === 0 ? 'Nenhum usuário selecionado — ninguém vai conseguir ver este painel.' : 'Somente essas pessoas verão este painel.'}
-                        >
-                          <UserPicker
-                            users={users}
-                            selected={dashboardDraft.allowedUserIds}
-                            onToggle={(userId) =>
-                              setDashboardDraft((prev) => ({
-                                ...prev,
-                                allowedUserIds: prev.allowedUserIds.includes(userId)
-                                  ? prev.allowedUserIds.filter((id) => id !== userId)
-                                  : [...prev.allowedUserIds, userId],
-                              }))
-                            }
-                          />
-                        </Field>
-                      ) : (
-                        <>
-                          <Field label="Departamentos com acesso" hint="Vazio = todos podem acessar.">
-                            <DepartmentPicker
-                              selected={dashboardDraft.allowedDepartments}
-                              onToggle={(dept) =>
-                                setDashboardDraft((prev) => ({
-                                  ...prev,
-                                  allowedDepartments: prev.allowedDepartments.includes(dept)
-                                    ? prev.allowedDepartments.filter((d) => d !== dept)
-                                    : [...prev.allowedDepartments, dept],
-                                }))
-                              }
-                            />
-                          </Field>
-                          <div className="flex gap-2">
-                            {(['employee', 'manager'] as const).map((role) => (
-                              <button
-                                key={role}
-                                type="button"
-                                onClick={() => setDashboardDraft((prev) => ({ ...prev, minRole: role }))}
-                                className={[
-                                  'rounded-xl border px-4 py-2 text-sm font-medium transition',
-                                  dashboardDraft.minRole === role
-                                    ? 'border-sky-400 bg-sky-50 text-sky-800 dark:border-sky-500 dark:bg-sky-900/30 dark:text-sky-300'
-                                    : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-50 dark:border-[#2b2b31] dark:bg-[#111113] dark:text-zinc-200 dark:hover:bg-[#18181b]',
-                                ].join(' ')}
-                              >
-                                {role === 'employee' ? 'Funcionários e gestores' : 'Somente gestores'}
-                              </button>
-                            ))}
-                          </div>
-                        </>
-                      )}
+                      </div>
+                      <div className="grid gap-2">
+                        <span className="text-sm font-medium text-slate-700 dark:text-zinc-200">Quem entra pelos departamentos</span>
+                        <div className="flex gap-2">
+                          {(['employee', 'manager'] as const).map((role) => (
+                            <button
+                              key={role}
+                              type="button"
+                              onClick={() => setDashboardDraft((prev) => ({ ...prev, minRole: role }))}
+                              className={[
+                                'rounded-xl border px-4 py-2 text-sm font-medium transition',
+                                dashboardDraft.minRole === role
+                                  ? 'border-sky-400 bg-sky-50 text-sky-800 dark:border-sky-500 dark:bg-sky-900/30 dark:text-sky-300'
+                                  : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-50 dark:border-[#2b2b31] dark:bg-[#111113] dark:text-zinc-200 dark:hover:bg-[#18181b]',
+                              ].join(' ')}
+                            >
+                              {role === 'employee' ? 'Funcionários e gestores' : 'Somente gestores'}
+                            </button>
+                          ))}
+                        </div>
+                        <span className="text-xs text-slate-500 dark:text-zinc-400">Vale para os departamentos marcados. Pessoas marcadas em “Usuários específicos” passam mesmo que o painel seja só de gestores.</span>
+                      </div>
                     </div>
                   </div>
 
@@ -1995,45 +1979,6 @@ function PasswordInput({
   );
 }
 
-function UserPicker({
-  users,
-  selected,
-  onToggle,
-}: {
-  users: ManagedUser[];
-  selected: string[];
-  onToggle: (userId: string) => void;
-}) {
-  return (
-    <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-3">
-      {users.map((managedUser) => {
-        const active = selected.includes(managedUser.id);
-
-        return (
-          <button
-            key={managedUser.id}
-            type="button"
-            aria-pressed={active}
-            className={[
-              'rounded-2xl border px-4 py-3 text-left text-sm transition',
-              active
-                ? 'border-sky-400 bg-sky-50 text-sky-800 dark:border-sky-500 dark:bg-sky-900/30 dark:text-sky-300'
-                : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-50 dark:border-[#2b2b31] dark:bg-[#111113] dark:text-zinc-200 dark:hover:bg-[#18181b]',
-            ].join(' ')}
-            onClick={() => onToggle(managedUser.id)}
-          >
-            <div className="font-medium">{managedUser.name}</div>
-            <div className="text-xs opacity-70">{managedUser.email}</div>
-          </button>
-        );
-      })}
-      {users.length === 0 && (
-        <p className="col-span-full text-sm text-slate-500 dark:text-zinc-400">Nenhum usuário cadastrado.</p>
-      )}
-    </div>
-  );
-}
-
 function DepartmentPicker({
   selected,
   onToggle,
@@ -2122,6 +2067,7 @@ function renderRobotsTab({
   notify,
   setSelectedRobotId,
   departments,
+  users,
   exampleFile,
   setExampleFile,
   exampleInputName,
@@ -2151,6 +2097,7 @@ function renderRobotsTab({
   notify: (message: string) => void;
   setSelectedRobotId: (value: string | null) => void;
   departments: DepartmentConfig[];
+  users: ManagedUser[];
   exampleFile: File | null;
   setExampleFile: React.Dispatch<React.SetStateAction<File | null>>;
   exampleInputName: string;
@@ -2254,6 +2201,7 @@ function renderRobotsTab({
           command: draft.command,
           workingDirectory: draft.workingDirectory,
           allowedDepartments: draft.allowedDepartments,
+          allowedUserIds: draft.allowedUserIds,
           documentationUrl: draft.documentationUrl,
           documentationLabel: draft.documentationLabel,
           supportLabel: draft.supportLabel,
@@ -2300,7 +2248,7 @@ function renderRobotsTab({
           Pasta: {draft.workingDirectory || 'Não definida'}
         </Badge>
         <Badge className="border-slate-300 bg-slate-100 text-slate-700 dark:border-slate-500/35 dark:bg-slate-800 dark:text-zinc-200">
-          Acesso: {draft.allowedDepartments.length > 0 ? `${draft.allowedDepartments.length} dept.` : 'Todos'}
+          Acesso: {audienceBadge(draft.allowedDepartments.length, draft.allowedUserIds.length)}
         </Badge>
       </div>
 
@@ -2368,19 +2316,31 @@ function renderRobotsTab({
               <Field label="Grupos de conflito" hint="Tags separadas por vírgula para impedir robôs diferentes de rodarem juntos.">
                 <Input value={draft.conflictKeys} onChange={(e) => setDraft({ ...draft, conflictKeys: e.target.value })} placeholder="Ex: sefaz, conta-fiscal" />
               </Field>
-              <Field className="md:col-span-2" label="Departamentos com acesso" hint="Se nada for marcado, a automação ficará visível para toda a empresa.">
-                <DepartmentPicker
-                  selected={draft.allowedDepartments}
-                  onToggle={(department) =>
+              <div className="md:col-span-2">
+                <AudiencePicker
+                  label="Quem pode ver e executar"
+                  hint="Marque departamentos, pessoas ou os dois: quem estiver em qualquer um terá acesso. Nada marcado = toda a empresa."
+                  users={users}
+                  selectedUsers={draft.allowedUserIds}
+                  onToggleUser={(userId) =>
                     setDraft((current) => ({
                       ...current,
-                      allowedDepartments: current.allowedDepartments.includes(department)
+                      allowedUserIds: current.allowedUserIds.includes(userId)
+                        ? current.allowedUserIds.filter((item) => item !== userId)
+                        : [...current.allowedUserIds, userId],
+                    }))
+                  }
+                  selectedDepartments={draft.allowedDepartments}
+                  onToggleDepartment={(department) =>
+                    setDraft((current) => ({
+                      ...current,
+                      allowedDepartments: current.allowedDepartments.includes(department as Department)
                         ? current.allowedDepartments.filter((item) => item !== department)
-                        : [...current.allowedDepartments, department],
+                        : [...current.allowedDepartments, department as Department],
                     }))
                   }
                 />
-              </Field>
+              </div>
               <Field
                 className="md:col-span-2"
                 label="Tipo de automação"
@@ -2903,7 +2863,9 @@ function renderSitesTab({
   loadSites,
   setSelectedSiteId,
   notify,
+  users,
 }: {
+  users: ManagedUser[];
   draft: SiteDraft;
   selectedSite: Site | null;
   setDraft: React.Dispatch<React.SetStateAction<SiteDraft>>;
@@ -2936,6 +2898,7 @@ function renderSitesTab({
           category: draft.category,
           maintenanceOverride: draft.maintenanceOverride,
           allowedDepartments: draft.allowedDepartments,
+          allowedUserIds: draft.allowedUserIds,
           minRole: draft.minRole,
           powerbiGroupId: draft.category === 'bi' ? draft.powerbiGroupId : '',
           powerbiDatasetId: draft.category === 'bi' ? draft.powerbiDatasetId : '',
@@ -2946,7 +2909,11 @@ function renderSitesTab({
       });
       await loadSites();
       setSelectedSiteId(saved.id);
-      notify('Site salvo com sucesso.');
+      notify(
+        saved.linkedDashboardGrant
+          ? `Site salvo. Para usarem o chat do painel, também foram liberados no painel “${saved.linkedDashboardGrant.dashboardName}”: ${saved.linkedDashboardGrant.users.map((u) => u.name).join(', ')}.`
+          : 'Site salvo com sucesso.',
+      );
     } catch (error) {
       notify(error instanceof Error ? error.message : 'Não foi possível salvar o site.');
     } finally {
@@ -3173,16 +3140,28 @@ function renderSitesTab({
         <div className="grid gap-4">
           <div>
             <p className="text-sm font-medium text-slate-700 dark:text-zinc-200">Quem pode ver este site</p>
-            <p className="mt-0.5 text-xs text-slate-500 dark:text-zinc-400">Deixe todos desmarcados para liberar para todos os departamentos.</p>
+            <p className="mt-0.5 text-xs text-slate-500 dark:text-zinc-400">Marque departamentos, pessoas ou os dois: quem estiver em qualquer um terá acesso. Nada marcado = todos. Pessoas marcadas passam mesmo que o site seja só de gestores.</p>
           </div>
-          <DepartmentPicker
-            selected={draft.allowedDepartments}
-            onToggle={(dept) => {
-              const next = draft.allowedDepartments.includes(dept)
-                ? draft.allowedDepartments.filter((d) => d !== dept)
-                : [...draft.allowedDepartments, dept];
-              setDraft({ ...draft, allowedDepartments: next });
-            }}
+          <AudiencePicker
+            users={users}
+            selectedUsers={draft.allowedUserIds}
+            onToggleUser={(userId) =>
+              setDraft((current) => ({
+                ...current,
+                allowedUserIds: current.allowedUserIds.includes(userId)
+                  ? current.allowedUserIds.filter((id) => id !== userId)
+                  : [...current.allowedUserIds, userId],
+              }))
+            }
+            selectedDepartments={draft.allowedDepartments}
+            onToggleDepartment={(dept) =>
+              setDraft((current) => ({
+                ...current,
+                allowedDepartments: current.allowedDepartments.includes(dept as Department)
+                  ? current.allowedDepartments.filter((d) => d !== dept)
+                  : [...current.allowedDepartments, dept as Department],
+              }))
+            }
           />
           <div className="flex gap-2">
             {(['employee', 'manager'] as const).map((role) => (
@@ -4374,6 +4353,7 @@ function emptyDraft(): Draft {
     workingDirectory: '',
     scriptFileName: '',
     allowedDepartments: [],
+    allowedUserIds: [],
     documentationUrl: '',
     documentationLabel: 'Documentação',
     supportLabel: 'Suporte',
@@ -4392,6 +4372,7 @@ function emptySiteDraft(): SiteDraft {
     category: 'sistema',
     maintenanceOverride: false,
     allowedDepartments: [],
+    allowedUserIds: [],
     minRole: 'employee',
     powerbiGroupId: '',
     powerbiDatasetId: '',
@@ -4410,6 +4391,7 @@ function mapSiteToDraft(site: Site): SiteDraft {
     category: site.category ?? 'sistema',
     maintenanceOverride: Boolean(site.maintenanceOverride),
     allowedDepartments: site.allowedDepartments ?? [],
+    allowedUserIds: site.allowedUserIds ?? [],
     minRole: site.minRole ?? 'employee',
     powerbiGroupId: site.powerbiGroupId ?? '',
     powerbiDatasetId: site.powerbiDatasetId ?? '',
@@ -4441,6 +4423,7 @@ function mapRobotToDraft(robot: Robot): Draft {
     workingDirectory: robot.workingDirectory ?? '',
     scriptFileName: robot.scriptFileName ?? '',
     allowedDepartments: robot.allowedDepartments ?? [],
+    allowedUserIds: robot.allowedUserIds ?? [],
     documentationUrl: robot.documentationUrl ?? '',
     documentationLabel: robot.documentationLabel ?? 'Documentação',
     supportLabel: robot.supportLabel ?? 'Suporte',
@@ -4461,7 +4444,6 @@ function emptyDashboardDraft(): DashboardDraft {
     allowedDepartments: [],
     minRole: 'employee',
     allowedUserIds: [],
-    restrictToUsers: false,
     mainFile: 'index.html',
     serverCommand: '',
     serverWorkingDirectory: '',
@@ -4487,7 +4469,6 @@ function mapDashboardToDraft(d: Dashboard): DashboardDraft {
     allowedDepartments: d.allowedDepartments,
     minRole: d.minRole,
     allowedUserIds: d.allowedUserIds ?? [],
-    restrictToUsers: (d.allowedUserIds ?? []).length > 0,
     mainFile: d.mainFile,
     serverCommand: d.serverCommand ?? '',
     serverWorkingDirectory: d.serverWorkingDirectory ?? '',

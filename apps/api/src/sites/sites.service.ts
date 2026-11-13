@@ -3,7 +3,7 @@ import { Prisma, SiteCategory, SiteStatus, type User, UserRole } from '@prisma/c
 import { readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { PrismaService } from '../prisma/prisma.service';
-import { canAccessSite, normalizeDepartments } from '../shared/access';
+import { canAccessSite, isAdmin, normalizeDepartments, usersMissingDashboardAccess } from '../shared/access';
 import { insecureGet } from '../shared/insecure-http';
 import { ensureSiteDir, siteRoot } from '../shared/storage';
 import { SiteHealthCheckService } from './site-health-check.service';
@@ -17,6 +17,8 @@ export type SiteUpsertInput = {
   maintenanceOverride?: boolean;
   order?: number;
   allowedDepartments?: string[];
+  // undefined = não alterar (a lista de pessoas existente é preservada).
+  allowedUserIds?: string[];
   minRole?: UserRole;
   powerbiGroupId?: string | null;
   powerbiDatasetId?: string | null;
@@ -48,7 +50,13 @@ export class SitesService {
       orderBy: [{ order: 'asc' }, { name: 'asc' }],
     });
 
-    return sites.filter((site) => canAccessSite(user, site)).map(withHasFavicon);
+    return sites.filter((site) => canAccessSite(user, site)).map((site) => this.forViewer(site, user));
+  }
+
+  /** Quem não administra não precisa (nem deve) receber a lista de pessoas liberadas. */
+  forViewer<S extends { faviconStoragePath: string | null; allowedUserIds?: string[] }>(site: S, user: Pick<User, 'id' | 'role' | 'departments'>) {
+    const view = withHasFavicon(site);
+    return isAdmin(user) ? view : { ...view, allowedUserIds: [] as string[] };
   }
 
   async findOne(id: string) {
@@ -104,6 +112,10 @@ export class SitesService {
       ssoEnabled: input.ssoEnabled === true,
     };
 
+    if (input.allowedUserIds !== undefined) {
+      payload.allowedUserIds = normalizeDepartments(input.allowedUserIds);
+    }
+
     if (input.linkedDashboardId !== undefined) {
       if (input.linkedDashboardId !== null) {
         if (payload.category !== SiteCategory.bi) {
@@ -143,7 +155,36 @@ export class SitesService {
       void this.healthCheck.checkOne(site);
     }
 
-    return withHasFavicon(site);
+    const grant = await this.grantLinkedDashboardAccess(site);
+    return grant ? { ...withHasFavicon(site), linkedDashboardGrant: grant } : withHasFavicon(site);
+  }
+
+  /**
+   * Pessoas liberadas num BI precisam enxergar também o painel vinculado (o chat do João no BI usa o chat do
+   * painel). As que ainda não passam pela regra do painel entram na lista de pessoas dele; quem já passa (por
+   * departamento ou por já estar na lista) não muda, e painel aberto a todos não é tocado.
+   * Devolve quem foi acrescentado, para a tela avisar. Remover alguém do BI NÃO remove do painel.
+   */
+  private async grantLinkedDashboardAccess(
+    site: { category: SiteCategory; linkedDashboardId: string | null; allowedUserIds: string[] },
+  ): Promise<{ dashboardName: string; users: { id: string; name: string }[] } | null> {
+    if (site.category !== SiteCategory.bi || !site.linkedDashboardId || site.allowedUserIds.length === 0) return null;
+    const dashboard = await this.prisma.dashboard.findUnique({
+      where: { id: site.linkedDashboardId },
+      select: { id: true, name: true, allowedDepartments: true, allowedUserIds: true, minRole: true },
+    });
+    if (!dashboard) return null;
+    const people = await this.prisma.user.findMany({
+      where: { id: { in: site.allowedUserIds }, isActive: true },
+      select: { id: true, name: true, role: true, departments: true },
+    });
+    const missing = usersMissingDashboardAccess(people, dashboard);
+    if (missing.length === 0) return null;
+    await this.prisma.dashboard.update({
+      where: { id: dashboard.id },
+      data: { allowedUserIds: Array.from(new Set([...dashboard.allowedUserIds, ...missing.map((u) => u.id)])) },
+    });
+    return { dashboardName: dashboard.name, users: missing.map((u) => ({ id: u.id, name: u.name })) };
   }
 
   async recheckSite(id: string) {

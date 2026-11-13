@@ -9,9 +9,11 @@ import {
 } from '@prisma/client';
 
 type MinimalUser = Pick<User, 'id' | 'role' | 'departments'>;
-type MinimalRobot = Pick<Robot, 'allowedDepartments'>;
-type MinimalSite = Pick<Site, 'allowedDepartments' | 'minRole'>;
-type MinimalDashboard = Pick<Dashboard, 'allowedDepartments' | 'minRole' | 'allowedUserIds'>;
+// `allowedUserIds` é opcional nos tipos: consultas que escolhem campos e esquecem dele tratam como "sem pessoas".
+type WithUserIds = { allowedUserIds?: string[] | null };
+type MinimalRobot = Pick<Robot, 'allowedDepartments'> & WithUserIds;
+type MinimalSite = Pick<Site, 'allowedDepartments' | 'minRole'> & WithUserIds;
+type MinimalDashboard = Pick<Dashboard, 'allowedDepartments' | 'minRole'> & WithUserIds;
 type MinimalExecution = Pick<Execution, 'userId' | 'scheduledTaskId'> & {
   user?: Pick<User, 'departments'> | null;
 };
@@ -34,48 +36,61 @@ export function canManageRobots(user: MinimalUser) {
   return isAdmin(user);
 }
 
+/**
+ * Regra de público de BIs, painéis e automações: departamentos E pessoas, somados.
+ * - nada marcado: todos;
+ * - pessoas na lista passam sempre (e, nos BIs e painéis, também passam do "só gestor");
+ * - os departamentos marcados liberam o departamento inteiro;
+ * - só pessoas marcadas: só elas; só departamentos marcados: só eles.
+ */
+function matchesAudience(
+  user: MinimalUser,
+  audience: { allowedDepartments?: string[] | null; allowedUserIds?: string[] | null },
+): boolean {
+  const departments = audience.allowedDepartments ?? [];
+  const userIds = audience.allowedUserIds ?? [];
+  if (departments.length === 0 && userIds.length === 0) return true;
+  if (userIds.includes(user.id)) return true;
+  return departments.some((department) => user.departments.includes(department));
+}
+
 export function canAccessRobot(user: MinimalUser, robot: MinimalRobot) {
   if (isAdmin(user)) {
     return true;
   }
 
-  if (!robot.allowedDepartments || robot.allowedDepartments.length === 0) {
-    return true;
-  }
-
-  return robot.allowedDepartments.some((department) =>
-    user.departments.includes(department),
-  );
+  return matchesAudience(user, robot);
 }
 
 export function canAccessSite(user: MinimalUser, site: MinimalSite) {
   if (isAdmin(user)) return true;
 
+  // Quem foi liberado pelo nome passa mesmo que o BI seja "só gestores".
+  if ((site.allowedUserIds ?? []).includes(user.id)) return true;
+
   if (site.minRole === UserRole.manager && !isManager(user)) return false;
 
-  if (site.allowedDepartments.length === 0) return true;
-
-  return site.allowedDepartments.some((department) =>
-    user.departments.includes(department),
-  );
+  return matchesAudience(user, site);
 }
 
 export function canAccessDashboard(user: MinimalUser, dashboard: MinimalDashboard) {
   if (isAdmin(user)) return true;
 
-  // Lista de usuários específicos é um modo alternativo — quando preenchida,
-  // hierarquia/departamento deixam de valer para esse painel.
-  if (dashboard.allowedUserIds.length > 0) {
-    return dashboard.allowedUserIds.includes(user.id);
-  }
+  // Quem foi liberado pelo nome passa mesmo que o painel seja "só gestores".
+  if ((dashboard.allowedUserIds ?? []).includes(user.id)) return true;
 
   if (dashboard.minRole === UserRole.manager && !isManager(user)) return false;
 
-  if (dashboard.allowedDepartments.length === 0) return true;
+  return matchesAudience(user, dashboard);
+}
 
-  return dashboard.allowedDepartments.some((department) =>
-    user.departments.includes(department),
-  );
+/**
+ * Ao liberar pessoas num BI, elas precisam enxergar também o painel vinculado (senão o chat do João
+ * no BI cai no chat normal). Devolve as que ainda NÃO passam pela regra do painel; só essas entram na
+ * lista dele. Painel aberto a todos não precisa de ninguém.
+ */
+export function usersMissingDashboardAccess<U extends MinimalUser>(users: U[], dashboard: MinimalDashboard): U[] {
+  return users.filter((candidate) => !canAccessDashboard(candidate, dashboard));
 }
 
 export function canAccessExecution(user: MinimalUser, execution: MinimalExecution) {

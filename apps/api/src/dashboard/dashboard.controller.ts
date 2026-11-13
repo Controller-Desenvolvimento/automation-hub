@@ -40,6 +40,8 @@ export class DashboardController {
     const admin = isAdmin(user);
     return all.filter((d) => canAccessDashboard(user, d)).map(({ lastUpdateError, updateRetryAt, ...d }) => ({
       ...d,
+      // A lista de pessoas liberadas só interessa a quem administra.
+      ...(admin ? {} : { allowedUserIds: [] as string[] }),
       // O motivo técnico da falha e a repetição pendente só interessam a quem administra.
       ...(admin ? { lastUpdateError, updateRetryAt } : {}),
       streamlitRunning: (d.type === DashboardType.streamlit || d.type === DashboardType.server)

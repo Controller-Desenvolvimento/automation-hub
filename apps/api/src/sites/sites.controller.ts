@@ -3,7 +3,7 @@ import { AnyFilesInterceptor } from '@nestjs/platform-express';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { SiteCategory, UserRole } from '@prisma/client';
 import type { Request, Response } from 'express';
-import { normalizeDepartments } from '../shared/access';
+import { canAccessSite, normalizeDepartments } from '../shared/access';
 import { AuthService } from '../auth/auth.service';
 import { uploadLimits } from '../shared/upload';
 import { PowerBIService } from './powerbi.service';
@@ -34,13 +34,14 @@ export class SitesController {
 
   @Get(':id')
   async findOne(@Param('id') id: string, @Req() request: Request) {
-    await this.authService.requireUser(request);
+    const user = await this.authService.requireUser(request);
     const site = await this.sitesService.findOne(id);
-    if (!site) {
+    // Antes qualquer usuário logado lia qualquer site (inclusive o endereço de BIs restritos).
+    if (!site || !canAccessSite(user, site)) {
       throw new NotFoundException('Site não encontrado.');
     }
 
-    return site;
+    return this.sitesService.forViewer(site, user);
   }
 
   @Post()
@@ -62,6 +63,8 @@ export class SitesController {
             ? Number(body.order)
             : undefined,
       allowedDepartments: normalizeDepartments(body.allowedDepartments),
+      // undefined = não veio no corpo (tela antiga em cache): a lista de pessoas existente é preservada.
+      allowedUserIds: Array.isArray(body.allowedUserIds) ? normalizeDepartments(body.allowedUserIds) : undefined,
       minRole: body.minRole === 'manager' ? UserRole.manager : UserRole.employee,
       powerbiGroupId: typeof body.powerbiGroupId === 'string' ? body.powerbiGroupId : null,
       powerbiDatasetId: typeof body.powerbiDatasetId === 'string' ? body.powerbiDatasetId : null,

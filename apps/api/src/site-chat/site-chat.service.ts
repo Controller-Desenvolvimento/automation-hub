@@ -537,7 +537,7 @@ export class SiteChatService {
     const [robots, executions] = await Promise.all([
       this.prisma.robot.findMany({
         where: { isActive: true },
-        select: { name: true, summary: true, description: true, category: true, schema: true, allowedDepartments: true },
+        select: { name: true, summary: true, description: true, category: true, schema: true, allowedDepartments: true, allowedUserIds: true },
         orderBy: { name: 'asc' },
       }),
       this.prisma.execution.findMany({
@@ -558,7 +558,7 @@ export class SiteChatService {
 
     let prompt = SYSTEM_PROMPT_BASE;
 
-    const visibleRobots = robots.filter((r) => canAccessRobot(user, { allowedDepartments: r.allowedDepartments }));
+    const visibleRobots = robots.filter((r) => canAccessRobot(user, { allowedDepartments: r.allowedDepartments, allowedUserIds: r.allowedUserIds }));
     if (visibleRobots.length > 0) {
       const catalog = visibleRobots
         .map((r) => {

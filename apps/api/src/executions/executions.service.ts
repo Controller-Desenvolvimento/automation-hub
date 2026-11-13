@@ -402,7 +402,7 @@ export class ExecutionsService {
       },
       orderBy: { finishedAt: 'desc' },
       include: {
-        robot: { select: { id: true, name: true, slug: true, category: true, icon: true, allowedDepartments: true } },
+        robot: { select: { id: true, name: true, slug: true, category: true, icon: true, allowedDepartments: true, allowedUserIds: true } },
         files: { where: { kind: 'output' }, orderBy: { createdAt: 'asc' } },
         user: { select: { id: true, departments: true } },
       },

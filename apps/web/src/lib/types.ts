@@ -153,6 +153,7 @@ export type Robot = {
   hasApiKey?: boolean;
   scriptFileName?: string | null;
   allowedDepartments: Department[];
+  allowedUserIds?: string[];
   schema?: RobotSchema;
   documentationUrl?: string | null;
   documentationLabel?: string | null;
@@ -480,6 +481,9 @@ export type Site = {
   order: number;
   lastCheckedAt?: string | null;
   allowedDepartments: Department[];
+  allowedUserIds?: string[];
+  /** Só vem ao salvar um BI: pessoas acrescentadas ao painel vinculado para poderem usar o chat dele. */
+  linkedDashboardGrant?: { dashboardName: string; users: { id: string; name: string }[] };
   minRole: 'employee' | 'manager';
   powerbiGroupId?: string | null;
   powerbiDatasetId?: string | null;
