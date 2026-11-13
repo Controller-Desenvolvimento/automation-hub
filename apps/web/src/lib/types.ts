@@ -542,6 +542,8 @@ export type Dashboard = {
   updateDayOfMonth?: number | null;
   lastUpdateAt?: string | null;
   lastUpdateStatus?: string | null;
+  /** Desde quando o painel está sendo atualizado (por qualquer um); null/ausente = não está. */
+  updatingSince?: string | null;
   /** Motivo da última falha de atualização e repetição pendente. Só vêm para administradores. */
   lastUpdateError?: string | null;
   updateRetryAt?: string | null;

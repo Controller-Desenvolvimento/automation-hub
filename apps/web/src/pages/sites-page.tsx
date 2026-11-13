@@ -17,13 +17,15 @@ import { useChatScope } from '../contexts/chat-scope-context';
 import { removeBootCover } from '../lib/boot-cover';
 import { parsePanelPath } from '../lib/panel-path';
 import { useHub } from '../contexts/hub-context';
-import { api } from '../lib/api';
+import { ApiError, api } from '../lib/api';
 import type { Dashboard, ManagedUser, SharedCredential, Site, SiteCategory, SiteStatus } from '../lib/types';
 import { departmentLabel, siteCategoryLabel, siteStatusLabel, timeAgo } from '../lib/utils';
 
 const STATUS_PRIORITY: Record<SiteStatus, number> = { down: 0, maintenance: 1, online: 2 };
 const SITE_CATEGORIES: SiteCategory[] = ['sistema', 'bi'];
 const POLL_INTERVAL_MS = 15_000;
+// Enquanto algum painel está sendo atualizado, a lista confere o estado com mais frequência (botão travado quase na hora).
+const DASHBOARD_UPDATING_POLL_MS = 3_000;
 
 type Tab = SiteCategory | 'paineis' | 'credenciais';
 
@@ -83,7 +85,6 @@ export function SitesPage() {
   const location = useLocation();
   const [dashboardsLoaded, setDashboardsLoaded] = useState(false);
   const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const dashboardsPollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [viewerIframeUrl, setViewerIframeUrl] = useState<string | null>(null);
 
   // Site form state
@@ -161,21 +162,13 @@ export function SitesPage() {
   // pesadas passam de 10min) — sem isso o status/"Última atualização" só
   // refletia a realidade depois de um F5, mesmo quando a atualização (por
   // esta aba ou por outra pessoa/agendamento) já tinha terminado.
+  const anyDashboardUpdating = dashboards.some((d) => d.lastUpdateStatus === 'running' || Boolean(d.updatingSince));
   useEffect(() => {
-    if (activeTab === 'paineis' && !dashboardsPollTimerRef.current) {
-      dashboardsPollTimerRef.current = setInterval(() => void loadDashboards(), POLL_INTERVAL_MS);
-    }
-    if (activeTab !== 'paineis' && dashboardsPollTimerRef.current) {
-      clearInterval(dashboardsPollTimerRef.current);
-      dashboardsPollTimerRef.current = null;
-    }
-    return () => {
-      if (dashboardsPollTimerRef.current) {
-        clearInterval(dashboardsPollTimerRef.current);
-        dashboardsPollTimerRef.current = null;
-      }
-    };
-  }, [activeTab]);
+    if (activeTab !== 'paineis') return;
+    const timer = setInterval(() => void loadDashboards(), anyDashboardUpdating ? DASHBOARD_UPDATING_POLL_MS : POLL_INTERVAL_MS);
+    return () => clearInterval(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, anyDashboardUpdating]);
 
   async function load() {
     try {
@@ -1226,6 +1219,9 @@ export function SitesPage() {
                               {d.updatePath ? (
                                 <DashboardUpdateBtn
                                   id={d.id}
+                                  busy={d.lastUpdateStatus === 'running' || Boolean(d.updatingSince)}
+                                  busySince={d.updatingSince}
+                                  onConflict={() => void loadDashboards()}
                                   onDone={(status) => setDashboards((prev) => prev.map((x) => x.id === d.id ? { ...x, lastUpdateStatus: status, lastUpdateAt: new Date().toISOString() } : x))}
                                 />
                               ) : null}
@@ -1437,13 +1433,33 @@ function RefreshIconButton({
   );
 }
 
-function DashboardUpdateBtn({ id, onDone }: { id: string; onDone: (status: 'ok' | 'error') => void }) {
+function formatClock(iso?: string | null) {
+  if (!iso) return '';
+  const date = new Date(iso);
+  return Number.isNaN(date.getTime()) ? '' : date.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+}
+
+function DashboardUpdateBtn({
+  id,
+  busy,
+  busySince,
+  onDone,
+  onConflict,
+}: {
+  id: string;
+  /** O servidor diz que o painel já está sendo atualizado (outra pessoa, o agendador ou o "Atualizar" de dentro do painel). */
+  busy: boolean;
+  busySince?: string | null;
+  onDone: (status: 'ok' | 'error') => void;
+  onConflict: () => void;
+}) {
   const { notify } = useHub();
   const [updating, setUpdating] = useState(false);
   const [result, setResult] = useState<'ok' | 'error' | null>(null);
+  const othersUpdating = busy && !updating;
 
   async function handleClick() {
-    if (updating) return;
+    if (updating || othersUpdating) return;
     setUpdating(true);
     setResult(null);
     try {
@@ -1451,9 +1467,16 @@ function DashboardUpdateBtn({ id, onDone }: { id: string; onDone: (status: 'ok' 
       notify('Painel atualizado com sucesso.');
       setResult('ok');
       onDone('ok');
-    } catch {
-      setResult('error');
-      onDone('error');
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 409) {
+        // Alguém começou a atualizar no mesmo instante: não é falha do painel; mostra o aviso e confere o estado.
+        notify(error.message);
+        setResult(null);
+        onConflict();
+      } else {
+        setResult('error');
+        onDone('error');
+      }
     } finally {
       setUpdating(false);
       setTimeout(() => setResult(null), 3000);
@@ -1463,9 +1486,9 @@ function DashboardUpdateBtn({ id, onDone }: { id: string; onDone: (status: 'ok' 
   return (
     <RefreshIconButton
       onClick={() => void handleClick()}
-      pending={updating}
+      pending={updating || busy}
       result={result}
-      title="Atualizar dados do painel"
+      title={othersUpdating ? `Atualizando${busySince ? ` desde ${formatClock(busySince)}` : ''}…` : 'Atualizar dados do painel'}
     />
   );
 }

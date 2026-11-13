@@ -100,3 +100,11 @@ export function describeUpdateError(err: unknown, bodySnippet?: string): string 
   }
   return squash(String(err));
 }
+
+/** Aviso mostrado a quem tenta atualizar um painel que já está sendo atualizado (botão do Hub ou duas pessoas ao mesmo tempo). */
+export function updateInProgressMessage(since: Date | null): string {
+  const clock = since
+    ? since.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Sao_Paulo' })
+    : null;
+  return `Este painel já está sendo atualizado${clock ? ` (desde ${clock})` : ''}. Aguarde terminar antes de pedir de novo.`;
+}

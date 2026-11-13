@@ -1,5 +1,5 @@
 import {
-  BadRequestException, Body, Controller, Delete, ForbiddenException, Get, NotFoundException,
+  BadRequestException, Body, ConflictException, Controller, Delete, ForbiddenException, Get, NotFoundException,
   Param, Patch, Post, Req, Res, UploadedFile, UseInterceptors,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
@@ -8,7 +8,8 @@ import type { Request, Response } from 'express';
 import { memoryStorage } from 'multer';
 import { AuthService } from '../auth/auth.service';
 import { canAccessDashboard, isAdmin, normalizeDepartments } from '../shared/access';
-import { DashboardService } from './dashboard.service';
+import { DashboardService, UpdateInProgressError } from './dashboard.service';
+import { updateInProgressMessage } from './update-policy';
 import { DashboardType, UserRole } from '@prisma/client';
 
 type UploadedFile = {
@@ -47,6 +48,8 @@ export class DashboardController {
       streamlitRunning: (d.type === DashboardType.streamlit || d.type === DashboardType.server)
         ? this.svc.isRunning(d.id)
         : null,
+      // Desde quando está sendo atualizado (por qualquer um: botão, agendador ou o "Atualizar" de dentro do painel).
+      updatingSince: this.svc.updatingSince(d.id)?.toISOString() ?? null,
     }));
   }
 
@@ -132,12 +135,18 @@ export class DashboardController {
 
   @Post(':id/update')
   async triggerUpdate(@Req() req: Request, @Param('id') id: string) {
-    await this.authService.requireUser(req);
+    const user = await this.authService.requireUser(req);
     const d = await this.svc.findById(id);
-    if (!d) throw new NotFoundException();
+    // Antes só exigia login: quem chamasse a API direto atualizava painel que não via (a tela esconde o botão).
+    if (!d || !canAccessDashboard(user, d) || (!d.isActive && !isAdmin(user))) throw new NotFoundException();
     try {
       return await this.svc.triggerUpdate(id);
     } catch (err) {
+      // Já está atualizando (outra pessoa, o agendador ou o "Atualizar" de dentro do painel): 409 com o motivo,
+      // em vez de um erro genérico que a tela só mostrava como ícone vermelho.
+      if (err instanceof UpdateInProgressError) {
+        throw new ConflictException(updateInProgressMessage(this.svc.updatingSince(id)));
+      }
       const message = err instanceof Error ? err.message : 'Update failed';
       const cause = err instanceof Error && err.cause ? ` (causa: ${String(err.cause)})` : '';
       throw new Error(`${message}${cause}`, { cause: err instanceof Error ? err.cause : undefined });

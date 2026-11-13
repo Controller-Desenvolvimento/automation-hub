@@ -156,7 +156,8 @@ export class DashboardService implements OnModuleInit, OnModuleDestroy {
   }
 
   // Painéis com atualização em curso (programada, botão do Hub ou "Atualizar" de dentro do painel).
-  private readonly updating = new Set<string>();
+  // painéis com atualização em andamento -> horário em que ela começou (botão do Hub, agendador ou "Atualizar" de dentro do painel)
+  private readonly updating = new Map<string, Date>();
   // updatePath de cada painel, para o proxy reconhecer o "Atualizar" de dentro do painel sem ir ao banco a cada POST.
   private readonly updatePaths = new Map<string, string | null>();
 
@@ -167,6 +168,11 @@ export class DashboardService implements OnModuleInit, OnModuleDestroy {
 
   isUpdating(id: string): boolean {
     return this.updating.has(id);
+  }
+
+  /** Desde quando o painel está sendo atualizado (null = não está). */
+  updatingSince(id: string): Date | null {
+    return this.updating.get(id) ?? null;
   }
 
   async onModuleInit() {
@@ -291,7 +297,7 @@ export class DashboardService implements OnModuleInit, OnModuleDestroy {
       throw new Error('updatePath is not configured for this dashboard');
     }
     if (this.updating.has(id)) throw new UpdateInProgressError();
-    this.updating.add(id);
+    this.updating.set(id, new Date());
 
     // "Atualizado há..." conta a partir do FIM da atualização (antes contava do início, e uma atualização longa
     // já nascia "velha"). Falhas também gravam o horário, que é o do último ponto em que o painel foi tentado.
@@ -383,7 +389,7 @@ export class DashboardService implements OnModuleInit, OnModuleDestroy {
   // antes o selo nunca mudava. O proxy chama isto ao ver o POST e finish()/abort() ao ver o fim da resposta.
   private trackProxyUpdate(id: string): ProxyUpdateTracker | null {
     if (this.updating.has(id)) return null; // já há outra atualização em curso: deixa passar sem mexer no estado
-    this.updating.add(id);
+    this.updating.set(id, new Date());
     let done = false;
     const previous = this.prisma.dashboard.findUnique({ where: { id }, select: { lastUpdateStatus: true } }).catch(() => null);
     // O fim (finish/abort) espera esta gravação, para nunca chegar ao banco antes dela.
