@@ -15,6 +15,7 @@ import {
   buildExecutionScope,
   canAccessExecution,
   canAccessRobot,
+  isAdmin,
   normalizeDepartments,
 } from '../shared/access';
 import { generateToken, hashToken } from '../shared/crypto';
@@ -128,7 +129,7 @@ export class RobotsService {
         successfulExecutions,
       },
       robots: visibleRobots.map((robot) => ({
-        ...sanitizeRobot(robot),
+        ...sanitizeRobot(robot, user),
         isFavorite: favoriteRobotIds.has(robot.id),
         inputExamples: robot.inputExamples.map((item) => ({
           ...item,
@@ -162,7 +163,7 @@ export class RobotsService {
     return robots
       .filter((robot) => canAccessRobot(user, robot))
       .map((robot) => ({
-        ...sanitizeRobot(robot),
+        ...sanitizeRobot(robot, user),
         isFavorite: favoriteRobotIds.has(robot.id),
         inputExamples: robot.inputExamples.map((item) => ({
           ...item,
@@ -238,7 +239,7 @@ export class RobotsService {
     }
 
     return {
-      ...sanitizeRobot(robot),
+      ...sanitizeRobot(robot, user),
       executions: robot.executions
         .filter((execution) => canAccessExecution(user, execution))
         .map((execution) => ({
@@ -381,6 +382,10 @@ export class RobotsService {
       supportValue: input.supportValue?.trim() || null,
       dataPolicy: input.dataPolicy?.trim() || null,
     };
+    // undefined = não veio no corpo (tela antiga em cache): a lista de pessoas existente é preservada.
+    if (input.allowedUserIds !== undefined) {
+      payload.allowedUserIds = normalizeDepartments(input.allowedUserIds);
+    }
 
     if (input.id) {
       const existing = await this.prisma.robot.findUnique({
@@ -640,6 +645,7 @@ export type RobotUpsertInput = {
   command?: string;
   workingDirectory?: string;
   allowedDepartments?: unknown;
+  allowedUserIds?: unknown;
   schema?: Record<string, unknown>;
   documentationUrl?: string;
   documentationLabel?: string;
@@ -650,9 +656,11 @@ export type RobotUpsertInput = {
 
 // A API key nunca deve trafegar de volta pro cliente — só o hash fica salvo,
 // e nem o hash deveria vazar; expomos só um booleano "tem chave configurada"
-function sanitizeRobot<T extends Robot>(robot: T) {
+function sanitizeRobot<T extends Robot>(robot: T, viewer?: Pick<User, 'id' | 'role' | 'departments'>) {
   const { apiKeyHash, ...rest } = robot;
-  return { ...rest, hasApiKey: Boolean(apiKeyHash) };
+  // Quem não administra não precisa (nem deve) receber a lista de pessoas liberadas.
+  const audience = viewer && !isAdmin(viewer) ? { allowedUserIds: [] as string[] } : {};
+  return { ...rest, ...audience, hasApiKey: Boolean(apiKeyHash) };
 }
 
 function sanitizeInt(

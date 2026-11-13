@@ -5,7 +5,26 @@ configuração, sem dados de infraestrutura. O desenho detalhado de cada funcion
 
 ## 2026-11-13 — Nomes com acento vindos do Athenas e acesso aos painéis
 
+### Novo
+- **"Quem pode ver" = departamentos E pessoas, somados, em BIs, painéis e automações.** Antes, nos painéis, marcar
+  "usuários específicos" ignorava os departamentos e nos BIs e automações só havia departamentos. Agora as duas listas
+  ficam marcadas ao mesmo tempo: tem acesso quem estiver em qualquer uma. Só departamentos: só eles; só pessoas: só
+  elas; nada marcado: todos. Pessoas marcadas passam também do "só gestores". A tela ganhou dois botões
+  (**Departamentos** / **Usuários específicos**, cada um com o contador do que está marcado), uma linha de resumo
+  ("Terão acesso: Comercial (o departamento inteiro) + 2 pessoas marcadas") e um **buscador** de usuários (por nome ou
+  e-mail, sem diferenciar acentos) com "Mostrar só os marcados". Vale nas três telas de cadastro (Painéis, Sites/BIs e
+  Robôs) e na tela de Sites.
+- **BI com painel vinculado:** ao liberar pessoas num BI, as que ainda não enxergam o painel vinculado entram na lista de
+  pessoas dele (o chat do João no BI usa o chat do painel) e a tela avisa quem foi acrescentado. Remover alguém do BI não
+  remove do painel. Painel aberto a todos, ou a quem já passa pelo departamento, não é alterado.
+- A lista de pessoas liberadas só é enviada a administradores (quem não administra recebe a lista vazia).
+
 ### Corrigido
+- **Rotas de site com `:id` não conferiam o acesso:** qualquer usuário logado (chamando a API direto, já que a tela
+  esconde os botões) lia os dados de qualquer site, inclusive o endereço de BIs restritos, baixava o ícone e podia
+  disparar a atualização do Power BI de um BI que não via. Agora leitura, atualização do Power BI e ícone usam a mesma
+  regra de acesso da lista de sites (404 se não puder ver). Um teste falha se uma rota nova com `:id` não conferir o
+  acesso nem exigir administrador.
 - **Usuário sem acesso a nenhum painel (504) por causa do nome.** O proxy dos painéis (`/d/<slug>/`) envia o nome do
   usuário num cabeçalho HTTP (`X-Hub-User-Name`); o Node recusa o caractere "�" (`ERR_INVALID_CHAR`) e a requisição inteira
   falhava, só para quem tinha o nome quebrado. Agora nome e e-mail passam por `headerSafe` (caractere inválido vira `?`).
@@ -28,7 +47,8 @@ configuração, sem dados de infraestrutura. O desenho detalhado de cada funcion
   antigo): `PANEL_WS_AUTH=false` no `.env` da API e reiniciar o Hub. Testado com um Streamlit real e um navegador real
   numa instância isolada (banco descartável, só em 127.0.0.1) antes de ir para produção.
 
-Sem mudança de banco. Quem já estava com o nome quebrado se corrige no próximo login (ou por `UPDATE` pontual).
+Banco: migração aditiva `20261113130000_add_site_robot_allowed_users` (`Site.allowedUserIds` e `Robot.allowedUserIds`,
+compatível com a versão anterior; os dados existentes não mudam). Quem já estava com o nome quebrado se corrige no próximo login (ou por `UPDATE` pontual).
 Testes: `test/athenas-name-header.test.ts`.
 
 ## 2026-11-12 — Alertas de agendamentos e painéis, verificação por tempo (T0/T1/T2), teto de tempo e dependência

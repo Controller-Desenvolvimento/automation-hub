@@ -1,6 +1,7 @@
 import { AlertCircle, Check, CheckCircle, Clock, Copy, Edit2, ExternalLink, Eye, EyeOff, LayoutGrid, Plus, RefreshCw, Search, Server, Trash2, X } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
+import { AudiencePicker } from '../components/audience-picker';
 import { DashboardViewer } from '../components/dashboard-viewer';
 import { PanelSkeleton } from '../components/panel-skeleton';
 import { PageHeader } from '../components/page-header';
@@ -17,7 +18,7 @@ import { removeBootCover } from '../lib/boot-cover';
 import { parsePanelPath } from '../lib/panel-path';
 import { useHub } from '../contexts/hub-context';
 import { api } from '../lib/api';
-import type { Dashboard, SharedCredential, Site, SiteCategory, SiteStatus } from '../lib/types';
+import type { Dashboard, ManagedUser, SharedCredential, Site, SiteCategory, SiteStatus } from '../lib/types';
 import { departmentLabel, siteCategoryLabel, siteStatusLabel, timeAgo } from '../lib/utils';
 
 const STATUS_PRIORITY: Record<SiteStatus, number> = { down: 0, maintenance: 1, online: 2 };
@@ -34,6 +35,7 @@ type SiteDraft = {
   category: SiteCategory;
   maintenanceOverride: boolean;
   allowedDepartments: string[];
+  allowedUserIds: string[];
   minRole: 'employee' | 'manager';
   powerbiGroupId: string;
   powerbiDatasetId: string;
@@ -45,7 +47,7 @@ type SiteDraft = {
 
 const emptySiteDraft = (category: SiteCategory): SiteDraft => ({
   name: '', url: '', description: '', category, maintenanceOverride: false,
-  allowedDepartments: [], minRole: 'employee',
+  allowedDepartments: [], allowedUserIds: [], minRole: 'employee',
   powerbiGroupId: '', powerbiDatasetId: '', powerbiScheduledTimes: [], powerbiShowRefresh: true,
   ssoEnabled: false, linkedDashboardId: '',
 });
@@ -333,9 +335,21 @@ export function SitesPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [viewingSiteId]);
 
+  // A lista de usuários (para liberar pessoas pelo nome) só existe para administradores.
+  const [audienceUsers, setAudienceUsers] = useState<ManagedUser[]>([]);
+  async function loadAudienceUsers() {
+    if (!isAdmin || audienceUsers.length > 0) return;
+    try {
+      setAudienceUsers(await api<ManagedUser[]>('/users'));
+    } catch {
+      // sem a lista só não dá para escolher pessoas; departamentos continuam funcionando
+    }
+  }
+
   function openNewSiteForm(category: SiteCategory) {
     setSiteDraft(emptySiteDraft(category));
     setShowSiteForm(true);
+    void loadAudienceUsers();
   }
 
   function openEditSiteForm(site: Site) {
@@ -347,6 +361,7 @@ export function SitesPage() {
       category: site.category,
       maintenanceOverride: site.maintenanceOverride,
       allowedDepartments: site.allowedDepartments,
+      allowedUserIds: site.allowedUserIds ?? [],
       minRole: site.minRole,
       powerbiGroupId: site.powerbiGroupId ?? '',
       powerbiDatasetId: site.powerbiDatasetId ?? '',
@@ -356,13 +371,14 @@ export function SitesPage() {
       linkedDashboardId: site.linkedDashboardId ?? '',
     });
     setShowSiteForm(true);
+    void loadAudienceUsers();
   }
 
   async function saveSite() {
     if (!siteDraft.name.trim() || !siteDraft.url.trim()) return;
     setSavingSite(true);
     try {
-      await api<Site>('/sites', {
+      const saved = await api<Site>('/sites', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -373,6 +389,7 @@ export function SitesPage() {
           category: siteDraft.category,
           maintenanceOverride: siteDraft.maintenanceOverride,
           allowedDepartments: siteDraft.allowedDepartments,
+          allowedUserIds: siteDraft.allowedUserIds,
           minRole: siteDraft.minRole,
           powerbiGroupId: siteDraft.category === 'bi' ? siteDraft.powerbiGroupId.trim() : '',
           powerbiDatasetId: siteDraft.category === 'bi' ? siteDraft.powerbiDatasetId.trim() : '',
@@ -384,6 +401,9 @@ export function SitesPage() {
       });
       await load();
       setShowSiteForm(false);
+      if (saved.linkedDashboardGrant) {
+        notify(`Site salvo. Para usarem o chat do painel, também foram liberados no painel “${saved.linkedDashboardGrant.dashboardName}”: ${saved.linkedDashboardGrant.users.map((u) => u.name).join(', ')}.`);
+      }
     } catch (error) {
       notify(error instanceof Error ? error.message : 'Não foi possível salvar o site.');
     } finally {
@@ -775,19 +795,26 @@ export function SitesPage() {
 
               <div className="grid gap-1.5">
                 <label className="text-xs font-medium text-slate-600 dark:text-zinc-400">
-                  Departamentos com acesso
-                  <span className="ml-1 font-normal text-slate-400">(vazio = todos)</span>
+                  Quem pode ver
+                  <span className="ml-1 font-normal text-slate-400">(nada marcado = todos; pessoas marcadas passam mesmo que seja só de gestores)</span>
                 </label>
-                <div className="flex flex-wrap gap-2">
-                  {departments.map((dept) => {
-                    const selected = siteDraft.allowedDepartments.includes(dept.slug);
-                    return (
-                      <button key={dept.slug} type="button" onClick={() => setSiteDraft((d) => ({ ...d, allowedDepartments: selected ? d.allowedDepartments.filter((s) => s !== dept.slug) : [...d.allowedDepartments, dept.slug] }))} className={['rounded-full border px-3 py-1 text-xs font-medium transition', selected ? 'border-sky-500 bg-sky-50 text-sky-700 dark:border-sky-400 dark:bg-sky-900/30 dark:text-sky-300' : 'border-slate-200 text-slate-500 hover:border-slate-300 dark:border-[#27272a] dark:text-zinc-400'].join(' ')}>
-                        {dept.name}
-                      </button>
-                    );
-                  })}
-                </div>
+                <AudiencePicker
+                  users={audienceUsers}
+                  selectedUsers={siteDraft.allowedUserIds}
+                  onToggleUser={(userId) =>
+                    setSiteDraft((d) => ({
+                      ...d,
+                      allowedUserIds: d.allowedUserIds.includes(userId) ? d.allowedUserIds.filter((id) => id !== userId) : [...d.allowedUserIds, userId],
+                    }))
+                  }
+                  selectedDepartments={siteDraft.allowedDepartments}
+                  onToggleDepartment={(slug) =>
+                    setSiteDraft((d) => ({
+                      ...d,
+                      allowedDepartments: d.allowedDepartments.includes(slug) ? d.allowedDepartments.filter((x) => x !== slug) : [...d.allowedDepartments, slug],
+                    }))
+                  }
+                />
               </div>
 
               <button

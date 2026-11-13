@@ -3,7 +3,7 @@ import { AnyFilesInterceptor } from '@nestjs/platform-express';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { SiteCategory, UserRole } from '@prisma/client';
 import type { Request, Response } from 'express';
-import { normalizeDepartments } from '../shared/access';
+import { canAccessSite, normalizeDepartments } from '../shared/access';
 import { AuthService } from '../auth/auth.service';
 import { uploadLimits } from '../shared/upload';
 import { PowerBIService } from './powerbi.service';
@@ -26,6 +26,17 @@ export class SitesController {
     private readonly powerbiService: PowerBIService,
   ) {}
 
+  /**
+   * Todo pedido com `:id` que não seja só de administrador passa por aqui: o site precisa existir E o usuário
+   * precisa poder vê-lo (a tela esconde os botões de quem não tem acesso, mas o servidor não pode depender disso).
+   * Há um teste que falha se uma rota nova com `:id` não chamar isto nem `ensureAdmin`.
+   */
+  private async requireAccessibleSite(id: string, user: Parameters<typeof canAccessSite>[0]) {
+    const site = await this.sitesService.findOne(id);
+    if (!site || !canAccessSite(user, site)) throw new NotFoundException('Site não encontrado.');
+    return site;
+  }
+
   @Get()
   async findAll(@Req() request: Request) {
     const user = await this.authService.requireUser(request);
@@ -34,13 +45,9 @@ export class SitesController {
 
   @Get(':id')
   async findOne(@Param('id') id: string, @Req() request: Request) {
-    await this.authService.requireUser(request);
-    const site = await this.sitesService.findOne(id);
-    if (!site) {
-      throw new NotFoundException('Site não encontrado.');
-    }
-
-    return site;
+    const user = await this.authService.requireUser(request);
+    const site = await this.requireAccessibleSite(id, user);
+    return this.sitesService.forViewer(site, user);
   }
 
   @Post()
@@ -62,6 +69,8 @@ export class SitesController {
             ? Number(body.order)
             : undefined,
       allowedDepartments: normalizeDepartments(body.allowedDepartments),
+      // undefined = não veio no corpo (tela antiga em cache): a lista de pessoas existente é preservada.
+      allowedUserIds: Array.isArray(body.allowedUserIds) ? normalizeDepartments(body.allowedUserIds) : undefined,
       minRole: body.minRole === 'manager' ? UserRole.manager : UserRole.employee,
       powerbiGroupId: typeof body.powerbiGroupId === 'string' ? body.powerbiGroupId : null,
       powerbiDatasetId: typeof body.powerbiDatasetId === 'string' ? body.powerbiDatasetId : null,
@@ -96,8 +105,7 @@ export class SitesController {
   @Post(':id/powerbi-refresh')
   async powerbiRefresh(@Param('id') id: string, @Req() request: Request) {
     const user = await this.authService.requireUser(request);
-    const site = await this.sitesService.findOne(id);
-    if (!site) throw new NotFoundException('Site não encontrado.');
+    const site = await this.requireAccessibleSite(id, user);
     if (!site.powerbiDatasetId || !site.powerbiGroupId) {
       throw new BadRequestException('Este site não tem um dataset Power BI configurado.');
     }
@@ -116,7 +124,13 @@ export class SitesController {
 
   @Get(':id/favicon')
   async getFavicon(@Param('id') id: string, @Req() request: Request, @Res() response: Response) {
-    await this.authService.requireUser(request);
+    const user = await this.authService.requireUser(request);
+    try {
+      await this.requireAccessibleSite(id, user);
+    } catch {
+      response.status(404).end();
+      return;
+    }
     const favicon = await this.sitesService.getFavicon(id);
 
     if (!favicon) {

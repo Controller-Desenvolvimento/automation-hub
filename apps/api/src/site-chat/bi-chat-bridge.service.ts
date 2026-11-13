@@ -86,7 +86,7 @@ export class BiChatBridgeService {
 
     const site = await this.prisma.site.findUnique({
       where: { id: siteId },
-      select: { id: true, name: true, category: true, allowedDepartments: true, minRole: true, linkedDashboardId: true },
+      select: { id: true, name: true, category: true, allowedDepartments: true, allowedUserIds: true, minRole: true, linkedDashboardId: true },
     });
     if (!site || site.category !== SiteCategory.bi || !site.linkedDashboardId || !canAccessSite(user, site)) return null;
 

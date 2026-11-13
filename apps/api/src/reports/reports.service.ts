@@ -504,6 +504,7 @@ export class ReportsService {
               unitLabel: true,
               manualSecondsPerUnit: true,
               allowedDepartments: true,
+              allowedUserIds: true,
               isExternal: true,
             },
           },

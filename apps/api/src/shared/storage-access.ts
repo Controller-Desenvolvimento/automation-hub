@@ -30,7 +30,7 @@ export async function canAccessStoragePath(
         userId: true,
         scheduledTaskId: true,
         user: { select: { departments: true } },
-        robot: { select: { allowedDepartments: true } },
+        robot: { select: { allowedDepartments: true, allowedUserIds: true } },
       },
     });
     if (!execution) {
@@ -48,7 +48,7 @@ export async function canAccessStoragePath(
 
     const robot = await prisma.robot.findUnique({
       where: { id },
-      select: { allowedDepartments: true },
+      select: { allowedDepartments: true, allowedUserIds: true },
     });
 
     return robot ? canAccessRobot(user, robot) : false;
