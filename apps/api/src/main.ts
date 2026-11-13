@@ -9,6 +9,7 @@ import type { Request, Response, NextFunction } from 'express';
 import { AppModule } from './app.module';
 import { DashboardService } from './dashboard/dashboard.service';
 import { PrismaService } from './prisma/prisma.service';
+import { canAccessDashboard } from './shared/access';
 import { dashboardRoot } from './shared/storage';
 import { createStorageAccessMiddleware } from './shared/storage-middleware';
 
@@ -115,10 +116,11 @@ async function bootstrap() {
     const dashboard = await dashboardService.findBySlug(slug);
     if (!dashboard?.isActive) { res.status(404).send('Dashboard não encontrado.'); return; }
 
-    if (dashboard.allowedDepartments.length > 0 && session.user.role !== 'admin') {
-      if (!session.user.departments.some((d) => dashboard.allowedDepartments.includes(d))) {
-        res.status(403).send('Acesso negado.'); return;
-      }
+    // Mesma regra do resto do Hub (lista de painéis, chat, downloads): admin/Inovação, lista de pessoas,
+    // "só gestor" e departamentos. Antes este guarda só olhava departamentos e, com a lista vazia (painel
+    // restrito a pessoas), deixava entrar qualquer usuário logado pelo endereço direto.
+    if (!canAccessDashboard(session.user, dashboard)) {
+      res.status(403).send('Acesso negado.'); return;
     }
 
     if (dashboard.type === 'html') {
