@@ -2,7 +2,7 @@ import { Injectable, Logger, OnModuleDestroy, OnModuleInit, Optional } from '@ne
 import { Dashboard, DashboardType, UserRole } from '@prisma/client';
 import AdmZip from 'adm-zip';
 import { createProxyMiddleware, fixRequestBody } from 'http-proxy-middleware';
-import type { IncomingMessage } from 'node:http';
+import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Duplex } from 'node:stream';
 import { ChildProcess, execSync, spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
@@ -13,7 +13,7 @@ import { Agent, fetch as undiciFetch } from 'undici';
 import { PrismaService } from '../prisma/prisma.service';
 import { MailService } from '../mail/mail.service';
 import { resolveHubBaseUrl } from '../mail/scheduled-execution-alert';
-import { describeUpdateError, getRetryDelayMs } from './update-policy';
+import { describeUpdateError, getRetryDelayMs, updateInProgressMessage } from './update-policy';
 import { createUpgradeHandler } from './ws-access';
 import { headerSafe } from '../shared/header-value';
 import { panelProcessEnv } from '../shared/panel-env';
@@ -84,6 +84,16 @@ const PROXY_UPDATE_SAFETY_MS = 35 * 60 * 1000;
 
 function pathOnly(path: string | undefined): string {
   return (path ?? '').split('?')[0].replace(/\/+$/, '');
+}
+
+// Rota que o Hub atende por conta própria dentro do endereço de cada painel (não chega ao painel).
+export const HUB_UPDATE_STATUS_PATH = '/__hub/atualizacao';
+
+/** Caminhos do pedido sem o prefixo /d/<slug> (o proxy é montado com e sem ele; `originalUrl` e `url` podem diferir). */
+function requestPaths(req: IncomingMessage, slug?: string): string[] {
+  const prefix = slug ? new RegExp(`^/d/${slug.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?=/|\\?|$)`) : null;
+  const { originalUrl } = req as IncomingMessage & { originalUrl?: string };
+  return [originalUrl, req.url].filter((raw): raw is string => !!raw).map((raw) => pathOnly(prefix ? raw.replace(prefix, '') : raw));
 }
 
 @Injectable()
@@ -511,8 +521,32 @@ export class DashboardService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
+  /**
+   * "Atualizar" de DENTRO do painel (POST no updatePath, pelo proxy) pedido enquanto o painel já está sendo atualizado
+   * (por outra pessoa, pelo agendador, pelo botão do Hub ou pela própria pessoa depois de um F5).
+   * Esses pedidos não chegam ao painel: dois "Atualizar" juntos faziam duas cargas completas (no bi_financeiro, em
+   * paralelo, com o dobro de RAM/consultas; nos outros, uma atrás da outra).
+   */
+  private isDuplicateInnerUpdate(dashboardId: string, req: IncomingMessage, slug?: string): boolean {
+    if (req.method !== 'POST' || !this.updating.has(dashboardId)) return false;
+    const configured = this.updatePaths.get(dashboardId);
+    if (!configured) return false;
+    const target = pathOnly(configured);
+    return requestPaths(req, slug).some((p) => p === target);
+  }
+
+  /**
+   * Consulta que a tela do painel faz ao Hub (GET /d/<slug>/__hub/atualizacao): "este painel está sendo atualizado?".
+   * Serve para a tela mostrar "Atualizando…" enquanto a atualização de outra pessoa/agendamento roda (inclusive depois
+   * de um F5) e saber o fim com certeza, sem depender de comparar horas de carga de cada fonte. Já passa pelo guarda
+   * de sessão e de acesso do /d (main.ts).
+   */
+  private isUpdateStatusQuery(req: IncomingMessage, slug?: string): boolean {
+    return req.method === 'GET' && requestPaths(req, slug).some((p) => p === HUB_UPDATE_STATUS_PATH);
+  }
+
   private setupProxy(dashboardId: string, port: number, slug?: string) {
-    const proxy = createProxyMiddleware({
+    const inner = createProxyMiddleware({
       target: `http://localhost:${port}`,
       changeOrigin: true,
       ws: true,
@@ -582,6 +616,24 @@ export class DashboardService implements OnModuleInit, OnModuleDestroy {
         },
       },
     });
+    const proxy = ((req: IncomingMessage, res: ServerResponse, next: (err?: unknown) => void) => {
+      if (this.isUpdateStatusQuery(req, slug)) {
+        const since = this.updating.get(dashboardId) ?? null;
+        res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
+        res.end(JSON.stringify({ atualizando: since !== null, desde: since ? since.toISOString() : null }));
+        return;
+      }
+      if (this.isDuplicateInnerUpdate(dashboardId, req, slug)) {
+        const since = this.updating.get(dashboardId) ?? null;
+        const message = updateInProgressMessage(since);
+        req.resume(); // descarta o corpo do pedido recusado
+        res.writeHead(409, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
+        res.end(JSON.stringify({ statusCode: 409, message, detail: message, atualizando: true, desde: since ? since.toISOString() : null }));
+        return;
+      }
+      return (inner as unknown as (a: IncomingMessage, b: ServerResponse, c: (err?: unknown) => void) => unknown)(req, res, next);
+    }) as unknown as typeof inner;
+    proxy.upgrade = inner.upgrade; // websocket (Streamlit) passa direto, sem esta checagem
     this.proxies.set(dashboardId, proxy);
     return proxy;
   }
