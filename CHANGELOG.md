@@ -20,8 +20,11 @@ configuração, sem dados de infraestrutura. O desenho detalhado de cada funcion
 - A lista de pessoas liberadas só é enviada a administradores (quem não administra recebe a lista vazia).
 
 ### Corrigido
-- **`GET /sites/:id` não conferia o acesso:** qualquer usuário logado lia os dados de qualquer site, inclusive o endereço de
-  BIs restritos. Agora usa a mesma regra de acesso da lista de sites.
+- **Rotas de site com `:id` não conferiam o acesso:** qualquer usuário logado (chamando a API direto, já que a tela
+  esconde os botões) lia os dados de qualquer site, inclusive o endereço de BIs restritos, baixava o ícone e podia
+  disparar a atualização do Power BI de um BI que não via. Agora leitura, atualização do Power BI e ícone usam a mesma
+  regra de acesso da lista de sites (404 se não puder ver). Um teste falha se uma rota nova com `:id` não conferir o
+  acesso nem exigir administrador.
 - **Usuário sem acesso a nenhum painel (504) por causa do nome.** O proxy dos painéis (`/d/<slug>/`) envia o nome do
   usuário num cabeçalho HTTP (`X-Hub-User-Name`); o Node recusa o caractere "�" (`ERR_INVALID_CHAR`) e a requisição inteira
   falhava, só para quem tinha o nome quebrado. Agora nome e e-mail passam por `headerSafe` (caractere inválido vira `?`).

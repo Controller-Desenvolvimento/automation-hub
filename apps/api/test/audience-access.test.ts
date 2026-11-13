@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import test from 'node:test';
 import { SiteCategory, UserRole } from '@prisma/client';
 import { RobotsService } from '../src/robots/robots.service';
@@ -175,4 +177,28 @@ test('GET /sites/:id agora confere o acesso (antes qualquer usuário logado lia 
   assert.equal(((await controller(RITA).findOne('s1', req)) as { name: string }).name, 'BI Comercial'); // liberada pelo nome
   assert.deepEqual(((await controller(COMERCIAL_ANA).findOne('s1', req)) as { allowedUserIds: string[] }).allowedUserIds, []); // não admin: sem a lista
   await assert.rejects(() => controller(FISCAL).findOne('s1', req), { name: 'NotFoundException' });
+});
+
+test('trava: toda rota de sites com :id confere o acesso (requireAccessibleSite) ou é só de administrador', () => {
+  const fonte = readFileSync(join(__dirname, '..', 'src', 'sites', 'sites.controller.ts'), 'utf8');
+  const blocos = fonte.split(/\n  @(?=(?:Get|Post|Patch|Put|Delete)\()/).slice(1);
+  const comId = blocos.filter((b) => /^(?:Get|Post|Patch|Put|Delete)\('(?::id|:id\/)/.test(b));
+  assert.ok(comId.length >= 6, `esperava achar as rotas com :id, achei ${comId.length}`);
+  for (const bloco of comId) {
+    const rota = bloco.split('\n')[0];
+    assert.ok(/requireAccessibleSite\(|ensureAdmin\(/.test(bloco), `a rota @${rota} não confere o acesso nem exige administrador`);
+  }
+});
+
+test('POST /sites/:id/powerbi-refresh: usuário sem acesso ao BI recebe 404 e nada é disparado', async () => {
+  const site = { id: 's1', name: 'BI', url: 'x', faviconStoragePath: null, allowedDepartments: ['comercial'], allowedUserIds: [], minRole: UserRole.employee, powerbiGroupId: 'g', powerbiDatasetId: 'd' };
+  const sitesService = new SitesService({ site: { findUnique: async () => site } } as never, {} as never);
+  let disparos = 0;
+  const powerbi = { requestRefresh: async () => { disparos++; return 'req1'; } };
+  const sitesPatched = Object.assign(sitesService, { updatePowerBIStatus: async () => undefined, createRefreshLog: async () => undefined });
+  const controller = (user: U) => new SitesController(sitesPatched, { requireUser: async () => user } as never, powerbi as never);
+  await assert.rejects(() => controller(FISCAL).powerbiRefresh('s1', {} as never), { name: 'NotFoundException' });
+  assert.equal(disparos, 0);
+  assert.deepEqual(await controller(COMERCIAL_ANA).powerbiRefresh('s1', {} as never), { success: true });
+  assert.equal(disparos, 1);
 });

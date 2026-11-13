@@ -26,6 +26,17 @@ export class SitesController {
     private readonly powerbiService: PowerBIService,
   ) {}
 
+  /**
+   * Todo pedido com `:id` que não seja só de administrador passa por aqui: o site precisa existir E o usuário
+   * precisa poder vê-lo (a tela esconde os botões de quem não tem acesso, mas o servidor não pode depender disso).
+   * Há um teste que falha se uma rota nova com `:id` não chamar isto nem `ensureAdmin`.
+   */
+  private async requireAccessibleSite(id: string, user: Parameters<typeof canAccessSite>[0]) {
+    const site = await this.sitesService.findOne(id);
+    if (!site || !canAccessSite(user, site)) throw new NotFoundException('Site não encontrado.');
+    return site;
+  }
+
   @Get()
   async findAll(@Req() request: Request) {
     const user = await this.authService.requireUser(request);
@@ -35,12 +46,7 @@ export class SitesController {
   @Get(':id')
   async findOne(@Param('id') id: string, @Req() request: Request) {
     const user = await this.authService.requireUser(request);
-    const site = await this.sitesService.findOne(id);
-    // Antes qualquer usuário logado lia qualquer site (inclusive o endereço de BIs restritos).
-    if (!site || !canAccessSite(user, site)) {
-      throw new NotFoundException('Site não encontrado.');
-    }
-
+    const site = await this.requireAccessibleSite(id, user);
     return this.sitesService.forViewer(site, user);
   }
 
@@ -99,8 +105,7 @@ export class SitesController {
   @Post(':id/powerbi-refresh')
   async powerbiRefresh(@Param('id') id: string, @Req() request: Request) {
     const user = await this.authService.requireUser(request);
-    const site = await this.sitesService.findOne(id);
-    if (!site) throw new NotFoundException('Site não encontrado.');
+    const site = await this.requireAccessibleSite(id, user);
     if (!site.powerbiDatasetId || !site.powerbiGroupId) {
       throw new BadRequestException('Este site não tem um dataset Power BI configurado.');
     }
@@ -119,7 +124,13 @@ export class SitesController {
 
   @Get(':id/favicon')
   async getFavicon(@Param('id') id: string, @Req() request: Request, @Res() response: Response) {
-    await this.authService.requireUser(request);
+    const user = await this.authService.requireUser(request);
+    try {
+      await this.requireAccessibleSite(id, user);
+    } catch {
+      response.status(404).end();
+      return;
+    }
     const favicon = await this.sitesService.getFavicon(id);
 
     if (!favicon) {
