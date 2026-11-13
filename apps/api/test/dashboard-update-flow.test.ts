@@ -428,7 +428,7 @@ test('proxy: se já há atualização em curso, o POST passa sem criar uma segun
   panel.delayMs = 200;
   const h = await proxyHarness(panel);
   try {
-    h.svc.updating.add('d1'); // por exemplo, o agendador já está atualizando
+    h.svc.updating.set('d1', new Date()); // por exemplo, o agendador já está atualizando
     assert.equal((await h.post('/d/meu-painel/api/atualizar')).status, 200);
     assert.equal(h.svc.isUpdating('d1'), true, 'a marca do outro continua sendo dele');
   } finally { await h.close(); await panel.close(); }

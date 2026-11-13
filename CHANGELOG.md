@@ -51,6 +51,16 @@ Banco: migração aditiva `20261113130000_add_site_robot_allowed_users` (`Site.a
 compatível com a versão anterior; os dados existentes não mudam). Quem já estava com o nome quebrado se corrige no próximo login (ou por `UPDATE` pontual).
 Testes: `test/athenas-name-header.test.ts`.
 
+### Painéis: aviso de atualização em andamento
+- Quem pede para atualizar um painel que **já está sendo atualizado** (outra pessoa, o agendador ou o "Atualizar" de
+  dentro do painel) recebe o aviso "Este painel já está sendo atualizado (desde 14:32)" em vez de um ícone vermelho sem
+  explicação (a mensagem existia no servidor, mas saía como erro genérico 500; agora é 409).
+- O botão de atualizar da lista de painéis passa a girar e ficar desabilitado também quando a atualização foi iniciada
+  por outro, com a dica "Atualizando desde 14:32…" (antes só girava para quem clicou, naquela página). Enquanto algum painel
+  atualiza, a lista confere o estado a cada 3 s (era 15 s).
+- `POST /dashboards/:id/update` passou a conferir o acesso ao painel (antes só exigia login; a tela escondia o botão).
+- `GET /dashboards` traz `updatingSince` (desde quando está atualizando; `null` se não está).
+
 ## 2026-11-12 — Alertas de agendamentos e painéis, verificação por tempo (T0/T1/T2), teto de tempo e dependência
 
 PR #1 (`8748a95`), PR #2 (`2781272`). Marco de restauração no GitHub: tag `alertas-agendamentos-2026-11-12`.
