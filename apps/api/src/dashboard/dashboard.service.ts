@@ -14,6 +14,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { MailService } from '../mail/mail.service';
 import { resolveHubBaseUrl } from '../mail/scheduled-execution-alert';
 import { describeUpdateError, getRetryDelayMs } from './update-policy';
+import { createUpgradeHandler } from './ws-access';
 import { headerSafe } from '../shared/header-value';
 import { panelProcessEnv } from '../shared/panel-env';
 import { WINDOWS_HIDE } from '../shared/process-options';
@@ -845,21 +846,26 @@ export class DashboardService implements OnModuleInit, OnModuleDestroy {
     return this.proxies.get(id) as (ReturnType<typeof createProxyMiddleware>) | undefined;
   }
 
+  /**
+   * WebSocket dos painéis (Streamlit etc.). O guarda HTTP de `/d/<painel>/` não roda para o evento "upgrade",
+   * então a sessão e o acesso são conferidos aqui (ws-access.ts). `PANEL_WS_AUTH=false` desliga a checagem.
+   */
   handleUpgrade(req: IncomingMessage, socket: Duplex, head: Buffer) {
-    const url = req.url ?? '';
-    // Extract slug from /d/<slug>/...
-    const match = url.match(/^\/d\/([^/]+)/);
-    if (!match) return;
-    const slug = match[1];
-    // Find running dashboard by slug (sync lookup in process map)
-    for (const [id, proxy] of this.proxies) {
-      void this.prisma.dashboard.findUnique({ where: { id } }).then((d) => {
-        if (d?.slug === slug) {
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          (proxy as any).upgrade?.(req, socket, head);
-        }
-      });
-    }
+    createUpgradeHandler({
+      findSession: (tokenHash) =>
+        this.prisma.session.findFirst({
+          where: { tokenHash, expiresAt: { gt: new Date() } },
+          select: { user: { select: { id: true, role: true, departments: true, isActive: true } } },
+        }),
+      findDashboardBySlug: (slug) =>
+        this.prisma.dashboard.findUnique({
+          where: { slug },
+          select: { id: true, isActive: true, allowedDepartments: true, minRole: true, allowedUserIds: true },
+        }),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      getProxy: (id) => this.proxies.get(id) as any,
+      log: (message) => this.logger.warn(message),
+    })(req, socket, head);
   }
 }
 

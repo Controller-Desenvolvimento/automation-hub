@@ -21,6 +21,12 @@ configuração, sem dados de infraestrutura. O desenho detalhado de cada funcion
   pessoas), deixava entrar qualquer usuário logado. Agora usa `canAccessDashboard` (admin/Inovação, lista de pessoas,
   "só gestor" e departamentos), como a lista de painéis, o chat e os downloads. Quem abria um painel pelo endereço
   direto sem ter acesso pela regra do Hub passa a receber "Acesso negado".
+- **Conexões websocket dos painéis (Streamlit) agora exigem sessão e acesso.** O evento "upgrade" do servidor não passa
+  pelo guarda HTTP, então a conexão era repassada ao painel sem conferir login nem permissão. Agora exige o cookie de
+  sessão (ou `?t=`) e a mesma regra de acesso (`canAccessDashboard`); sem isso responde 401/403/404 e fecha a conexão.
+  Os painéis do tipo servidor (FastAPI) não usam websocket e não são afetados. **Desligar** (volta ao comportamento
+  antigo): `PANEL_WS_AUTH=false` no `.env` da API e reiniciar o Hub. Testado com um Streamlit real e um navegador real
+  numa instância isolada (banco descartável, só em 127.0.0.1) antes de ir para produção.
 
 Sem mudança de banco. Quem já estava com o nome quebrado se corrige no próximo login (ou por `UPDATE` pontual).
 Testes: `test/athenas-name-header.test.ts`.
