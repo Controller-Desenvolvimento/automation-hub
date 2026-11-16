@@ -2,7 +2,7 @@ import { Injectable, Logger, OnModuleDestroy, OnModuleInit, Optional } from '@ne
 import { Dashboard, DashboardType, UserRole } from '@prisma/client';
 import AdmZip from 'adm-zip';
 import { createProxyMiddleware, fixRequestBody } from 'http-proxy-middleware';
-import type { IncomingMessage, ServerResponse } from 'node:http';
+import { request as httpRequest, type IncomingMessage, type ServerResponse } from 'node:http';
 import type { Duplex } from 'node:stream';
 import { ChildProcess, execSync, spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
@@ -81,6 +81,10 @@ interface ProxyUpdateTracker {
 // Rede de segurança: se nem o fim nem o erro do "Atualizar" de dentro do painel forem vistos pelo proxy,
 // a marca de "atualizando" é solta depois disso (o proxy já corta a conexão em 20 min).
 const PROXY_UPDATE_SAFETY_MS = 35 * 60 * 1000;
+// Tempo máximo de espera da resposta do painel ao "Atualizar" de dentro (o mesmo do proxy comum).
+const PROXY_UPDATE_UPSTREAM_TIMEOUT_MS = 20 * 60 * 1000;
+// Cabeçalhos que valem só entre dois pontos da conexão e não devem ser repassados ao painel.
+const HOP_BY_HOP_HEADERS = ['connection', 'keep-alive', 'proxy-connection', 'proxy-authorization', 'te', 'trailer', 'upgrade'];
 
 function pathOnly(path: string | undefined): string {
   return (path ?? '').split('?')[0].replace(/\/+$/, '');
@@ -528,11 +532,95 @@ export class DashboardService implements OnModuleInit, OnModuleDestroy {
    * paralelo, com o dobro de RAM/consultas; nos outros, uma atrás da outra).
    */
   private isDuplicateInnerUpdate(dashboardId: string, req: IncomingMessage, slug?: string): boolean {
-    if (req.method !== 'POST' || !this.updating.has(dashboardId)) return false;
+    return this.updating.has(dashboardId) && this.isInnerUpdateRequest(dashboardId, req, slug);
+  }
+
+  // É o "Atualizar" de DENTRO do painel? (POST exatamente no updatePath configurado, com ou sem /d/<slug>)
+  private isInnerUpdateRequest(dashboardId: string, req: IncomingMessage, slug?: string): boolean {
+    if (req.method !== 'POST') return false;
     const configured = this.updatePaths.get(dashboardId);
     if (!configured) return false;
     const target = pathOnly(configured);
     return requestPaths(req, slug).some((p) => p === target);
+  }
+
+  /**
+   * Repassa o "Atualizar" de dentro do painel por uma conexão PRÓPRIA do Hub com o painel, independente do navegador.
+   *
+   * Por que não pelo proxy comum: quem fica na frente do Hub (IIS/ARR) corta a requisição aos 2 min, e o navegador
+   * então "desiste". A biblioteca de proxy aborta a conexão com o painel nesse momento, o Hub não vê mais o fim da
+   * atualização e (antes) voltava o estado anterior: o selo nunca andava e o bloqueio de duplicidade expirava aos
+   * 2 min, enquanto o painel seguia atualizando por mais uns minutos (o Indicadores Fiscal leva ~7).
+   *
+   * Aqui, se o navegador some, o Hub continua esperando a resposta do painel e só então marca o fim (ok ou erro).
+   * Se o navegador ainda está lá, recebe a resposta do painel como sempre. Devolve false se não deu para acompanhar.
+   */
+  private forwardInnerUpdate(dashboardId: string, port: number, slug: string | undefined, req: IncomingMessage, res: ServerResponse): boolean {
+    const tracker = this.trackProxyUpdate(dashboardId);
+    if (!tracker) return false;
+
+    // Caminho no painel: sem o prefixo /d/<slug> (o painel não o conhece), mantendo a query string.
+    const raw = (req as unknown as { originalUrl?: string }).originalUrl ?? req.url ?? '/';
+    const prefix = slug ? `/d/${slug}` : '';
+    let path = prefix && raw.startsWith(prefix) ? raw.slice(prefix.length) : raw;
+    if (!path.startsWith('/')) path = `/${path}`;
+
+    const headers: Record<string, string | string[] | undefined> = { ...req.headers, host: `localhost:${port}` };
+    for (const name of HOP_BY_HOP_HEADERS) delete headers[name];
+    const user = (req as unknown as Record<string, unknown>).hubUser as { name?: string; email?: string } | undefined;
+    if (user?.name) headers['x-hub-user-name'] = headerSafe(user.name);
+    if (user?.email) headers['x-hub-user-email'] = headerSafe(user.email);
+
+    let requestIncomplete = false;
+    const up = httpRequest({ host: 'localhost', port, method: 'POST', path, headers });
+    up.setTimeout(PROXY_UPDATE_UPSTREAM_TIMEOUT_MS, () => up.destroy(new Error('O painel não respondeu ao "Atualizar" a tempo.')));
+
+    up.on('response', (panelRes) => {
+      const clientGone = () => res.destroyed || res.writableEnded;
+      if (!clientGone()) {
+        res.writeHead(panelRes.statusCode ?? 502, panelRes.headers);
+        panelRes.pipe(res);
+      } else {
+        panelRes.resume(); // o navegador já foi embora: segue lendo para ver o fim de verdade
+      }
+      // Navegador que sai no meio da resposta: o pipe para, então é preciso continuar consumindo.
+      res.on('close', () => panelRes.resume());
+      panelRes.on('end', () => void tracker.finish(panelRes.statusCode));
+      // O painel cortou a conexão no meio: falha de verdade (diferente de o navegador ter sumido).
+      panelRes.on('close', () => {
+        if (panelRes.complete) return;
+        void tracker.finish(undefined, 'A conexão com o painel foi interrompida antes do fim da atualização.');
+        // Resposta cortada no meio: o navegador (se ainda está lá) não pode ficar esperando para sempre.
+        if (!res.destroyed && !res.writableEnded) res.destroy();
+      });
+    });
+
+    up.on('error', (err) => {
+      this.logger.warn(`Proxy error [${dashboardId}]: ${err.message}`);
+      if (requestIncomplete) {
+        void tracker.abort(); // o pedido nem chegou inteiro ao painel
+        return;
+      }
+      void tracker.finish(undefined, `Falha ao falar com o painel: ${err.message}`);
+      if (!res.headersSent && !res.destroyed) {
+        res.writeHead(502, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ statusCode: 502, message: 'Dashboard indisponível.' }));
+      }
+    });
+
+    // Navegador que fecha antes de terminar de ENVIAR o pedido (raro: o corpo é pequeno).
+    req.on('close', () => {
+      if (!req.complete) {
+        requestIncomplete = true;
+        up.destroy(new Error('O navegador fechou antes de enviar o pedido.'));
+      }
+    });
+
+    // Corpo: se algum middleware já leu e interpretou (req.body), regrava; senão repassa o fluxo.
+    fixRequestBody(up, req);
+    if (req.readableEnded) up.end();
+    else req.pipe(up);
+    return true;
   }
 
   /**
@@ -559,27 +647,10 @@ export class DashboardService implements OnModuleInit, OnModuleDestroy {
           // e derrubava TODO acesso do usuário aos painéis.
           if (user?.name) proxyReq.setHeader('X-Hub-User-Name', headerSafe(user.name));
           if (user?.email) proxyReq.setHeader('X-Hub-User-Email', headerSafe(user.email));
-          // "Atualizar" de dentro do painel: POST no updatePath do painel → o selo do Hub passa a acompanhá-lo.
-          const configuredPath = this.updatePaths.get(dashboardId);
-          if (configuredPath && proxyReq.method === 'POST' && pathOnly(proxyReq.path) === pathOnly(configuredPath)) {
-            const tracker = this.trackProxyUpdate(dashboardId);
-            if (tracker) {
-              (req as unknown as Record<string, unknown>).panelUpdateTracker = tracker;
-              // Navegador que fecha antes de a resposta chegar: a biblioteca de proxy nem chama o tratador de erro
-              // nesse caso, então é aqui, desde o começo, que se observa o fechamento. Se a resposta já terminou
-              // (finish marcou "done"), isto não faz nada.
-              (res as import('node:http').ServerResponse).on('close', () => { if (!tracker.done) void tracker.abort(); });
-            }
-          }
+          // O POST do "Atualizar" de dentro NÃO passa por aqui: ver forwardInnerUpdate (conexão própria com o painel).
           fixRequestBody(proxyReq, req);
         },
-        proxyRes: (proxyRes, req) => {
-          const tracker = (req as unknown as Record<string, unknown>).panelUpdateTracker as ProxyUpdateTracker | undefined;
-          if (tracker) {
-            proxyRes.on('end', () => void tracker.finish(proxyRes.statusCode));
-            // resposta cortada no meio, ou navegador que fechou antes do fim: resultado desconhecido
-            proxyRes.on('close', () => { if (!proxyRes.complete) void tracker.abort(); });
-          }
+        proxyRes: (proxyRes) => {
           // Respostas SSE (ex.: POST /chatkit dos BIs, que mandam sinal de vida
           // a cada 15s): sem esses cabeçalhos, proxies à frente do hub (IIS/ARR,
           // nginx etc.) podem reter a resposta até o fim e o navegador desiste
@@ -600,15 +671,9 @@ export class DashboardService implements OnModuleInit, OnModuleDestroy {
             proxyRes.headers['location'] = `/d/${slug}${loc}`;
           }
         },
-        error: (err, req, res) => {
+        error: (err, _req, res) => {
           this.logger.warn(`Proxy error [${dashboardId}]: ${(err as Error).message}`);
           const sr = res as import('node:http').ServerResponse;
-          const tracker = (req as unknown as Record<string, unknown>).panelUpdateTracker as ProxyUpdateTracker | undefined;
-          if (tracker) {
-            // navegador que desistiu: resultado desconhecido; painel que não respondeu/caiu: falha de verdade
-            if (sr.destroyed) void tracker.abort();
-            else void tracker.finish(undefined, `Falha ao falar com o painel: ${(err as Error).message}`);
-          }
           if (!sr.headersSent) {
             sr.writeHead(502, { 'Content-Type': 'application/json' });
             sr.end(JSON.stringify({ statusCode: 502, message: 'Dashboard indisponível.' }));
@@ -622,6 +687,9 @@ export class DashboardService implements OnModuleInit, OnModuleDestroy {
         res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
         res.end(JSON.stringify({ atualizando: since !== null, desde: since ? since.toISOString() : null }));
         return;
+      }
+      if (this.isInnerUpdateRequest(dashboardId, req, slug) && !this.updating.has(dashboardId)) {
+        if (this.forwardInnerUpdate(dashboardId, port, slug, req, res)) return;
       }
       if (this.isDuplicateInnerUpdate(dashboardId, req, slug)) {
         const since = this.updating.get(dashboardId) ?? null;

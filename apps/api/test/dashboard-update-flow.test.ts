@@ -34,17 +34,28 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 interface FakePanel {
   port: number;
   hits: string[];
-  mode: 'ok' | 'fail500' | 'slow';
+  mode: 'ok' | 'fail500' | 'slow' | 'cut';
   delayMs: number;
+  lastHeaders: Record<string, any>;
+  lastBody: string;
+  lastUrl: string;
   close(): Promise<void>;
 }
 async function startPanel(): Promise<FakePanel> {
-  const panel = { hits: [] as string[], mode: 'ok' as FakePanel['mode'], delayMs: 0 } as FakePanel;
+  const panel = { hits: [] as string[], mode: 'ok' as FakePanel['mode'], delayMs: 0, lastHeaders: {}, lastBody: '', lastUrl: '' } as FakePanel;
   const server = http.createServer((req, res) => {
     panel.hits.push(`${req.method} ${req.url}`);
     if (req.url?.startsWith('/api/atualizar') && req.method === 'POST') {
+      panel.lastHeaders = req.headers;
+      panel.lastUrl = req.url ?? '';
+      panel.lastBody = '';
+      req.on('data', (c) => { panel.lastBody += c; });
       setTimeout(() => {
-        if (panel.mode === 'fail500') {
+        if (panel.mode === 'cut') {
+          res.writeHead(200, { 'content-type': 'application/json' });
+          res.write('{"parcial":');
+          setTimeout(() => res.destroy(), 30);
+        } else if (panel.mode === 'fail500') {
           res.writeHead(500, { 'content-type': 'application/json' });
           res.end(JSON.stringify({ detail: 'banco fora do ar' }));
         } else {
@@ -314,7 +325,8 @@ test('agendador: painel sem processo (tipo html, sem status) segue a regra norma
   scheduler.bootAt = 0;
   try {
     await scheduler.tick(new Date('2026-11-12T06:25:00'));
-    await sleep(80);
+    // espera o POST chegar (até 1,5 s): com a máquina carregada, 80 ms fixos davam falha intermitente
+    for (let i = 0; i < 30 && panel.hits.filter((h) => h.startsWith('POST')).length === 0; i++) await sleep(50);
     assert.equal(panel.hits.filter((h) => h.startsWith('POST')).length, 1);
   } finally { await panel.close(); }
 });
@@ -341,12 +353,22 @@ test('onModuleInit: atualização que ficou "running" num reinício vira erro e 
 });
 
 // ---- "Atualizar" de dentro do painel, pelo proxy de verdade ----
-async function proxyHarness(panel: FakePanel, rowExtra: Record<string, any> = {}) {
+async function proxyHarness(panel: FakePanel, rowExtra: Record<string, any> = {}, opts: { hubUser?: any; parseBody?: boolean } = {}) {
   const { prisma, rows } = fakePrisma({ d1: baseRow(panel.port, rowExtra) });
   const svc = new DashboardService(prisma);
   svc.updatePaths.set('d1', '/api/atualizar');
   const proxy = svc.setupProxy('d1', panel.port, 'meu-painel');
-  const server = http.createServer((req, res) => proxy(req, res, () => undefined));
+  const server = http.createServer((req, res) => {
+    if (opts.hubUser) (req as any).hubUser = opts.hubUser;
+    if (opts.parseBody && req.method === 'POST') {
+      // como um body-parser: le o fluxo inteiro e deixa o resultado em req.body
+      let raw = '';
+      req.on('data', (c) => { raw += c; });
+      req.on('end', () => { try { (req as any).body = JSON.parse(raw || '{}'); } catch { (req as any).body = {}; } proxy(req, res, () => undefined); });
+      return;
+    }
+    proxy(req, res, () => undefined);
+  });
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
   const port = (server.address() as AddressInfo).port;
   const post = (path: string) =>
@@ -406,20 +428,32 @@ test('proxy: outras requisições (POST em outra rota, GET no updatePath) não m
   } finally { await h.close(); await panel.close(); }
 });
 
-test('proxy: navegador que fecha antes do fim → estado volta ao que era e a marca é solta', async () => {
+// Navegador que sai antes do fim (o IIS corta aos 2 min; aqui: 120 ms de um painel que leva 500 ms).
+function postEDesiste(port: number, path: string, apos: number, body = '') {
+  return new Promise<void>((resolve) => {
+    const r = http.request({ host: '127.0.0.1', port, path, method: 'POST', headers: { 'content-length': String(Buffer.byteLength(body)) } });
+    r.on('error', () => resolve());
+    r.end(body);
+    setTimeout(() => { r.destroy(); resolve(); }, apos);
+  });
+}
+
+test('proxy: navegador que sai antes do fim NÃO volta o estado: o Hub segue acompanhando e marca o fim REAL do painel', async () => {
   const panel = await startPanel();
-  panel.delayMs = 400;
+  panel.delayMs = 500;
   const h = await proxyHarness(panel, { lastUpdateStatus: 'ok' });
   try {
-    await new Promise<void>((resolve) => {
-      const r = http.request({ host: '127.0.0.1', port: h.port, path: '/d/meu-painel/api/atualizar', method: 'POST', headers: { 'content-length': '0' } });
-      r.on('error', () => resolve());
-      r.end();
-      setTimeout(() => { r.destroy(); resolve(); }, 120);
-    });
-    await sleep(700);
-    assert.equal(h.rows.get('d1').lastUpdateStatus, 'ok');
+    const t0 = Date.now();
+    await postEDesiste(h.port, '/d/meu-painel/api/atualizar', 120);
+    await sleep(150);                                   // navegador já foi embora, painel ainda trabalhando
+    assert.equal(h.rows.get('d1').lastUpdateStatus, 'running', 'continua "atualizando" no Hub');
+    assert.equal(h.svc.isUpdating('d1'), true, 'a marca continua até o fim real');
+    await sleep(600);                                   // painel termina (~500 ms depois do início)
+    const row = h.rows.get('d1');
+    assert.equal(row.lastUpdateStatus, 'ok');
+    assert.ok(row.lastUpdateAt.getTime() >= t0 + 480, 'o selo anda para o horário do FIM do painel, não do corte');
     assert.equal(h.svc.isUpdating('d1'), false);
+    assert.equal(postsRecebidos(panel), 1);
   } finally { await h.close(); await panel.close(); }
 });
 
@@ -514,20 +548,123 @@ test('proxy: painel sem updatePath configurado nunca é recusado (não há como 
   } finally { await h.close(); await panel.close(); }
 });
 
-test('proxy: navegador que fecha no meio do 1º "Atualizar" libera a marca e o próximo clique passa', async () => {
+test('proxy: depois de o navegador sair, um novo clique de dentro é RECUSADO (409) até o painel terminar; depois passa', async () => {
   const panel = await startPanel();
-  panel.delayMs = 400;
+  panel.delayMs = 500;
   const h = await proxyHarness(panel);
   try {
-    await new Promise<void>((resolve) => {
-      const r = http.request({ host: '127.0.0.1', port: h.port, path: '/d/meu-painel/api/atualizar', method: 'POST', headers: { 'content-length': '0' } });
-      r.on('error', () => resolve());
-      r.end();
-      setTimeout(() => { r.destroy(); resolve(); }, 120);
-    });
+    await postEDesiste(h.port, '/d/meu-painel/api/atualizar', 120);
     await sleep(100);
-    assert.equal(h.svc.isUpdating('d1'), false, 'marca solta');
-    assert.equal((await postFull(h.port, '/d/meu-painel/api/atualizar')).status, 200);
+    const durante = await postFull(h.port, '/d/meu-painel/api/atualizar');
+    assert.equal(durante.status, 409, 'o clique no meio do trabalho do painel não pode disparar outra carga');
+    assert.equal(postsRecebidos(panel), 1, 'o 2º clique não chegou ao painel');
+    await sleep(600);
+    assert.equal(h.svc.isUpdating('d1'), false);
+    assert.equal((await postFull(h.port, '/d/meu-painel/api/atualizar')).status, 200, 'depois do fim real, um novo clique passa');
+    assert.equal(postsRecebidos(panel), 2);
+  } finally { await h.close(); await panel.close(); }
+});
+
+test('proxy: a consulta /__hub/atualizacao continua dizendo "atualizando" depois de o navegador sair, até o fim real', async () => {
+  const panel = await startPanel();
+  panel.delayMs = 500;
+  const h = await proxyHarness(panel);
+  try {
+    await postEDesiste(h.port, '/d/meu-painel/api/atualizar', 100);
+    await sleep(100);
+    assert.equal((await getJson(h.port, '/d/meu-painel/__hub/atualizacao')).json.atualizando, true);
+    await sleep(600);
+    assert.equal((await getJson(h.port, '/d/meu-painel/__hub/atualizacao')).json.atualizando, false);
+  } finally { await h.close(); await panel.close(); }
+});
+
+test('proxy: se o navegador saiu e o painel termina com ERRO, o Hub registra o erro com o motivo (e solta a marca)', async () => {
+  const panel = await startPanel();
+  panel.delayMs = 300;
+  panel.mode = 'fail500';
+  const h = await proxyHarness(panel);
+  try {
+    await postEDesiste(h.port, '/d/meu-painel/api/atualizar', 80);
+    await sleep(500);
+    assert.equal(h.rows.get('d1').lastUpdateStatus, 'error');
+    assert.match(h.rows.get('d1').lastUpdateError, /status 500/);
+    assert.equal(h.svc.isUpdating('d1'), false);
+  } finally { await h.close(); await panel.close(); }
+});
+
+test('proxy: painel que CORTA a conexão no meio da resposta = erro registrado ("interrompida") e o navegador NÃO fica esperando para sempre', { timeout: 8000 }, async () => {
+  const panel = await startPanel();
+  panel.delayMs = 100;
+  panel.mode = 'cut';
+  const h = await proxyHarness(panel);
+  try {
+    // o navegador precisa ver a conexão terminar (fim normal ou corte); antes do ajuste ela ficava aberta
+    const desfecho = await new Promise<string>((resolve) => {
+      const r = http.request({ host: '127.0.0.1', port: h.port, path: '/d/meu-painel/api/atualizar', method: 'POST', headers: { 'content-length': '0' } }, (res) => {
+        res.on('end', () => resolve('fim'));
+        res.on('aborted', () => resolve('cortada'));
+        res.on('error', () => resolve('cortada'));
+        res.on('close', () => resolve('cortada'));
+        res.resume();
+      });
+      r.on('error', () => resolve('erro'));
+      r.end();
+    });
+    assert.notEqual(desfecho, 'fim', 'a resposta foi cortada pelo painel; não pode parecer completa');
+    await sleep(100);
+    assert.equal(h.rows.get('d1').lastUpdateStatus, 'error');
+    assert.match(h.rows.get('d1').lastUpdateError, /interrompida/);
+    assert.equal(h.svc.isUpdating('d1'), false);
+  } finally { await h.close(); await panel.close(); }
+});
+
+test('proxy: painel fora do ar → 502 para o navegador e erro no selo (não fica "atualizando" para sempre)', async () => {
+  const panel = await startPanel();
+  const h = await proxyHarness(panel);
+  await panel.close();                                  // painel cai antes do clique
+  try {
+    assert.equal((await postFull(h.port, '/d/meu-painel/api/atualizar')).status, 502);
+    await sleep(100);
+    assert.equal(h.rows.get('d1').lastUpdateStatus, 'error');
+    assert.match(h.rows.get('d1').lastUpdateError, /Falha ao falar com o painel/);
+    assert.equal(h.svc.isUpdating('d1'), false);
+  } finally { await h.close(); }
+});
+
+test('proxy: o repasse mantém o caminho sem /d/<slug>, a query string, o corpo e leva o usuário nos cabeçalhos X-Hub-*', async () => {
+  const panel = await startPanel();
+  const h = await proxyHarness(panel, {}, { hubUser: { name: 'Maria da Silva', email: 'maria@exemplo.invalid' } });
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const corpo = JSON.stringify({ fonte: 'todas' });
+      const r = http.request({ host: '127.0.0.1', port: h.port, path: '/d/meu-painel/api/atualizar?forcar=1', method: 'POST',
+        headers: { 'content-type': 'application/json', 'content-length': String(Buffer.byteLength(corpo)), cookie: 'dauth=abc' } }, (res) => { res.resume(); res.on('end', resolve); });
+      r.on('error', reject);
+      r.end(corpo);
+    });
+    assert.equal(panel.lastUrl, '/api/atualizar?forcar=1');
+    assert.equal(panel.lastBody, JSON.stringify({ fonte: 'todas' }));
+    assert.equal(panel.lastHeaders['x-hub-user-name'], 'Maria da Silva');
+    assert.equal(panel.lastHeaders['x-hub-user-email'], 'maria@exemplo.invalid');
+    assert.equal(panel.lastHeaders['cookie'], 'dauth=abc');
+    assert.match(String(panel.lastHeaders['host']), /^localhost:\d+$/);
+  } finally { await h.close(); await panel.close(); }
+});
+
+test('proxy: se um middleware já leu o corpo (req.body), o repasse regrava o corpo e o pedido termina', async () => {
+  const panel = await startPanel();
+  const h = await proxyHarness(panel, {}, { parseBody: true });
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const corpo = JSON.stringify({ so: 'um teste' });
+      const r = http.request({ host: '127.0.0.1', port: h.port, path: '/d/meu-painel/api/atualizar', method: 'POST',
+        headers: { 'content-type': 'application/json', 'content-length': String(Buffer.byteLength(corpo)) } }, (res) => { res.resume(); res.on('end', resolve); });
+      r.on('error', reject);
+      r.end(corpo);
+    });
+    assert.equal(panel.lastBody, JSON.stringify({ so: 'um teste' }));
+    await sleep(50);
+    assert.equal(h.rows.get('d1').lastUpdateStatus, 'ok');
   } finally { await h.close(); await panel.close(); }
 });
 
