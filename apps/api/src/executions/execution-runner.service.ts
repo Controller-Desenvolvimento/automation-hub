@@ -1,5 +1,5 @@
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
-import { access, writeFile, unlink } from 'node:fs/promises';
+import { access, readdir, readFile, stat, writeFile, unlink } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import os from 'node:os';
 import { join, relative } from 'node:path';
@@ -12,6 +12,14 @@ import { INTERRUPTED_BY_RESTART_MESSAGE } from './interrupted';
 import { findStalledExecutions, getStallTimeoutMs, stallMessage } from './stall-watchdog';
 import { NotificationsService } from '../notifications/notifications.service';
 import { MailService } from '../mail/mail.service';
+import {
+  cleanWarnings,
+  MAX_SCREENSHOT_BYTES,
+  MAX_SCREENSHOTS,
+  SCREENSHOT_NAME_PATTERN,
+  type AlertScreenshot,
+  type ExtrasInput,
+} from '../mail/alert-extras';
 import { restartFailedInputFrom } from '../mail/schedule-check-alert';
 import { resolveHubBaseUrl, type ScheduledExecutionAlertKind } from '../mail/scheduled-execution-alert';
 import { errorRestartConfig } from '../scheduled-tasks/schedule-checks';
@@ -50,6 +58,8 @@ export class ExecutionRunnerService implements OnModuleInit, OnModuleDestroy {
   // Execuções que o watchdog encerrou por falta de atividade → mensagem que
   // vira o motivo do erro (em vez do genérico "Comando finalizado com codigo").
   private readonly stalledExecutions = new Map<string, string>();
+  // Avisos que o robô registrou (AH_ALERT|texto) por execução: viram um e-mail "Atenção" (sucesso) ou uma seção do e-mail de erro.
+  private readonly robotAlerts = new Map<string, string[]>();
   private timer?: NodeJS.Timeout;
   private isProcessingQueue = false;
 
@@ -351,11 +361,17 @@ export class ExecutionRunnerService implements OnModuleInit, OnModuleDestroy {
 
       await this.executionsService.log(execution.id, 'info', 'Execucao finalizada com sucesso.');
       await this.maybeNotify(execution.id, execution.robot.name, 'success');
+      this.alertScheduledWarnings(execution.id, this.takeRobotAlerts(execution.id));
     } catch (error) {
       const message =
         this.stalledExecutions.get(execution.id) ??
         (error instanceof Error ? error.message : 'Falha inesperada durante a execucao');
       const current = await this.executionsService.getExecution(execution.id);
+      // O print do robô precisa ser lido ANTES de a saída ser empacotada (o zip apaga os arquivos originais).
+      const extras: ExtrasInput = {
+        warnings: this.takeRobotAlerts(execution.id),
+        screenshots: await this.collectErrorScreenshots(execution.id),
+      };
 
       try {
         await this.zipOutputDirectory(execution.id);
@@ -369,12 +385,13 @@ export class ExecutionRunnerService implements OnModuleInit, OnModuleDestroy {
         await this.executionsService.markAsError(execution.id, message);
         await this.executionsService.log(execution.id, 'error', message);
         await this.maybeNotify(execution.id, execution.robot.name, 'error');
-        this.alertScheduledFailure(execution.id, this.stalledExecutions.has(execution.id) ? 'stalled' : 'error');
+        this.alertScheduledFailure(execution.id, this.stalledExecutions.has(execution.id) ? 'stalled' : 'error', extras);
       }
     } finally {
       this.runningProcesses.delete(execution.id);
       this.stoppedExecutions.delete(execution.id);
       this.stalledExecutions.delete(execution.id);
+      this.robotAlerts.delete(execution.id);
       void this.processQueue();
     }
   }
@@ -382,7 +399,7 @@ export class ExecutionRunnerService implements OnModuleInit, OnModuleDestroy {
   // E-mail para a Inovação quando uma execução AGENDADA termina mal (erro, travamento ou interrupção).
   // Execuções manuais não entram (getScheduledExecutionForAlert devolve null). Dispara e esquece: o envio
   // por SMTP pode demorar e não pode segurar a fila nem o encerramento da execução.
-  private alertScheduledFailure(executionId: string, kind: ScheduledExecutionAlertKind) {
+  private alertScheduledFailure(executionId: string, kind: ScheduledExecutionAlertKind, extras?: ExtrasInput) {
     void (async () => {
       const data = await this.executionsService.getScheduledExecutionForAlert(executionId);
       if (!data) return;
@@ -400,7 +417,7 @@ export class ExecutionRunnerService implements OnModuleInit, OnModuleDestroy {
       const skipped = isFinal ? await this.executionsService.collectSkippedDependents(data.cycleFirstId) : [];
 
       // Reinício automático (2ª tentativa) que também terminou mal: UM e-mail final, com a história toda.
-      const restartInput = data.attempt >= 2 ? restartFailedInputFrom(data, executionId, baseUrl, skipped) : null;
+      const restartInput = data.attempt >= 2 ? restartFailedInputFrom(data, executionId, baseUrl, skipped, extras) : null;
       if (restartInput) {
         await this.mailService.sendRestartFailedAlert(restartInput);
         return;
@@ -416,10 +433,58 @@ export class ExecutionRunnerService implements OnModuleInit, OnModuleDestroy {
         finishedAt: data.finishedAt,
         errorMessage: data.errorMessage,
         skipped,
+        warnings: extras?.warnings,
+        screenshots: extras?.screenshots,
       });
     })().catch((error) => {
       this.logger.warn(`Alerta de e-mail do agendamento falhou para a execucao ${executionId}: ${String(error)}`);
     });
+  }
+
+  // Avisos do robô (AH_ALERT) desta execução, já limpos (sem repetidos, tamanho e quantidade limitados).
+  private takeRobotAlerts(executionId: string): string[] {
+    return cleanWarnings(this.robotAlerts.get(executionId));
+  }
+
+  // A execução AGENDADA terminou com sucesso mas o robô registrou avisos: um e-mail "Atenção". Execução manual não
+  // manda e-mail (os avisos ficam no log da execução). Dispara e esquece; nunca atrapalha a execução.
+  private alertScheduledWarnings(executionId: string, warnings: string[]) {
+    if (warnings.length === 0) return;
+    void (async () => {
+      const data = await this.executionsService.getScheduledExecutionForAlert(executionId);
+      if (!data) return;
+      await this.mailService.sendScheduledWarningAlert({
+        robotName: data.robotName,
+        scheduleName: data.scheduleName,
+        executionId,
+        startedAt: data.startedAt,
+        finishedAt: data.finishedAt,
+        warnings,
+        baseUrl: resolveHubBaseUrl(),
+      });
+    })().catch((error) => {
+      this.logger.warn(`Aviso por e-mail do agendamento falhou para a execucao ${executionId}: ${String(error)}`);
+    });
+  }
+
+  // Print que o robô deixou na pasta de saída (erro_*.png/.jpg): até 2, com no máximo 2 MB cada, o mais recente primeiro.
+  // Nunca lança (sem print, o e-mail sai igual, só sem a imagem).
+  private async collectErrorScreenshots(executionId: string): Promise<AlertScreenshot[]> {
+    try {
+      const dir = outputDir(executionId);
+      const names = (await readdir(dir)).filter((n) => SCREENSHOT_NAME_PATTERN.test(n)).sort().reverse();
+      const found: AlertScreenshot[] = [];
+      for (const name of names) {
+        if (found.length >= MAX_SCREENSHOTS) break;
+        const full = join(dir, name);
+        const info = await stat(full);
+        if (!info.isFile() || info.size === 0 || info.size > MAX_SCREENSHOT_BYTES) continue;
+        found.push({ filename: name, content: await readFile(full) });
+      }
+      return found;
+    } catch {
+      return [];
+    }
   }
 
   private async maybeNotify(executionId: string, robotName: string, status: 'success' | 'error') {
@@ -646,9 +711,23 @@ export class ExecutionRunnerService implements OnModuleInit, OnModuleDestroy {
       return;
     }
 
-    const logMatch = line.match(/^AH_LOG\|(info|warn|error)\|(.*)$/i);
+    const alertMatch = line.match(/^AH_ALERT\|(.*)$/);
+    if (alertMatch) {
+      const message = alertMatch[1].trim();
+      if (message) {
+        const list = this.robotAlerts.get(executionId) ?? [];
+        // Guarda um pouco mais que o limite do e-mail: o resto é descartado na hora de montar (cleanWarnings).
+        if (list.length < 50) list.push(message);
+        this.robotAlerts.set(executionId, list);
+        await this.executionsService.log(executionId, 'warn', `AVISO: ${message}`);
+      }
+      return;
+    }
+
+    const logMatch = line.match(/^AH_LOG\|(info|warn|warning|error)\|(.*)$/i);
     if (logMatch) {
-      const level = logMatch[1].toLowerCase();
+      // "warning" (usado por alguns robôs) é o mesmo que "warn".
+      const level = logMatch[1].toLowerCase() === 'warning' ? 'warn' : logMatch[1].toLowerCase();
       const message = logMatch[2].trim();
       if (level === 'error' && message) {
         const running = this.runningProcesses.get(executionId);

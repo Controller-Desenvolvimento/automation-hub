@@ -3,6 +3,21 @@
 Mudanças do Automation Hub por data. Este arquivo é **público**: descreve o que mudou no produto, no banco e na
 configuração, sem dados de infraestrutura. O desenho detalhado de cada funcionalidade está no `CLAUDE.md`.
 
+## 2026-11-16 — Avisos do robô por e-mail (sem parar) e print da tela no e-mail de erro
+
+### Novo
+- **`AH_ALERT|texto`: aviso do robô sem parar a execução.** O robô imprime essa linha e o Hub guarda o aviso no log
+  ("AVISO: ...") e, no fim de uma execução **agendada**, manda **um e-mail "Atenção"** com os avisos mesmo que ela tenha
+  terminado com sucesso. Se a execução terminar em erro, os avisos vão numa seção do próprio e-mail de erro (e do e-mail
+  final do reinício). Avisos repetidos contam uma vez; no máximo 10 por e-mail, 300 caracteres cada. Execução manual não
+  manda e-mail (os avisos ficam no log). `SCHEDULE_ALERT_EMAILS=false` desliga também este e-mail.
+- **Print da tela no e-mail de erro.** O robô que salvar uma imagem `erro_*.png` (ou `.jpg`) na pasta de saída da execução
+  (`AUTOMATION_OUTPUT_DIR`) tem essa imagem **anexada** ao e-mail de erro de execução agendada (até 2 imagens de 2 MB, lidas
+  antes de a saída ser empacotada) e aparece dentro do e-mail. Os robôs devem borrar os dados antes de salvar (privacidade);
+  a imagem também fica na tela da execução, como os outros arquivos de saída (retenção de 30 dias).
+- `AH_LOG|warning|...` agora vale como `warn` (antes aparecia como texto cru "AH_LOG|warning|...").
+- Sem mudança no banco.
+
 ## 2026-11-16 — Reinício automático também quando o agendamento termina com erro
 
 ### Novo
