@@ -96,3 +96,43 @@ test('parseLimitField: não enviado, vazio, válido, inválido', () => {
   assert.deepEqual(parseLimitField('90'), { present: true, ok: true, value: 90 });
   for (const bad of ['0', '1441', 'abc', '2.5', -3]) assert.equal((parseLimitField(bad) as any).ok, false, String(bad));
 });
+
+test('ciclo: erro na 1ª tentativa COM reinício por erro ligado = pendente durante a espera + carência; depois falhou', async () => {
+  const { errorRestartGapMs } = await import('../src/scheduled-tasks/schedule-dependency');
+  const gap = errorRestartGapMs({ enabled: true, delayMs: 5 * 60_000 });
+  assert.equal(gap, 5 * 60_000 + RESTART_GAP_MS);
+  const erro = (ms: number) => snap({ status: 'error', finishedAt: ago(ms), errorMessage: 'Download incompleto' });
+  // dentro da espera do reinício: quem depende deste ciclo continua esperando
+  assert.deepEqual(resolveCycle({ first: erro(60_000), restart: null, now, restartExpected: true, errorRestartGapMs: gap }), { state: 'pending' });
+  assert.deepEqual(resolveCycle({ first: erro(7 * 60_000), restart: null, now, restartExpected: true, errorRestartGapMs: gap }), { state: 'pending' });
+  // passou da espera + carência e o reinício nunca apareceu: falhou de vez
+  assert.equal(resolveCycle({ first: erro(gap! + 1000), restart: null, now, restartExpected: true, errorRestartGapMs: gap }).state, 'failed');
+});
+
+test('ciclo: erro na 1ª tentativa continua falha imediata quando o reinício por erro está desligado ou o agendamento não tem verificação', async () => {
+  const { errorRestartGapMs } = await import('../src/scheduled-tasks/schedule-dependency');
+  assert.equal(errorRestartGapMs({ enabled: false, delayMs: 5 * 60_000 }), null);
+  const erro = snap({ status: 'error', finishedAt: ago(1000), errorMessage: 'Download incompleto' });
+  assert.equal(resolveCycle({ first: erro, restart: null, now, restartExpected: true, errorRestartGapMs: null }).state, 'failed');
+  assert.equal(resolveCycle({ first: erro, restart: null, now, restartExpected: true }).state, 'failed');           // sem o parâmetro
+  assert.equal(resolveCycle({ first: erro, restart: null, now, restartExpected: false, errorRestartGapMs: 480_000 }).state, 'failed');
+});
+
+test('ciclo: com o reinício por erro já criado, vale o resultado dele (sucesso libera, erro falha com o motivo do reinício)', async () => {
+  const { errorRestartGapMs } = await import('../src/scheduled-tasks/schedule-dependency');
+  const gap = errorRestartGapMs({ enabled: true, delayMs: 5 * 60_000 });
+  const first = snap({ status: 'error', finishedAt: ago(6 * 60_000), errorMessage: 'Download incompleto' });
+  const ok = snap({ id: 'e2', status: 'success', attempt: 2, finishedAt: ago(1000) });
+  assert.deepEqual(resolveCycle({ first, restart: ok, now, restartExpected: true, errorRestartGapMs: gap }), { state: 'success' });
+  const ruim = snap({ id: 'e2', status: 'error', attempt: 2, finishedAt: ago(1000), errorMessage: 'falhou de novo' });
+  const r = resolveCycle({ first, restart: ruim, now, restartExpected: true, errorRestartGapMs: gap });
+  assert.equal(r.state, 'failed');
+  assert.match((r as any).detail, /falhou de novo/);
+});
+
+test('ciclo: a interrupção pelo reinício do Hub continua com a carência curta (não usa a do reinício por erro)', async () => {
+  const { errorRestartGapMs } = await import('../src/scheduled-tasks/schedule-dependency');
+  const gap = errorRestartGapMs({ enabled: true, delayMs: 5 * 60_000 });
+  const interrompida = snap({ status: 'error', finishedAt: ago(RESTART_GAP_MS + 1000), errorMessage: INTERRUPTED_BY_RESTART_MESSAGE });
+  assert.equal(resolveCycle({ first: interrompida, restart: null, now, restartExpected: true, errorRestartGapMs: gap }).state, 'failed');
+});

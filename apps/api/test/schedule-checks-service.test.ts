@@ -15,10 +15,11 @@ interface Setup {
   cancelOk?: boolean;
   restartResult?: 'ok' | 'null' | 'throws';
   interrupted?: Array<{ id: string; scheduledTaskId: string }>;
+  failed?: Array<{ id: string; scheduledTaskId: string }>;
 }
 
 function montar(opts: Setup = {}) {
-  const calls = { advance: [] as Array<[string, number]>, cancel: [] as Array<[string, string]>, stop: [] as string[], restart: [] as Array<[string, string]>, logs: [] as Array<[string, string, string]> };
+  const calls = { advance: [] as Array<[string, number]>, cancel: [] as Array<[string, string]>, stop: [] as string[], restart: [] as Array<[string, string]>, logs: [] as Array<[string, string, string]>, failedQuery: [] as Array<[number, number]> };
   const slow: any[] = [];
   const restartFailed: any[] = [];
   const simple: any[] = [];
@@ -42,6 +43,7 @@ function montar(opts: Setup = {}) {
       first: (opts.attempt ?? 1) >= 2 ? { executionId: 'e0', startedAt: at(-60), finishedAt: at(-15), outcome: 'primeira tentativa travou' } : null,
     }),
     listInterruptedToRestart: async () => opts.interrupted ?? [],
+    listFailedToRestart: async (windowMs: number, delayMs: number) => { calls.failedQuery.push([windowMs, delayMs]); return opts.failed ?? []; },
     listHeldExecutions: async () => [],
     collectSkippedDependents: async () => [] as string[],
   };
@@ -152,4 +154,57 @@ test('interrompida pelo reinício do Hub: com verificação, é refeita uma vez;
   const sem = montar({ task: SEM_VERIFICACAO, interrupted: [{ id: 'ex-int', scheduledTaskId: 't1' }] });
   await sem.tick(0);
   assert.equal(sem.calls.restart.length, 0);
+});
+
+// ---- reinício por ERRO (1ª tentativa terminou em erro) ----
+async function comEnv(env: Record<string, string | undefined>, fn: () => Promise<void>) {
+  const antes: Record<string, string | undefined> = {};
+  for (const [k, v] of Object.entries(env)) { antes[k] = process.env[k]; if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+  try { await fn(); } finally { for (const [k, v] of Object.entries(antes)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; } }
+}
+
+test('erro na 1ª tentativa COM verificação por tempo: é refeito uma vez (e a consulta usa a janela e a espera padrão de 5 min)', async () => {
+  await comEnv({ SCHEDULE_RESTART_ON_ERROR: undefined, SCHEDULE_ERROR_RESTART_DELAY_MINUTES: undefined }, async () => {
+    const t = montar({ failed: [{ id: 'ex-erro', scheduledTaskId: 't1' }] });
+    await t.tick(0);
+    assert.deepEqual(t.calls.restart, [['t1', 'ex-erro']]);
+    assert.deepEqual(t.calls.failedQuery, [[30 * 60_000, 5 * 60_000]]);
+    assert.ok(t.calls.logs.some(([id, , m]) => id === 'ex-erro' && /Reiniciada automaticamente/.test(m)));
+    assert.equal(t.simple.length + t.restartFailed.length, 0, 'não manda e-mail ao reiniciar');
+  });
+});
+
+test('a espera do reinício por erro é configurável (SCHEDULE_ERROR_RESTART_DELAY_MINUTES)', async () => {
+  await comEnv({ SCHEDULE_RESTART_ON_ERROR: undefined, SCHEDULE_ERROR_RESTART_DELAY_MINUTES: '2' }, async () => {
+    const t = montar({ failed: [] });
+    await t.tick(0);
+    assert.deepEqual(t.calls.failedQuery, [[30 * 60_000, 2 * 60_000]]);
+  });
+});
+
+test('erro em agendamento "sem verificação" (T em branco) NÃO é refeito: só o e-mail de erro comum', async () => {
+  await comEnv({ SCHEDULE_RESTART_ON_ERROR: undefined }, async () => {
+    const t = montar({ task: SEM_VERIFICACAO, failed: [{ id: 'ex-erro', scheduledTaskId: 't1' }] });
+    await t.tick(0);
+    assert.equal(t.calls.restart.length, 0);
+  });
+});
+
+test('SCHEDULE_RESTART_ON_ERROR=false desliga o reinício por erro (nem consulta o banco)', async () => {
+  await comEnv({ SCHEDULE_RESTART_ON_ERROR: 'false' }, async () => {
+    const t = montar({ failed: [{ id: 'ex-erro', scheduledTaskId: 't1' }] });
+    await t.tick(0);
+    assert.equal(t.calls.restart.length, 0);
+    assert.equal(t.calls.failedQuery.length, 0);
+  });
+});
+
+test('falha ao criar o reinício por erro: avisa por e-mail comum com o motivo (o e-mail da 1ª tentativa tinha sido retido)', async () => {
+  await comEnv({ SCHEDULE_RESTART_ON_ERROR: undefined }, async () => {
+    const t = montar({ failed: [{ id: 'ex-erro', scheduledTaskId: 't1' }], restartResult: 'throws' });
+    await t.tick(0);
+    assert.equal(t.simple.length, 1);
+    assert.equal(t.simple[0].kind, 'error');
+    assert.match(t.simple[0].errorMessage, /Não foi possível reiniciar automaticamente/);
+  });
 });

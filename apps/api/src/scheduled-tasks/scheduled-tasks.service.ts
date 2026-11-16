@@ -19,6 +19,7 @@ import { ensureScheduleDirs, scheduleInputDir, scheduleRoot } from '../shared/st
 import { computeNextRunAt, computeNextRunAtMultiple, parseTimeOfDay } from './schedule-utils';
 import {
   checkConfigFromTask,
+  errorRestartConfig,
   hasTimeLimit,
   parseCheckFields,
   parseLimitField,
@@ -26,7 +27,7 @@ import {
   type TaskCheckFields,
   type TaskLimitFields,
 } from './schedule-checks';
-import { dependencyFailureText, resolveCycle } from './schedule-dependency';
+import { dependencyFailureText, errorRestartGapMs, resolveCycle } from './schedule-dependency';
 
 type SaveTaskInput = {
   id?: string;
@@ -142,6 +143,7 @@ export class ScheduledTasksService {
       restart: snaps.restart,
       now: new Date(),
       restartExpected: checkConfigFromTask(dep) !== null,
+      errorRestartGapMs: errorRestartGapMs(errorRestartConfig()),
     });
     if (state.state === 'success') return { kind: 'none' };
     if (state.state === 'pending') return { kind: 'hold', cycleFirstId, dependencyName: dep.name };

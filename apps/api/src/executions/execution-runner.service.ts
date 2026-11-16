@@ -14,6 +14,7 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { MailService } from '../mail/mail.service';
 import { restartFailedInputFrom } from '../mail/schedule-check-alert';
 import { resolveHubBaseUrl, type ScheduledExecutionAlertKind } from '../mail/scheduled-execution-alert';
+import { errorRestartConfig } from '../scheduled-tasks/schedule-checks';
 import { listFilesRecursively, sanitizeFileName, toUserFileName } from '../shared/files';
 import { WINDOWS_HIDE } from '../shared/process-options';
 import { readDeployPendingSync } from '../system/deploy-state';
@@ -387,10 +388,15 @@ export class ExecutionRunnerService implements OnModuleInit, OnModuleDestroy {
       if (!data) return;
       const baseUrl = resolveHubBaseUrl();
 
-      // É o fim definitivo deste ciclo? A 2ª tentativa sempre é; na 1ª, só se nenhum reinício vem a caminho (uma
-      // interrupção pelo reinício do Hub, com verificação por tempo, ainda será refeita). Se for definitivo, quem
-      // esperava por este ciclo não vai rodar: o e-mail já os cita ("Não executou") e eles são marcados como avisados.
-      const isFinal = data.attempt >= 2 || kind !== 'interrupted' || !data.restartExpected;
+      // É o fim definitivo deste ciclo? A 2ª tentativa sempre é; na 1ª, só se nenhum reinício vem a caminho: com
+      // verificação por tempo, uma interrupção pelo reinício do Hub e (se ligado) um erro ainda serão refeitos.
+      // Se for definitivo, quem esperava por este ciclo não vai rodar: o e-mail já os cita ("Não executou") e eles
+      // são marcados como avisados.
+      const restartComing = data.attempt < 2 && data.restartExpected && (kind === 'interrupted' || errorRestartConfig().enabled);
+      const isFinal = !restartComing;
+      // Erro ou travamento da 1ª tentativa que vai ser refeita: sem e-mail agora. Só sai e-mail se a 2ª também falhar
+      // (um único, com as duas tentativas), como no reinício por T2. (A interrupção pelo reinício do Hub segue avisando.)
+      if (restartComing && kind !== 'interrupted') return;
       const skipped = isFinal ? await this.executionsService.collectSkippedDependents(data.cycleFirstId) : [];
 
       // Reinício automático (2ª tentativa) que também terminou mal: UM e-mail final, com a história toda.

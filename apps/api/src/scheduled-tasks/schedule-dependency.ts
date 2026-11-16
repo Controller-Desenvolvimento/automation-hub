@@ -9,7 +9,7 @@
 //   - ainda rodando, na fila, ou entre "cancelada em T2" e "reinício criado" → pendente (o Excel espera).
 
 import { INTERRUPTED_PREFIX } from '../executions/interrupted';
-import { T2_REASON_PREFIX } from './schedule-checks';
+import { T2_REASON_PREFIX, type ErrorRestartConfig } from './schedule-checks';
 
 export type ExecStatus = 'queued' | 'running' | 'success' | 'error' | 'canceled';
 
@@ -39,15 +39,23 @@ function describe(e: ExecSnap): string {
   return msg ? `${base}: ${msg.length > 300 ? `${msg.slice(0, 299)}…` : msg}` : base;
 }
 
-// Um reinício está a caminho? (a 1ª tentativa foi cancelada em T2 ou interrompida pelo Hub, o agendamento tem
-// verificação por tempo, e o reinício ainda não apareceu).
-function restartComing(first: ExecSnap, now: Date, restartExpected: boolean): boolean {
+// Carência para quem espera um ciclo cuja 1ª tentativa terminou em ERRO: o reinício por erro só é criado depois da
+// espera configurada (ErrorRestartConfig.delayMs) e do próximo ciclo de verificação. null = reinício por erro desligado.
+export function errorRestartGapMs(cfg: ErrorRestartConfig): number | null {
+  return cfg.enabled ? cfg.delayMs + RESTART_GAP_MS : null;
+}
+
+// Um reinício está a caminho? (a 1ª tentativa foi cancelada em T2, interrompida pelo Hub ou terminou em erro, o
+// agendamento tem verificação por tempo, e o reinício ainda não apareceu).
+function restartComing(first: ExecSnap, now: Date, restartExpected: boolean, errorGapMs: number | null): boolean {
   if (!restartExpected || first.attempt !== 1 || !first.finishedAt) return false;
   const msg = first.errorMessage ?? '';
   const byT2 = first.status === 'canceled' && msg.startsWith(T2_REASON_PREFIX);
   const byHubRestart = first.status === 'error' && msg.startsWith(INTERRUPTED_PREFIX);
-  if (!byT2 && !byHubRestart) return false;
-  return now.getTime() - first.finishedAt.getTime() < RESTART_GAP_MS;
+  const byError = first.status === 'error' && !msg.startsWith(INTERRUPTED_PREFIX) && errorGapMs !== null;
+  if (!byT2 && !byHubRestart && !byError) return false;
+  const gap = byError ? (errorGapMs as number) : RESTART_GAP_MS;
+  return now.getTime() - first.finishedAt.getTime() < gap;
 }
 
 export function resolveCycle(input: {
@@ -56,6 +64,8 @@ export function resolveCycle(input: {
   now: Date;
   // O agendamento de que se depende tem T0/T1/T2? Só então um reinício é esperado.
   restartExpected: boolean;
+  // Carência do reinício por erro (ver errorRestartGapMs). Ausente/null = um erro na 1ª tentativa já é falha definitiva.
+  errorRestartGapMs?: number | null;
 }): CycleState {
   const { first, restart, now, restartExpected } = input;
   const last = restart ?? first;
@@ -64,7 +74,7 @@ export function resolveCycle(input: {
   if (last.status === 'success') return { state: 'success' };
 
   // terminou mal (erro ou cancelada)
-  if (!restart && restartComing(first, now, restartExpected)) return { state: 'pending' };
+  if (!restart && restartComing(first, now, restartExpected, input.errorRestartGapMs ?? null)) return { state: 'pending' };
   return { state: 'failed', detail: describe(last) };
 }
 

@@ -76,3 +76,16 @@ test('parseCheckFields: não enviado, em branco, válido e inválido', () => {
     assert.equal(r.present && r.ok, false, JSON.stringify(bad));
   }
 });
+
+test('errorRestartConfig: ligado por padrão, espera de 5 min; SCHEDULE_RESTART_ON_ERROR=false desliga; espera configurável e validada', async () => {
+  const { errorRestartConfig } = await import('../src/scheduled-tasks/schedule-checks');
+  assert.deepEqual(errorRestartConfig({}), { enabled: true, delayMs: 5 * 60_000 });
+  assert.equal(errorRestartConfig({ SCHEDULE_RESTART_ON_ERROR: 'false' }).enabled, false);
+  assert.equal(errorRestartConfig({ SCHEDULE_RESTART_ON_ERROR: ' FALSE ' }).enabled, false);
+  assert.equal(errorRestartConfig({ SCHEDULE_RESTART_ON_ERROR: 'true' }).enabled, true);
+  assert.equal(errorRestartConfig({ SCHEDULE_ERROR_RESTART_DELAY_MINUTES: '2' }).delayMs, 2 * 60_000);
+  assert.equal(errorRestartConfig({ SCHEDULE_ERROR_RESTART_DELAY_MINUTES: '0' }).delayMs, 0);
+  for (const ruim of ['', '  ', 'abc', '-1', '61', 'NaN']) {
+    assert.equal(errorRestartConfig({ SCHEDULE_ERROR_RESTART_DELAY_MINUTES: ruim }).delayMs, 5 * 60_000, ruim);
+  }
+});
