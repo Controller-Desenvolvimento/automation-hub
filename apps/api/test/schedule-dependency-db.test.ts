@@ -111,7 +111,7 @@ test('disparo: ciclo do Gestta falhou → o Excel é PULADO: fica no histórico 
   if (skip) return;
   await mkTask('tg', 'Gestta 06:30', 'rg', T);
   await mkTask('tx', 'Excel 06:55', 'rx', { dependsOnTaskId: 'tg' });
-  await mkExec('cg1', 'rg', 'tg', { status: 'error', finishedAt: min(-5), errorMessage: 'Download incompleto' });
+  await mkExec('cg1', 'rg', 'tg', { status: 'error', finishedAt: min(-20), errorMessage: 'Download incompleto' }); // já passou da espera do reinício por erro
   await scheduledTasks.triggerTask('tx');
   await wait();
   const ex = await prisma.execution.findFirst({ where: { scheduledTaskId: 'tx' } });
@@ -151,7 +151,7 @@ test('disparo: agendamento do Gestta DESATIVADO → a dependência é ignorada e
   if (skip) return;
   await mkTask('tg', 'Gestta 06:30', 'rg', { ...T, isActive: false });
   await mkTask('tx', 'Excel 06:55', 'rx', { dependsOnTaskId: 'tg' });
-  await mkExec('cg1', 'rg', 'tg', { status: 'error', finishedAt: min(-5) });
+  await mkExec('cg1', 'rg', 'tg', { status: 'error', finishedAt: min(-20) });
   await scheduledTasks.triggerTask('tx');
   const ex = await prisma.execution.findFirst({ where: { scheduledTaskId: 'tx' } });
   assert.equal(ex.status, 'queued');
@@ -208,7 +208,7 @@ test('resolvedor: ciclo terminou com sucesso → o Excel é liberado e a fila po
 
 test('resolvedor: ciclo falhou → o Excel é pulado (cancelado com motivo) e sai UM e-mail de "pulado"', { skip }, async () => {
   if (skip) return;
-  await setupHeld('error', { finishedAt: new Date(), errorMessage: 'Download incompleto' });
+  await setupHeld('error', { finishedAt: min(-20), errorMessage: 'Download incompleto' });
   await (checks as any).resolveHeld(new Date());
   await wait();
   const h = await held();
@@ -221,7 +221,7 @@ test('resolvedor: ciclo falhou → o Excel é pulado (cancelado com motivo) e sa
 
 test('resolvedor: se o e-mail do Gestta já citou o Excel (dependencyNotified), não manda um segundo', { skip }, async () => {
   if (skip) return;
-  await setupHeld('error', { finishedAt: new Date(), errorMessage: 'x' });
+  await setupHeld('error', { finishedAt: min(-20), errorMessage: 'x' });
   await prisma.execution.update({ where: { id: 'hx1' }, data: { dependencyNotified: true } });
   await (checks as any).resolveHeld(new Date());
   await wait();
@@ -378,4 +378,64 @@ test('apagar o agendamento do qual se depende limpa o campo (o banco faz isso so
   await mkTask('tx', 'Excel', 'rx', { dependsOnTaskId: 'tg' });
   await prisma.scheduledTask.delete({ where: { id: 'tg' } });
   assert.equal((await prisma.scheduledTask.findUnique({ where: { id: 'tx' } })).dependsOnTaskId, null);
+});
+
+// ---------------------------------------------------------------------------------------------------------------
+// Reinício por ERRO da 1ª tentativa (agendamento com T0/T1/T2)
+// ---------------------------------------------------------------------------------------------------------------
+test('reinício por erro: a consulta pega só erro da 1ª tentativa, agendado, dentro da janela, sem reinício e que não seja interrupção', { skip }, async () => {
+  if (skip) return;
+  const { INTERRUPTED_BY_RESTART_MESSAGE } = await import('../src/executions/interrupted');
+  await mkTask('tg', 'Gestta 06:30', 'rg', T);
+  const fim = (m: number) => ({ finishedAt: min(m), startedAt: min(m - 5), createdAt: min(m - 5) });
+  await mkExec('e-ok', 'rg', 'tg', { status: 'error', errorMessage: 'Download incompleto', ...fim(-10) });
+  await mkExec('e-null', 'rg', 'tg', { status: 'error', errorMessage: null, ...fim(-10) });
+  await mkExec('e-recente', 'rg', 'tg', { status: 'error', errorMessage: 'x', ...fim(-1) });            // ainda dentro da espera
+  await mkExec('e-velha', 'rg', 'tg', { status: 'error', errorMessage: 'x', ...fim(-45) });             // fora da janela
+  await mkExec('e-int', 'rg', 'tg', { status: 'error', errorMessage: INTERRUPTED_BY_RESTART_MESSAGE, ...fim(-10) }); // outro fluxo
+  await mkExec('e-cancel', 'rg', 'tg', { status: 'canceled', errorMessage: 'cancelada', ...fim(-10) });
+  await mkExec('e-manual', 'rg', null, { status: 'error', errorMessage: 'x', ...fim(-10) });
+  await mkExec('e-refeita', 'rg', 'tg', { status: 'error', errorMessage: 'x', ...fim(-10) });
+  await mkExec('e-refeita-2', 'rg', 'tg', { status: 'success', attempt: 2, restartOfId: 'e-refeita', ...fim(-4) });
+  await mkExec('e-base', 'rg', 'tg', { status: 'error', errorMessage: 'x', ...fim(-12) });                 // tem reinício (e-seg)
+  await mkExec('e-seg', 'rg', 'tg', { status: 'error', attempt: 2, restartOfId: 'e-base', errorMessage: 'x', ...fim(-10) }); // 2ª tentativa nunca é refeita
+  const ids = (await executions.listFailedToRestart(30 * 60_000, 5 * 60_000, new Date())).map((c: any) => c.id).sort();
+  assert.deepEqual(ids, ['e-null', 'e-ok']);
+});
+
+test('reinício por erro: o verificador cria a 2ª tentativa (prioridade alta, ligada à 1ª) e não repete na verificação seguinte', { skip }, async () => {
+  if (skip) return;
+  await mkTask('tg', 'Gestta 06:30', 'rg', T);
+  await mkExec('cg1', 'rg', 'tg', { status: 'error', errorMessage: 'Download incompleto', finishedAt: min(-6) });
+  await checks.tick(new Date());
+  await checks.tick(new Date());
+  const restarts = await prisma.execution.findMany({ where: { restartOfId: 'cg1' } });
+  assert.equal(restarts.length, 1, 'uma única vez');
+  assert.equal(restarts[0].attempt, 2);
+  assert.equal(restarts[0].status, 'queued');
+  assert.equal(restarts[0].priority, 1000);
+  assert.equal(sent.simple.length + sent.restartFailed.length, 0, 'sem e-mail ao reiniciar');
+});
+
+test('reinício por erro: agendamento SEM T0/T1/T2 não é refeito', { skip }, async () => {
+  if (skip) return;
+  await mkTask('tg', 'Gestta 06:30', 'rg', {});
+  await mkExec('cg1', 'rg', 'tg', { status: 'error', errorMessage: 'x', finishedAt: min(-6) });
+  await checks.tick(new Date());
+  assert.equal(await prisma.execution.count({ where: { restartOfId: 'cg1' } }), 0);
+});
+
+test('reinício por erro: quem depende do ciclo continua RETIDO durante a espera (não é pulado) e é liberado se o reinício dá certo', { skip }, async () => {
+  if (skip) return;
+  await setupHeld('error', { finishedAt: min(-2), errorMessage: 'Download incompleto' });
+  await (checks as any).resolveHeld(new Date());
+  let h = await held();
+  assert.equal(h.waitingOnExecutionId, 'cg1', 'ainda esperando o reinício');
+  assert.equal(h.status, 'queued');
+  assert.equal(sent.skipped.length, 0);
+
+  await mkExec('cg2', 'rg', 'tg', { status: 'success', attempt: 2, restartOfId: 'cg1', finishedAt: new Date() });
+  await (checks as any).resolveHeld(new Date());
+  h = await held();
+  assert.equal(h.waitingOnExecutionId, null, 'o reinício deu certo: liberado');
 });

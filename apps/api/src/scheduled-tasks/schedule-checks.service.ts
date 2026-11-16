@@ -9,6 +9,8 @@ import {
   checkConfigFromTask,
   decideCheck,
   effectiveMaxRuntime,
+  ERROR_RESTART_WINDOW_MS,
+  errorRestartConfig,
   isOverLimit,
   limitReason,
   markTimes,
@@ -16,7 +18,7 @@ import {
   t2Reason,
   type CheckConfig,
 } from './schedule-checks';
-import { dependencyFailureText, resolveCycle } from './schedule-dependency';
+import { dependencyFailureText, errorRestartGapMs, resolveCycle } from './schedule-dependency';
 import { ScheduledTasksService } from './scheduled-tasks.service';
 
 const TICK_INTERVAL_MS = 30 * 1000;
@@ -63,6 +65,7 @@ export class ScheduleChecksService implements OnModuleInit, OnModuleDestroy {
     try {
       await this.checkRunning(now);
       await this.restartInterrupted(now);
+      await this.restartFailed(now);
       // Por último: assim um reinício criado neste mesmo ciclo já conta como "pendente" para quem espera.
       await this.resolveHeld(now);
     } catch (err) {
@@ -249,6 +252,7 @@ export class ScheduleChecksService implements OnModuleInit, OnModuleDestroy {
           restart: snaps.restart,
           now,
           restartExpected: depTask ? checkConfigFromTask(depTask) !== null : false,
+          errorRestartGapMs: errorRestartGapMs(errorRestartConfig()),
         });
         if (state.state === 'pending') continue;
 
@@ -310,6 +314,30 @@ export class ScheduleChecksService implements OnModuleInit, OnModuleDestroy {
         await this.restart(candidate.id, task.id, task.name, robotName);
       } catch (err) {
         this.logger.error(`Reinício da execução interrompida ${candidate.id} falhou: ${String(err)}`);
+      }
+    }
+  }
+
+  // Execução agendada (1ª tentativa) que terminou em ERRO: com verificação por tempo, é refeita uma vez depois de uma
+  // espera (SCHEDULE_ERROR_RESTART_DELAY_MINUTES, padrão 5). O e-mail de erro da 1ª tentativa fica retido (ver o runner);
+  // só sai e-mail se a 2ª também falhar. Sem verificação por tempo: só o e-mail de erro comum, como sempre.
+  // SCHEDULE_RESTART_ON_ERROR=false desliga tudo isto.
+  private async restartFailed(now: Date) {
+    const cfg = errorRestartConfig();
+    if (!cfg.enabled) return;
+    const candidates = await this.executionsService.listFailedToRestart(ERROR_RESTART_WINDOW_MS, cfg.delayMs, now);
+    if (candidates.length === 0) return;
+    const tasks = await this.loadTasks([...new Set(candidates.map((c) => c.scheduledTaskId!))]);
+
+    for (const candidate of candidates) {
+      try {
+        const task = tasks.get(candidate.scheduledTaskId!);
+        if (!task || !checkConfigFromTask(task)) continue;
+        const robotName = (await this.prisma.execution.findUnique({ where: { id: candidate.id }, select: { robot: { select: { name: true } } } }))?.robot.name ?? task.name;
+        this.logger.warn(`Execução agendada ${candidate.id} (${task.name}) terminou em erro: refazendo uma vez.`);
+        await this.restart(candidate.id, task.id, task.name, robotName);
+      } catch (err) {
+        this.logger.error(`Reinício da execução com erro ${candidate.id} falhou: ${String(err)}`);
       }
     }
   }

@@ -123,6 +123,30 @@ export interface TaskLimitFields extends TaskCheckFields {
   maxRuntimeMinutes: number | null;
 }
 
+// ---------------------------------------------------------------------------------------------------------------
+// Reinício por ERRO: a 1ª tentativa de uma execução agendada COM verificação (T0/T1/T2) que termina em erro é refeita
+// uma vez, depois de uma espera. Só a 2ª tentativa mandando e-mail, se também falhar (como no reinício por T2).
+// ---------------------------------------------------------------------------------------------------------------
+
+export const ERROR_RESTART_DEFAULT_DELAY_MINUTES = 5;
+// Só refaz erro recente: depois disso o próximo horário do agendamento já cuida de rodar de novo.
+export const ERROR_RESTART_WINDOW_MS = 30 * 60 * 1000;
+
+export interface ErrorRestartConfig {
+  enabled: boolean;
+  delayMs: number;
+}
+
+// SCHEDULE_RESTART_ON_ERROR=false desliga (volta a só mandar o e-mail de erro);
+// SCHEDULE_ERROR_RESTART_DELAY_MINUTES = espera antes de refazer (0 a 60, padrão 5).
+export function errorRestartConfig(env: Record<string, string | undefined> = process.env): ErrorRestartConfig {
+  const enabled = (env.SCHEDULE_RESTART_ON_ERROR ?? '').trim().toLowerCase() !== 'false';
+  const rawText = (env.SCHEDULE_ERROR_RESTART_DELAY_MINUTES ?? '').trim();
+  const raw = Number(rawText);
+  const minutes = rawText !== '' && Number.isFinite(raw) && raw >= 0 && raw <= 60 ? raw : ERROR_RESTART_DEFAULT_DELAY_MINUTES;
+  return { enabled, delayMs: minutes * 60_000 };
+}
+
 // Só vale sem T0/T1/T2: com verificação, o T2 já é o teto.
 export function effectiveMaxRuntime(task: TaskLimitFields): number | null {
   if (checkConfigFromTask(task)) return null;

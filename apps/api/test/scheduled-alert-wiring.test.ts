@@ -160,18 +160,84 @@ test('2ª tentativa interrompida pelo reinício do Hub também vira o e-mail fin
 });
 
 // ---- dependência entre agendamentos ----
-test('falha definitiva do ciclo cita no e-mail os agendamentos que esperavam por ele ("Não executou")', async () => {
-  const { runner, alertas } = montar({ agendada: true });
+function montarCiclo(opts: { attempt: number; restartExpected: boolean }) {
+  const base = montar({ agendada: true });
   const chamadas: string[] = [];
-  runner.executionsService.collectSkippedDependents = async (id: string) => { chamadas.push(id); return ['Atualizar Planilhas Excel (BI) — Excel 06:55']; };
-  runner.executionsService.getScheduledExecutionForAlert = async () => ({
-    robotName: 'Gestta', scheduleName: 'Gestta 06:30', scheduledTaskId: 't1', attempt: 1, cycleFirstId: 'ciclo-1', restartExpected: true,
+  base.runner.executionsService.collectSkippedDependents = async (id: string) => { chamadas.push(id); return ['Atualizar Planilhas Excel (BI) — Excel 06:55']; };
+  base.runner.executionsService.getScheduledExecutionForAlert = async () => ({
+    robotName: 'Gestta', scheduleName: 'Gestta 06:30', scheduledTaskId: 't1', attempt: opts.attempt, cycleFirstId: 'ciclo-1', restartExpected: opts.restartExpected,
     startedAt: new Date(), finishedAt: new Date(), errorMessage: 'Download incompleto', first: null,
   });
+  return { ...base, chamadas };
+}
+
+// Roda `fn` com SCHEDULE_RESTART_ON_ERROR = valor (e restaura no fim).
+async function comReinicioPorErro(valor: string | undefined, fn: () => Promise<void>) {
+  const antes = process.env.SCHEDULE_RESTART_ON_ERROR;
+  if (valor === undefined) delete process.env.SCHEDULE_RESTART_ON_ERROR; else process.env.SCHEDULE_RESTART_ON_ERROR = valor;
+  try { await fn(); } finally { if (antes === undefined) delete process.env.SCHEDULE_RESTART_ON_ERROR; else process.env.SCHEDULE_RESTART_ON_ERROR = antes; }
+}
+
+test('falha definitiva do ciclo (sem verificação por tempo: nenhum reinício vem) cita os agendamentos que esperavam ("Não executou")', async () => {
+  const { runner, alertas, chamadas } = montarCiclo({ attempt: 1, restartExpected: false });
   await runner.runExecution('ciclo-1');
   await esperar();
   assert.deepEqual(chamadas, ['ciclo-1']);
+  assert.equal(alertas.length, 1);
   assert.deepEqual(alertas[0].skipped, ['Atualizar Planilhas Excel (BI) — Excel 06:55']);
+});
+
+test('reinício por erro DESLIGADO (SCHEDULE_RESTART_ON_ERROR=false): erro na 1ª tentativa é definitivo, como antes', async () => {
+  await comReinicioPorErro('false', async () => {
+    const { runner, alertas, chamadas } = montarCiclo({ attempt: 1, restartExpected: true });
+    await runner.runExecution('ciclo-1');
+    await esperar();
+    assert.deepEqual(chamadas, ['ciclo-1']);
+    assert.equal(alertas.length, 1);
+    assert.equal(alertas[0].kind, 'error');
+  });
+});
+
+test('erro na 1ª tentativa COM verificação por tempo vai ser refeito: sem e-mail agora e sem queimar os dependentes', async () => {
+  await comReinicioPorErro(undefined, async () => {
+    const { runner, alertas, chamadas } = montarCiclo({ attempt: 1, restartExpected: true });
+    await runner.runExecution('ciclo-1');
+    await esperar();
+    assert.equal(alertas.length, 0, 'o e-mail fica para o fim do ciclo');
+    assert.deepEqual(chamadas, [], 'quem espera continua esperando o reinício');
+  });
+});
+
+test('travamento (watchdog) na 1ª tentativa COM verificação por tempo também espera o reinício, sem e-mail', async () => {
+  await comReinicioPorErro(undefined, async () => {
+    const { runner, alertas, chamadas } = montarCiclo({ attempt: 1, restartExpected: true });
+    runner.stalledExecutions.set('ciclo-1', 'Execução sem nenhuma saída há 45 min.');
+    await runner.runExecution('ciclo-1');
+    await esperar();
+    assert.equal(alertas.length, 0);
+    assert.deepEqual(chamadas, []);
+  });
+});
+
+test('erro na 2ª tentativa (o reinício) é sempre o fim do ciclo: cita os dependentes no e-mail final', async () => {
+  await comReinicioPorErro(undefined, async () => {
+    const { runner, final, chamadas } = (() => {
+      const b = montarReinicio();
+      const chamadas: string[] = [];
+      b.runner.executionsService.collectSkippedDependents = async (id: string) => { chamadas.push(id); return ['Excel']; };
+      b.runner.executionsService.getScheduledExecutionForAlert = async () => ({
+        robotName: 'Gestta', scheduleName: 'Gestta 06:30', scheduledTaskId: 't1', attempt: 2, cycleFirstId: 'e0', restartExpected: true,
+        startedAt: new Date(), finishedAt: new Date(), errorMessage: 'falhou de novo',
+        first: { executionId: 'e0', startedAt: new Date(), finishedAt: new Date(), outcome: 'Download incompleto' },
+      });
+      return { ...b, chamadas };
+    })();
+    await runner.runExecution('exec-r9');
+    await esperar();
+    assert.equal(final.length, 1);
+    assert.deepEqual(chamadas, ['e0']);
+    assert.deepEqual(final[0].skipped, ['Excel']);
+  });
 });
 
 test('interrupção pelo reinício do Hub que AINDA será refeita não queima os agendamentos dependentes', async () => {

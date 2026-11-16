@@ -3,6 +3,22 @@
 Mudanças do Automation Hub por data. Este arquivo é **público**: descreve o que mudou no produto, no banco e na
 configuração, sem dados de infraestrutura. O desenho detalhado de cada funcionalidade está no `CLAUDE.md`.
 
+## 2026-11-16 — Reinício automático também quando o agendamento termina com erro
+
+### Novo
+- **Erro na 1ª tentativa de um agendamento com T0/T1/T2 também é refeito uma vez.** Antes só era refeito o que passava do
+  T2 (45 min, por exemplo) ou era interrompido pelo reinício do Hub; um robô que terminava cedo com erro só mandava o
+  e-mail e esperava o próximo horário do dia. Agora, depois de uma espera (5 min por padrão), o Hub roda de novo, uma única
+  vez, com os mesmos parâmetros e prioridade na fila. **O e-mail de erro da 1ª tentativa fica retido**: só sai e-mail se a
+  2ª também falhar (um só, com as duas tentativas), como já era no reinício por T2. Vale também para o travamento
+  (45 min sem nenhuma saída). Quem depende do ciclo (o Excel, do Gestta) continua esperando durante a espera e o
+  reinício; se o reinício der certo, é liberado.
+- Só vale para agendamentos **com** T0/T1/T2 e só para erro recente (até 30 min). Agendamento "sem verificação" segue só com o
+  e-mail de erro comum.
+- Configuração (opcional, no `.env` da API): `SCHEDULE_RESTART_ON_ERROR=false` desliga; `SCHEDULE_ERROR_RESTART_DELAY_MINUTES`
+  muda a espera (0 a 60, padrão 5).
+- Sem mudança no banco.
+
 ## 2026-11-13 — Nomes com acento vindos do Athenas e acesso aos painéis
 
 ### Novo

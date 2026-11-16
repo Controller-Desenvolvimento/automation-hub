@@ -730,6 +730,29 @@ export class ExecutionsService {
     return candidates.filter((c) => !done.has(c.id));
   }
 
+  // Execuções agendadas (1ª tentativa) que terminaram em ERRO (a interrupção pelo reinício do Hub é tratada à parte)
+  // há pelo menos `delayMs` e no máximo `windowMs`, e ainda sem reinício. Cancelada (por você, por T2, pelo teto ou
+  // "pulada" por dependência) tem status canceled e nunca entra aqui.
+  async listFailedToRestart(windowMs: number, delayMs: number, now = new Date()) {
+    const candidates = await this.prisma.execution.findMany({
+      where: {
+        status: ExecutionStatus.error,
+        scheduledTaskId: { not: null },
+        attempt: 1,
+        finishedAt: { gte: new Date(now.getTime() - windowMs), lte: new Date(now.getTime() - delayMs) },
+        OR: [{ errorMessage: null }, { NOT: { errorMessage: { startsWith: INTERRUPTED_PREFIX } } }],
+      },
+      select: { id: true, scheduledTaskId: true },
+    });
+    if (candidates.length === 0) return [];
+    const restarted = await this.prisma.execution.findMany({
+      where: { restartOfId: { in: candidates.map((c) => c.id) } },
+      select: { restartOfId: true },
+    });
+    const done = new Set(restarted.map((r) => r.restartOfId));
+    return candidates.filter((c) => !done.has(c.id));
+  }
+
   async getStatus(id: string) {
     const execution = await this.prisma.execution.findUnique({
       where: { id },
