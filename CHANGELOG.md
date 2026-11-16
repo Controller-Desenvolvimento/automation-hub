@@ -3,6 +3,20 @@
 Mudanças do Automation Hub por data. Este arquivo é **público**: descreve o que mudou no produto, no banco e na
 configuração, sem dados de infraestrutura. O desenho detalhado de cada funcionalidade está no `CLAUDE.md`.
 
+## 2026-11-16 — "Atualizar" de dentro do painel acompanhado até o fim real
+
+### Corrigido
+- **O botão "Atualizar" de dentro do painel deixava de ser acompanhado aos 2 minutos.** O IIS (que fica na frente do Hub)
+  encerra requisições longas aos 2 min; o Hub entendia isso como "o navegador fechou" e voltava o estado anterior, mas o
+  painel seguia atualizando (o Indicadores Fiscal leva ~7 min). Efeitos: o "Atualizado há…" na lista de painéis não andava
+  depois de uma atualização feita por dentro, e o bloqueio de atualização duplicada expirava aos 2 min (um novo clique
+  disparava uma segunda carga com a primeira ainda rodando). Agora o Hub repassa esse clique por uma **conexão própria** com
+  o painel, independente do navegador e do IIS: se o navegador sai, o Hub continua esperando a resposta do painel e só então
+  marca o fim (ok ou erro, com o motivo). Até lá, a lista mostra "atualizando", a consulta `/__hub/atualizacao` diz que está
+  atualizando e um novo clique é recusado (409). Painel que corta a conexão no meio gera erro registrado e o navegador não
+  fica esperando. O botão do Hub (de fora) já funcionava assim e não mudou.
+- Sem mudança no banco nem nas telas dos painéis.
+
 ## 2026-11-16 — Avisos do robô por e-mail (sem parar) e print da tela no e-mail de erro
 
 ### Novo
