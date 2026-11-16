@@ -11,10 +11,12 @@ import {
 } from './schedule-check-alert';
 import {
   buildScheduledExecutionAlert,
+  buildScheduledWarningAlert,
   scheduleAlertsEnabled,
   type BuiltEmail,
   type ScheduledExecutionAlertInput,
 } from './scheduled-execution-alert';
+import type { ScheduledWarningInput } from './alert-extras';
 
 const FROM    = process.env.MAIL_FROM     ?? 'inovacao01@controller-rnc.com.br';
 const PASS    = process.env.MAIL_PASSWORD ?? '';
@@ -72,6 +74,7 @@ export class MailService {
         subject: mail.subject,
         text: mail.text,
         html: mail.html,
+        attachments: mail.attachments,
       });
       this.logger.log(`Alerta (${label}) enviado para: ${BI_TO.join(', ')} — ${mail.subject}`);
     } catch (err) {
@@ -117,6 +120,11 @@ export class MailService {
     }
   }
 
+  // Execução AGENDADA que terminou com SUCESSO, mas o robô registrou avisos (AH_ALERT). Nunca lança.
+  sendScheduledWarningAlert(input: ScheduledWarningInput): Promise<void> {
+    return this.deliverAlert(buildScheduledWarningAlert(input), 'aviso do robô');
+  }
+
   // Execução AGENDADA que falhou, travou ou foi interrompida → mesma lista de destinatários dos alertas de BI.
   // Nunca lança: um problema de e-mail não pode atrapalhar o fluxo de execuções.
   async sendScheduledExecutionAlert(input: ScheduledExecutionAlertInput): Promise<void> {
@@ -134,6 +142,7 @@ export class MailService {
         subject: mail.subject,
         text: mail.text,
         html: mail.html,
+        attachments: mail.attachments,
       });
       this.logger.log(`Alerta de agendamento (${input.kind}) enviado para: ${BI_TO.join(', ')} — ${input.robotName} / ${input.scheduleName}`);
     } catch (err) {

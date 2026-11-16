@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { limparTmp } from './_limpar-tmp';
@@ -38,6 +38,7 @@ function montar(opts: { agendada: boolean; command?: string | null; statusAtual?
     updateProgress: async () => undefined,
     getExecution: async () => ({ status: opts.statusAtual ?? 'running' }),
     markAsError: async (id: string, msg: string) => { erros.push([id, msg]); },
+    markAsSuccess: async () => undefined,
     getScheduledTaskId: async () => ({ scheduledTaskId: opts.agendada ? 't1' : null }),
     getScheduledExecutionForAlert: async () =>
       opts.agendada
@@ -47,18 +48,20 @@ function montar(opts: { agendada: boolean; command?: string | null; statusAtual?
     collectSkippedDependents: async () => [] as string[],
   };
   const notifications = { createForScheduledTaskExecution: async () => undefined };
+  const avisos: any[] = [];
   const mail = {
     sendScheduledExecutionAlert: async (input: unknown) => {
       if (opts.smtpFalha) throw new Error('SMTP fora do ar');
       alertas.push(input);
     },
+    sendScheduledWarningAlert: async (input: unknown) => { avisos.push(input); },
   };
   const runner = new Runner(executionsService, notifications, mail);
   runner.zipOutputDirectory = async () => undefined;
   runner.registerOutputFiles = async () => [];
   runner.writeExecutionMetadata = async () => undefined;
   runner.processQueue = async () => undefined;
-  return { runner, alertas, erros };
+  return { runner, alertas, erros, avisos };
 }
 
 test('execução AGENDADA que falha dispara 1 alerta de erro com os dados do agendamento', async () => {
@@ -278,4 +281,98 @@ test('execução retida por dependência não é iniciada e o motivo dela não �
   runner.executionsService.updateQueueReason = async (id: string) => { gravados.push(id); };
   await runner.updateQueuedReasons([retida, livre], 'Aguardando capacidade do servidor');
   assert.deepEqual(gravados, ['l1'], 'só a execução livre recebe o motivo da fila');
+});
+
+// ---- AH_ALERT (aviso sem parar o robô) e print da tela no e-mail de erro ----
+function robo(nome: string, corpo: string) {
+  writeFileSync(join(tmp, nome), corpo, 'utf8');
+  return `node ${nome}`;
+}
+const PNG_MINIMO = 'Buffer.from("89504e470d0a1a0a", "hex")';
+
+test('AH_ALERT: guarda o aviso, registra no log como AVISO e ignora vazio; "warning" vale como "warn"', async () => {
+  const { runner } = montar({ agendada: true });
+  const logs: Array<[string, string]> = [];
+  runner.executionsService.log = async (_id: string, level: string, msg: string) => { logs.push([level, msg]); };
+  await runner.handleProcessLine('e1', 'AH_ALERT|Coluna "Apontamento - Tempo" não encontrada', 'info');
+  await runner.handleProcessLine('e1', 'AH_ALERT|   ', 'info');
+  await runner.handleProcessLine('e1', 'AH_LOG|warning|algo estranho', 'info');
+  await runner.handleProcessLine('e1', 'AH_LOG|warn|outro', 'info');
+  assert.deepEqual(runner.robotAlerts.get('e1'), ['Coluna "Apontamento - Tempo" não encontrada']);
+  assert.deepEqual(logs, [
+    ['warn', 'AVISO: Coluna "Apontamento - Tempo" não encontrada'],
+    ['warn', 'algo estranho'],
+    ['warn', 'outro'],
+  ]);
+});
+
+test('execução AGENDADA com SUCESSO e avisos: manda UM e-mail "Atenção" com os avisos (sem repetidos)', async () => {
+  const { runner, alertas, avisos, erros } = montar({ agendada: true, command: robo('robo-aviso.js', "console.log('AH_ALERT|aviso um'); console.log('AH_ALERT|aviso um'); console.log('AH_ALERT|aviso dois');") });
+  await runner.runExecution('exec-a1');
+  await esperar(80);
+  assert.equal(erros.length, 0);
+  assert.equal(alertas.length, 0, 'sem e-mail de erro');
+  assert.equal(avisos.length, 1);
+  assert.deepEqual(avisos[0].warnings, ['aviso um', 'aviso dois']);
+  assert.equal(avisos[0].executionId, 'exec-a1');
+  assert.equal(avisos[0].scheduleName, 'Agendamento X');
+});
+
+test('sucesso SEM avisos não manda e-mail de aviso', async () => {
+  const { runner, avisos } = montar({ agendada: true, command: robo('robo-ok.js', "console.log('tudo certo');") });
+  await runner.runExecution('exec-a2');
+  await esperar(80);
+  assert.equal(avisos.length, 0);
+});
+
+test('execução MANUAL com avisos não manda e-mail (os avisos ficam só no log)', async () => {
+  const { runner, avisos } = montar({ agendada: false, command: robo('robo-aviso2.js', "console.log('AH_ALERT|aviso manual');") });
+  await runner.runExecution('exec-a3');
+  await esperar(80);
+  assert.equal(avisos.length, 0);
+});
+
+test('erro COM print e avisos: o e-mail de erro leva os avisos e a imagem (lida antes de a saída ser empacotada)', async () => {
+  const corpo = `const fs=require('fs'),path=require('path');
+console.log('AH_ALERT|aviso antes da falha');
+fs.writeFileSync(path.join(process.env.AUTOMATION_OUTPUT_DIR,'erro_2026-11-16_11-20.png'), ${PNG_MINIMO});
+fs.writeFileSync(path.join(process.env.AUTOMATION_OUTPUT_DIR,'relatorio.png'), ${PNG_MINIMO});
+console.log('AH_LOG|error|Nao achei o botao Exportar');
+process.exit(1);`;
+  const { runner, alertas } = montar({ agendada: true, command: robo('robo-erro.js', corpo) });
+  await runner.runExecution('exec-a4');
+  await esperar(100);
+  assert.equal(alertas.length, 1);
+  assert.equal(alertas[0].kind, 'error');
+  assert.match(alertas[0].errorMessage ?? 'boom', /./);
+  assert.deepEqual(alertas[0].warnings, ['aviso antes da falha']);
+  assert.equal(alertas[0].screenshots.length, 1, 'só erro_*.png, não o relatorio.png');
+  assert.equal(alertas[0].screenshots[0].filename, 'erro_2026-11-16_11-20.png');
+  assert.equal(alertas[0].screenshots[0].content.length, 8);
+});
+
+test('erro sem print nem avisos: o e-mail sai como sempre (listas vazias)', async () => {
+  const { runner, alertas } = montar({ agendada: true });
+  await runner.runExecution('exec-a5');
+  await esperar();
+  assert.equal(alertas.length, 1);
+  assert.deepEqual(alertas[0].warnings, []);
+  assert.deepEqual(alertas[0].screenshots, []);
+});
+
+test('2ª tentativa (reinício) que falha: o e-mail final leva os avisos e o print dela', async () => {
+  const corpo = `const fs=require('fs'),path=require('path');
+console.log('AH_ALERT|aviso do reinício');
+fs.writeFileSync(path.join(process.env.AUTOMATION_OUTPUT_DIR,'erro_reinicio.png'), ${PNG_MINIMO});
+process.exit(1);`;
+  const base = montarReinicio();
+  base.runner.executionsService.markAsRunning = async (id: string) => ({
+    id, inputJson: {}, files: [], robot: { id: 'r1', name: 'Robô X', command: robo('robo-erro2.js', corpo), workingDirectory: null, unitMetricKey: null },
+  });
+  await base.runner.runExecution('exec-a6');
+  await esperar(100);
+  assert.equal(base.final.length, 1);
+  assert.deepEqual(base.final[0].warnings, ['aviso do reinício']);
+  assert.equal(base.final[0].screenshots.length, 1);
+  assert.equal(base.final[0].screenshots[0].filename, 'erro_reinicio.png');
 });

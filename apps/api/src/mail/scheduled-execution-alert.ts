@@ -1,6 +1,8 @@
 // E-mail para a Inovação quando uma execução AGENDADA falha, trava ou é interrompida.
 // Só montagem de texto (sem rede, sem banco) para poder ser testada isoladamente; o envio é do MailService.
 
+import { buildExtras, type AlertScreenshot, type MailAttachment, type ScheduledWarningInput } from './alert-extras';
+
 export type ScheduledExecutionAlertKind = 'error' | 'stalled' | 'interrupted' | 'limit';
 
 export interface ScheduledExecutionAlertInput {
@@ -13,6 +15,9 @@ export interface ScheduledExecutionAlertInput {
   errorMessage: string | null;
   // Agendamentos que dependiam desta execução e por isso NÃO rodaram (ex.: "Atualizar Planilhas Excel (BI) — Excel 06:55").
   skipped?: string[];
+  // Avisos (AH_ALERT) que o robô registrou durante a execução e o print da tela no momento da falha (já borrado pelo robô).
+  warnings?: string[];
+  screenshots?: AlertScreenshot[];
   // Endereço público do Hub (ver resolveHubBaseUrl). Sem ele o e-mail sai sem o link.
   baseUrl: string | null;
 }
@@ -21,6 +26,8 @@ export interface BuiltEmail {
   subject: string;
   text: string;
   html: string;
+  // Imagens anexadas (aparecem dentro do e-mail pelo cid).
+  attachments?: MailAttachment[];
 }
 
 const MAX_REASON_CHARS = 600;
@@ -108,11 +115,93 @@ export function buildScheduledExecutionAlert(input: ScheduledExecutionAlertInput
   ];
   const skipped = (input.skipped ?? []).filter(Boolean);
   if (skipped.length > 0) lines.push(`Não executou: ${skipped.join('; ')}`);
+  const extras = buildExtras(input);
+  lines.push(...extras.text);
   if (link) lines.push('', `Abrir a execução: ${link}`);
   lines.push('', 'Este é um e-mail automático do Automation Hub.');
   const text = lines.join('\n');
 
-  return { subject, text, html: buildHtml(input, info, { started, finished, duration, reason, link }) };
+  return {
+    subject,
+    text,
+    html: buildHtml(input, info, { started, finished, duration, reason, link, extrasHtml: extras.html }),
+    attachments: extras.attachments.length > 0 ? extras.attachments : undefined,
+  };
+}
+
+// E-mail só de AVISO: a execução agendada terminou com sucesso, mas o robô registrou avisos (AH_ALERT).
+const WARNING_PALETTE = { emoji: '⚠️', title: 'Atenção: o robô registrou avisos', color: '#d97706', soft: '#fffbeb', border: '#fde68a' };
+
+export function buildScheduledWarningAlert(input: ScheduledWarningInput): BuiltEmail {
+  const link = executionLink(input.baseUrl, input.executionId);
+  const started = formatDateTime(input.startedAt);
+  const finished = formatDateTime(input.finishedAt);
+  const duration = formatDuration(input.startedAt, input.finishedAt);
+  const extras = buildExtras({ warnings: input.warnings });
+  const count = input.warnings.length;
+  const subject = `${WARNING_PALETTE.emoji} Atenção: ${input.robotName} — ${input.scheduleName}`;
+
+  const lines = [
+    `A execução agendada "${input.robotName}" terminou com sucesso, mas registrou ${count === 1 ? 'um aviso' : `${count} avisos`}.`,
+    '',
+    `Agendamento: ${input.scheduleName}`,
+    `Início: ${started}`,
+    `Fim: ${finished}`,
+    `Duração: ${duration}`,
+    ...extras.text,
+  ];
+  if (link) lines.push('', `Abrir a execução: ${link}`);
+  lines.push('', 'Este é um e-mail automático do Automation Hub.');
+
+  const button = link
+    ? `<p style="margin:24px 0 0;"><a href="${esc(link)}" style="display:inline-block;background:${WARNING_PALETTE.color};color:#ffffff;text-decoration:none;font-weight:700;font-size:14px;padding:12px 22px;border-radius:8px;">Abrir a execução no Hub</a></p>
+       <p style="margin:12px 0 0;font-size:12px;color:#6b7280;word-break:break-all;">${esc(link)}</p>`
+    : '';
+  const html = `
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:0;background-color:#f4f4f7;font-family:Arial,Helvetica,sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background-color:#f4f4f7;padding:40px 16px;">
+    <tr><td align="center">
+      <table width="100%" cellpadding="0" cellspacing="0" style="max-width:560px;background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,0.08);">
+        <tr>
+          <td style="background:${WARNING_PALETTE.color};padding:24px 32px;">
+            <p style="margin:0;font-size:11px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:#ffffff;opacity:.8;">Automation Hub</p>
+            <p style="margin:4px 0 0;font-size:18px;font-weight:700;color:#ffffff;line-height:1.3;">${WARNING_PALETTE.emoji} ${esc(WARNING_PALETTE.title)}</p>
+          </td>
+        </tr>
+        <tr>
+          <td style="padding:32px;">
+            <p style="margin:0 0 20px;font-size:15px;color:#374151;line-height:1.6;">
+              A execução agendada de <strong>${esc(input.robotName)}</strong> <strong style="color:${WARNING_PALETTE.color};">terminou com sucesso</strong>, mas registrou ${count === 1 ? 'um aviso' : `${count} avisos`} que vale conferir.
+            </p>
+            <table width="100%" cellpadding="0" cellspacing="0" style="background:${WARNING_PALETTE.soft};border:1px solid ${WARNING_PALETTE.border};border-radius:8px;">
+              <tr><td style="padding:12px 20px;">
+                <table width="100%" cellpadding="0" cellspacing="0">
+                  ${row('Agendamento', input.scheduleName)}
+                  ${row('Início', started)}
+                  ${row('Fim', finished)}
+                  ${row('Duração', duration)}
+                </table>
+              </td></tr>
+            </table>
+            ${extras.html}
+            ${button}
+            <p style="margin:24px 0 0;font-size:13px;color:#6b7280;line-height:1.6;">Este é um e-mail automático. Não responda a esta mensagem.</p>
+          </td>
+        </tr>
+        <tr>
+          <td style="background:#f9fafb;border-top:1px solid #e5e7eb;padding:16px 32px;">
+            <p style="margin:0;font-size:12px;color:#9ca3af;text-align:center;">Automation Hub · Controller-RNC</p>
+          </td>
+        </tr>
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>`.trim();
+  return { subject, text: lines.join('\n'), html };
 }
 
 function row(label: string, value: string): string {
@@ -122,7 +211,7 @@ function row(label: string, value: string): string {
 function buildHtml(
   input: ScheduledExecutionAlertInput,
   info: (typeof KIND_INFO)[ScheduledExecutionAlertKind],
-  d: { started: string; finished: string; duration: string; reason: string; link: string | null },
+  d: { started: string; finished: string; duration: string; reason: string; link: string | null; extrasHtml: string },
 ): string {
   const button = d.link
     ? `<p style="margin:24px 0 0;"><a href="${esc(d.link)}" style="display:inline-block;background:${info.color};color:#ffffff;text-decoration:none;font-weight:700;font-size:14px;padding:12px 22px;border-radius:8px;">Abrir a execução no Hub</a></p>
@@ -159,6 +248,7 @@ function buildHtml(
                 </table>
               </td></tr>
             </table>
+            ${d.extrasHtml}
             ${button}
             <p style="margin:24px 0 0;font-size:13px;color:#6b7280;line-height:1.6;">Este é um e-mail automático. Não responda a esta mensagem.</p>
           </td>

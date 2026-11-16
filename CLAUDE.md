@@ -144,8 +144,11 @@ O `ExecutionRunnerService` processa uma fila a cada 3 segundos:
 | `AH_PROGRESS\|N\|mensagem` | `AH_PROGRESS\|75\|Processando linhas` | Atualiza barra de progresso |
 | `AH_LOG\|level\|mensagem` | `AH_LOG\|info\|Arquivo lido` | Grava log com nível |
 | `AH_METRIC\|chave\|valor` | `AH_METRIC\|itens_processados\|42` | Registra métrica (usada para calcular tempo economizado) |
+| `AH_ALERT\|texto` | `AH_ALERT\|Coluna X não encontrada; usei a contagem de linhas` | Aviso que não para o robô: vira log "AVISO: ..." e, se a execução é agendada, e-mail "Atenção" (sucesso) ou seção do e-mail de erro |
 
 Qualquer linha que não case com os prefixos vira log automático.
+
+**Avisos e print nos e-mails de execução agendada** (`mail/alert-extras.ts`, `ExecutionRunnerService.takeRobotAlerts/alertScheduledWarnings/collectErrorScreenshots`): `AH_ALERT` (até 10 avisos por e-mail, sem repetidos, 300 caracteres) e uma imagem `erro_*.png|jpg` na pasta de saída (`AUTOMATION_OUTPUT_DIR`; até 2, 2 MB cada) são incluídos no e-mail de erro e no e-mail final do reinício; sucesso com avisos manda o e-mail "Atenção". O robô é quem **borra os dados** do print (o Hub anexa o que recebe). A imagem é lida ANTES de `zipOutputDirectory` (que apaga os originais). Execução manual não manda e-mail. Testes: `test/alert-extras.test.ts`, `mail-service-extras.test.ts` e os casos novos de `scheduled-alert-wiring.test.ts`.
 
 ## APIs principais
 

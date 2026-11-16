@@ -2,6 +2,7 @@
 //   - aviso de demora (T0 e T1): a execução ainda está rodando além do esperado;
 //   - e-mail final do reinício: a 2ª tentativa também não deu certo (reúne tudo num só e-mail).
 // Só montagem de texto (sem rede, sem banco); o envio é do MailService.
+import { buildExtras, type ExtrasInput } from './alert-extras';
 import { esc, executionLink, formatDateTime, formatDuration, truncate, type BuiltEmail } from './scheduled-execution-alert';
 
 const MAX_REASON_CHARS = 400;
@@ -20,6 +21,8 @@ function renderCard(input: {
   rows: Row[];
   buttons: Button[];
   footnote?: string;
+  // Bloco já em HTML (avisos do robô, print): vem depois da tabela e da nota.
+  extrasHtml?: string;
 }): string {
   const { palette: p } = input;
   const tr = (r: Row) =>
@@ -56,6 +59,7 @@ function renderCard(input: {
               </td></tr>
             </table>
             ${input.footnote ? `<p style="margin:16px 0 0;font-size:13px;color:#6b7280;line-height:1.6;">${esc(input.footnote)}</p>` : ''}
+            ${input.extrasHtml ?? ''}
             ${buttons}
             <p style="margin:24px 0 0;font-size:13px;color:#6b7280;line-height:1.6;">Este é um e-mail automático. Não responda a esta mensagem.</p>
           </td>
@@ -146,6 +150,9 @@ export interface RestartFailedInput {
   second: AttemptSummary;
   // Agendamentos que dependiam desta execução e foram pulados por causa disso (preenchido pela dependência).
   skipped?: string[];
+  // Avisos (AH_ALERT) e print da 2ª tentativa (ver alert-extras.ts).
+  warnings?: string[];
+  screenshots?: ExtrasInput['screenshots'];
   baseUrl: string | null;
 }
 
@@ -162,6 +169,7 @@ export function buildRestartFailedAlert(input: RestartFailedInput): BuiltEmail {
   const secondLink = executionLink(input.baseUrl, input.second.executionId);
   const firstLink = executionLink(input.baseUrl, input.first.executionId);
   const skipped = (input.skipped ?? []).filter(Boolean);
+  const extras = buildExtras(input);
   const footnote = 'Ela não será tentada de novo automaticamente. O próximo horário do agendamento segue normal.';
   const subject = `🚨 REINICIADA e continua com problema: ${input.robotName} — ${input.scheduleName}`;
 
@@ -178,6 +186,7 @@ export function buildRestartFailedAlert(input: RestartFailedInput): BuiltEmail {
     ...rows.map((r) => `${r.label}: ${r.value}`),
     '',
     footnote,
+    ...extras.text,
   ];
   if (secondLink) lines.push('', `Abrir o reinício: ${secondLink}`);
   if (firstLink) lines.push(`Abrir a execução original: ${firstLink}`);
@@ -193,8 +202,9 @@ export function buildRestartFailedAlert(input: RestartFailedInput): BuiltEmail {
     rows,
     footnote,
     buttons,
+    extrasHtml: extras.html,
   });
-  return { subject, text: lines.join('\n'), html };
+  return { subject, text: lines.join('\n'), html, attachments: extras.attachments.length > 0 ? extras.attachments : undefined };
 }
 
 // Monta o e-mail final a partir do que ExecutionsService.getScheduledExecutionForAlert devolve para uma execução que é
@@ -211,6 +221,7 @@ export function restartFailedInputFrom(
   executionId: string,
   baseUrl: string | null,
   skipped?: string[],
+  extras?: ExtrasInput,
 ): RestartFailedInput | null {
   if (!data.first) return null;
   return {
@@ -219,6 +230,8 @@ export function restartFailedInputFrom(
     first: data.first,
     second: { executionId, startedAt: data.startedAt, finishedAt: data.finishedAt, outcome: data.errorMessage },
     skipped,
+    warnings: extras?.warnings,
+    screenshots: extras?.screenshots,
     baseUrl,
   };
 }
