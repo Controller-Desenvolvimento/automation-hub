@@ -3,6 +3,18 @@
 Mudanças do Automation Hub por data. Este arquivo é **público**: descreve o que mudou no produto, no banco e na
 configuração, sem dados de infraestrutura. O desenho detalhado de cada funcionalidade está no `CLAUDE.md`.
 
+## 2026-11-17 — Faixa do painel recolhida e tela cheia
+
+### Mudado
+- **A faixa com o nome do painel (e o X para fechar) fica recolhida.** Ao abrir um painel ela aparece por alguns segundos e
+  recolhe, sobrando só uma tira fina no topo; passar o mouse nessa tira (ou tocar nela, no celular/tablet, ou chegar com Tab)
+  mostra a faixa de novo, por cima do painel, e ela some meio segundo depois que o mouse sai. O painel ganha cerca de 40 px
+  de altura.
+- **Tela cheia sem a faixa.** Com o F11 do navegador, a tira e a faixa somem. A faixa também ganhou um botão de **tela cheia**
+  (a página inteira vai para tela cheia, então o chat do Hub continua visível); Esc ou F11 saem da tela cheia, e o voltar do
+  navegador fecha o painel, como antes.
+- Só frontend: sem mudança no banco, na API nem nos painéis.
+
 ## 2026-11-16 — "Atualizar" de dentro do painel acompanhado até o fim real
 
 ### Corrigido
