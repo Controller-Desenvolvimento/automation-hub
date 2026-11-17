@@ -34,8 +34,9 @@
             '<style>@keyframes hub-pulse{50%{opacity:.5}}#boot-cover *{box-sizing:border-box}' +
             '@media(max-width:767px){#boot-cover .hub-side{display:none!important}}' +
             '@media(max-width:1279px){#boot-cover .hub-cards{grid-template-columns:repeat(2,minmax(0,1fr))!important}}</style>' +
-            '<div style="display:flex;align-items:center;gap:12px;height:49px;flex-shrink:0;padding:0 16px;border-bottom:1px solid ' + line + ';">' +
-              s('height:16px;width:224px;') + '<div style="flex:1"></div>' + s('height:24px;width:24px;') +
+            // tira fina do topo (a faixa com o nome do painel fica recolhida; ver dashboard-viewer.tsx)
+            '<div style="display:flex;justify-content:center;align-items:flex-start;height:6px;flex-shrink:0;border-bottom:1px solid ' + line + ';background:' + (dark ? '#111113' : '#f8fafc') + ';">' +
+              '<div style="margin-top:1px;height:3px;width:40px;border-radius:9999px;background:' + (dark ? '#52525b' : '#cbd5e1') + ';"></div>' +
             '</div>' +
             '<div style="display:flex;flex:1;min-height:0;">' +
               '<div class="hub-side" style="width:198px;flex-shrink:0;padding:12px;border-right:1px solid ' + line + ';">' +

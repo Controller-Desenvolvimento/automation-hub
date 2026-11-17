@@ -39,10 +39,8 @@ export function PanelSkeletonBody({ className }: { className?: string }) {
 export function PanelSkeleton() {
   return (
     <div role="status" aria-label="Carregando painel" className="fixed inset-0 z-50 flex flex-col bg-white dark:bg-[#0a0a0b]">
-      <div className="flex h-[49px] shrink-0 items-center gap-3 border-b border-slate-200 px-4 dark:border-[#2b2b31]">
-        <div className={cn(SHAPE, 'h-4 w-56')} />
-        <div className="flex-1" />
-        <div className={cn(SHAPE, 'h-6 w-6')} />
+      <div className="flex h-1.5 shrink-0 items-start justify-center border-b border-slate-200 bg-slate-50 dark:border-[#2b2b31] dark:bg-[#111113]">
+        <span className="mt-px h-[3px] w-10 rounded-full bg-slate-300 dark:bg-zinc-600" />
       </div>
       <PanelSkeletonBody className="min-h-0 flex-1" />
     </div>

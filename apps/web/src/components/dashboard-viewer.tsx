@@ -1,4 +1,4 @@
-import { X } from 'lucide-react';
+import { Maximize2, Minimize2, X } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useChatScope } from '../contexts/chat-scope-context';
 import { PanelSkeletonBody } from './panel-skeleton';
@@ -38,6 +38,32 @@ function keepPanelNavigationOutOfHistory(iframe: HTMLIFrameElement | null) {
   }
 }
 
+// Tela cheia do navegador: pela API (botão da faixa) ou pelo F11. O F11 não avisa a página; o Chrome liga a regra
+// "display-mode: fullscreen" e, por segurança, também vale a janela do tamanho exato da tela sem a barra do navegador.
+function isFullscreenNow() {
+  if (document.fullscreenElement) return true;
+  if (window.matchMedia?.('(display-mode: fullscreen)').matches) return true;
+  const { screen } = window;
+  return window.outerWidth >= screen.width - 1 && window.outerHeight >= screen.height - 1 && window.outerHeight - window.innerHeight <= 2;
+}
+
+// Teclas também dentro do iframe: com o foco no painel, o Esc/F11 vão para o documento do iframe, não para o hub.
+function forwardPanelKeys(iframe: HTMLIFrameElement | null, onKey: (event: KeyboardEvent) => void) {
+  try {
+    const doc = iframe?.contentDocument as (Document & { __hubKeys?: boolean }) | null | undefined;
+    if (!doc || doc.__hubKeys || !doc.body) return;
+    doc.__hubKeys = true;
+    doc.addEventListener('keydown', onKey);
+  } catch {
+    // iframe de outra origem: só as teclas com foco no hub
+  }
+}
+
+// Faixa do nome do painel: aparece ao abrir e recolhe; volta ao passar o mouse na tira do topo.
+const BAR_INTRO_MS = 2500; // ao abrir, a faixa fica visível por um instante (a pessoa descobre que ela existe)
+const BAR_HIDE_MS = 500; // ao sair com o mouse, espera um pouco antes de recolher (dá tempo de chegar ao X)
+const BAR_TOUCH_MS = 4000; // no toque (sem mouse), a faixa fica aberta por mais tempo
+
 // Painel aberto em tela cheia dentro do hub (botão "Ver" da aba Painéis), no
 // mesmo molde do "Ver" dos BIs. O painel é servido pelo próprio hub em
 // /d/<slug>/ (mesma origem), então o chat do hub consegue ler os filtros da
@@ -58,9 +84,19 @@ export function DashboardViewer({
 }) {
   const { setBiScope } = useChatScope();
   const iframeRef = useRef<HTMLIFrameElement>(null);
-  const onCloseRef = useRef(onClose);
-  onCloseRef.current = onClose;
   const [loaded, setLoaded] = useState(false);
+  const [barOpen, setBarOpen] = useState(true);
+  const [fullscreen, setFullscreen] = useState(isFullscreenNow);
+  const [f11Hint, setF11Hint] = useState(false);
+  const hideTimer = useRef<number | undefined>(undefined);
+  const showBar = () => {
+    window.clearTimeout(hideTimer.current);
+    setBarOpen(true);
+  };
+  const hideBarSoon = (ms = BAR_HIDE_MS) => {
+    window.clearTimeout(hideTimer.current);
+    hideTimer.current = window.setTimeout(() => setBarOpen(false), ms);
+  };
 
   // O token vai na URL só na primeira carga: o hub troca por um cookie e redireciona.
   const rootSrc = useMemo(() => `/d/${dashboard.slug}/?t=${encodeURIComponent(getStoredToken() ?? '')}`, [dashboard.slug]);
@@ -101,17 +137,62 @@ export function DashboardViewer({
     return () => setBiScope(null);
   }, [hasChat, dashboard.id, dashboard.name, setBiScope]);
 
+  // Teclas: só o X fecha o painel (o Esc não fecha mais). F11 vira a tela cheia da página (a mesma do botão), que o Esc
+  // e o F11 desfazem. Se a pessoa já estava no F11 do navegador antes, o F11 segue com o navegador (a página não consegue
+  // sair dele) e o Esc mostra um aviso de como sair.
+  const onKeyRef = useRef<(event: KeyboardEvent) => void>(() => undefined);
+  onKeyRef.current = (event: KeyboardEvent) => {
+    const browserF11 = isFullscreenNow() && !document.fullscreenElement;
+    if (event.key === 'F11' && !browserF11 && document.fullscreenEnabled) {
+      event.preventDefault();
+      toggleFullscreen();
+    } else if (event.key === 'Escape' && browserF11) {
+      setF11Hint(true);
+      window.setTimeout(() => setF11Hint(false), 3500);
+    }
+  };
+
   // O onLoad do iframe só dispara depois de TODOS os recursos (gráficos, fontes, imagens):
   // um clique no menu do painel antes disso entrava no histórico e o "fechar" só voltava
   // uma aba interna. Por isso o tratamento é instalado assim que o documento existe.
   useEffect(() => {
-    const timer = window.setInterval(() => keepPanelNavigationOutOfHistory(iframeRef.current), 50);
+    const onKey = (event: KeyboardEvent) => onKeyRef.current(event);
+    const timer = window.setInterval(() => {
+      keepPanelNavigationOutOfHistory(iframeRef.current);
+      forwardPanelKeys(iframeRef.current, onKey);
+    }, 50);
     return () => window.clearInterval(timer);
   }, []);
 
+  // Recolhe a faixa depois da apresentação inicial.
+  useEffect(() => {
+    hideTimer.current = window.setTimeout(() => setBarOpen(false), BAR_INTRO_MS);
+    return () => window.clearTimeout(hideTimer.current);
+  }, []);
+
+  // Em tela cheia (F11 ou o botão da faixa), a faixa e a tira somem; o Esc / F11 saem da tela cheia.
+  useEffect(() => {
+    const update = () => setFullscreen(isFullscreenNow());
+    const media = window.matchMedia?.('(display-mode: fullscreen)');
+    window.addEventListener('resize', update);
+    document.addEventListener('fullscreenchange', update);
+    media?.addEventListener?.('change', update);
+    return () => {
+      window.removeEventListener('resize', update);
+      document.removeEventListener('fullscreenchange', update);
+      media?.removeEventListener?.('change', update);
+    };
+  }, []);
+
+  function toggleFullscreen() {
+    // A página inteira (não só o painel): o chat do hub continua visível em tela cheia.
+    if (document.fullscreenElement) void document.exitFullscreen().catch(() => undefined);
+    else void document.documentElement.requestFullscreen?.().catch(() => undefined);
+  }
+
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
-      if (event.key === 'Escape') onCloseRef.current();
+      onKeyRef.current(event);
     }
     window.addEventListener('keydown', onKeyDown);
     const previousOverflow = document.body.style.overflow;
@@ -123,18 +204,57 @@ export function DashboardViewer({
   }, []);
 
   return (
-    <div className="fixed inset-0 z-50 flex flex-col bg-white dark:bg-[#0a0a0b]">
-      <div className="flex shrink-0 items-center gap-3 border-b border-slate-200 bg-white px-4 py-2.5 dark:border-[#2b2b31] dark:bg-[#111113]">
-        <span className="flex-1 truncate font-medium text-slate-900 dark:text-white">{dashboard.name}</span>
-        <button
-          type="button"
-          aria-label="Fechar visualização"
-          onClick={onClose}
-          className="rounded-lg p-1.5 text-slate-500 transition hover:bg-slate-100 dark:text-zinc-400 dark:hover:bg-[#1b1b20]"
+    <div className="fixed inset-0 z-50 flex flex-col overflow-hidden bg-white dark:bg-[#0a0a0b]">
+      {/* Tira fina do topo: o painel roda num iframe (o hub não "vê" o mouse lá dentro), então é ela que
+          detecta o mouse e abre a faixa. No toque, um toque abre. Some em tela cheia. */}
+      {!fullscreen ? (
+        <div
+          aria-hidden="true"
+          onMouseEnter={showBar}
+          onMouseLeave={() => hideBarSoon()}
+          onPointerDown={(event) => {
+            if (event.pointerType !== 'mouse') {
+              showBar();
+              hideBarSoon(BAR_TOUCH_MS);
+            }
+          }}
+          className="flex h-1.5 shrink-0 cursor-pointer items-start justify-center border-b border-slate-200 bg-slate-50 dark:border-[#2b2b31] dark:bg-[#111113]"
         >
-          <X className="h-4 w-4" />
-        </button>
-      </div>
+          <span className="mt-px h-[3px] w-10 rounded-full bg-slate-300 dark:bg-zinc-600" />
+        </div>
+      ) : null}
+      {!fullscreen ? (
+        <div
+          onMouseEnter={showBar}
+          onMouseLeave={() => hideBarSoon()}
+          onFocusCapture={showBar}
+          onBlurCapture={(event) => {
+            if (!event.currentTarget.contains(event.relatedTarget as Node | null)) hideBarSoon();
+          }}
+          className={`absolute inset-x-0 top-0 z-10 flex items-center gap-3 border-b border-slate-200 bg-white px-4 py-2.5 transition duration-200 ease-out dark:border-[#2b2b31] dark:bg-[#111113] ${
+            barOpen ? 'translate-y-0 shadow-md' : '-translate-y-full shadow-none'
+          }`}
+        >
+          <span className="flex-1 truncate font-medium text-slate-900 dark:text-white">{dashboard.name}</span>
+          <button
+            type="button"
+            aria-label="Tela cheia"
+            title="Tela cheia (F11). Esc ou F11 para sair"
+            onClick={toggleFullscreen}
+            className="rounded-lg p-1.5 text-slate-500 transition hover:bg-slate-100 dark:text-zinc-400 dark:hover:bg-[#1b1b20]"
+          >
+            {fullscreen ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
+          </button>
+          <button
+            type="button"
+            aria-label="Fechar visualização"
+            onClick={onClose}
+            className="rounded-lg p-1.5 text-slate-500 transition hover:bg-slate-100 dark:text-zinc-400 dark:hover:bg-[#1b1b20]"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+      ) : null}
       <div className="relative flex-1">
         {src ? (
           <iframe
@@ -156,6 +276,11 @@ export function DashboardViewer({
           />
         ) : null}
         {!loaded ? <PanelSkeletonBody className="pointer-events-none absolute inset-0" /> : null}
+        {f11Hint ? (
+          <div role="status" className="pointer-events-none absolute left-1/2 top-4 z-20 -translate-x-1/2 rounded-full bg-slate-900/90 px-4 py-2 text-sm text-white shadow-lg">
+            Para sair da tela cheia, aperte F11
+          </div>
+        ) : null}
       </div>
     </div>
   );
