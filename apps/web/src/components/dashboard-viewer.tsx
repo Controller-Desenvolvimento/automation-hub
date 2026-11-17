@@ -47,6 +47,18 @@ function isFullscreenNow() {
   return window.outerWidth >= screen.width - 1 && window.outerHeight >= screen.height - 1 && window.outerHeight - window.innerHeight <= 2;
 }
 
+// Teclas também dentro do iframe: com o foco no painel, o Esc/F11 vão para o documento do iframe, não para o hub.
+function forwardPanelKeys(iframe: HTMLIFrameElement | null, onKey: (event: KeyboardEvent) => void) {
+  try {
+    const doc = iframe?.contentDocument as (Document & { __hubKeys?: boolean }) | null | undefined;
+    if (!doc || doc.__hubKeys || !doc.body) return;
+    doc.__hubKeys = true;
+    doc.addEventListener('keydown', onKey);
+  } catch {
+    // iframe de outra origem: só as teclas com foco no hub
+  }
+}
+
 // Faixa do nome do painel: aparece ao abrir e recolhe; volta ao passar o mouse na tira do topo.
 const BAR_INTRO_MS = 2500; // ao abrir, a faixa fica visível por um instante (a pessoa descobre que ela existe)
 const BAR_HIDE_MS = 500; // ao sair com o mouse, espera um pouco antes de recolher (dá tempo de chegar ao X)
@@ -72,11 +84,10 @@ export function DashboardViewer({
 }) {
   const { setBiScope } = useChatScope();
   const iframeRef = useRef<HTMLIFrameElement>(null);
-  const onCloseRef = useRef(onClose);
-  onCloseRef.current = onClose;
   const [loaded, setLoaded] = useState(false);
   const [barOpen, setBarOpen] = useState(true);
   const [fullscreen, setFullscreen] = useState(isFullscreenNow);
+  const [f11Hint, setF11Hint] = useState(false);
   const hideTimer = useRef<number | undefined>(undefined);
   const showBar = () => {
     window.clearTimeout(hideTimer.current);
@@ -126,11 +137,30 @@ export function DashboardViewer({
     return () => setBiScope(null);
   }, [hasChat, dashboard.id, dashboard.name, setBiScope]);
 
+  // Teclas: só o X fecha o painel (o Esc não fecha mais). F11 vira a tela cheia da página (a mesma do botão), que o Esc
+  // e o F11 desfazem. Se a pessoa já estava no F11 do navegador antes, o F11 segue com o navegador (a página não consegue
+  // sair dele) e o Esc mostra um aviso de como sair.
+  const onKeyRef = useRef<(event: KeyboardEvent) => void>(() => undefined);
+  onKeyRef.current = (event: KeyboardEvent) => {
+    const browserF11 = isFullscreenNow() && !document.fullscreenElement;
+    if (event.key === 'F11' && !browserF11 && document.fullscreenEnabled) {
+      event.preventDefault();
+      toggleFullscreen();
+    } else if (event.key === 'Escape' && browserF11) {
+      setF11Hint(true);
+      window.setTimeout(() => setF11Hint(false), 3500);
+    }
+  };
+
   // O onLoad do iframe só dispara depois de TODOS os recursos (gráficos, fontes, imagens):
   // um clique no menu do painel antes disso entrava no histórico e o "fechar" só voltava
   // uma aba interna. Por isso o tratamento é instalado assim que o documento existe.
   useEffect(() => {
-    const timer = window.setInterval(() => keepPanelNavigationOutOfHistory(iframeRef.current), 50);
+    const onKey = (event: KeyboardEvent) => onKeyRef.current(event);
+    const timer = window.setInterval(() => {
+      keepPanelNavigationOutOfHistory(iframeRef.current);
+      forwardPanelKeys(iframeRef.current, onKey);
+    }, 50);
     return () => window.clearInterval(timer);
   }, []);
 
@@ -162,7 +192,7 @@ export function DashboardViewer({
 
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
-      if (event.key === 'Escape') onCloseRef.current();
+      onKeyRef.current(event);
     }
     window.addEventListener('keydown', onKeyDown);
     const previousOverflow = document.body.style.overflow;
@@ -209,7 +239,7 @@ export function DashboardViewer({
           <button
             type="button"
             aria-label="Tela cheia"
-            title="Tela cheia (Esc ou F11 para sair)"
+            title="Tela cheia (F11). Esc ou F11 para sair"
             onClick={toggleFullscreen}
             className="rounded-lg p-1.5 text-slate-500 transition hover:bg-slate-100 dark:text-zinc-400 dark:hover:bg-[#1b1b20]"
           >
@@ -246,6 +276,11 @@ export function DashboardViewer({
           />
         ) : null}
         {!loaded ? <PanelSkeletonBody className="pointer-events-none absolute inset-0" /> : null}
+        {f11Hint ? (
+          <div role="status" className="pointer-events-none absolute left-1/2 top-4 z-20 -translate-x-1/2 rounded-full bg-slate-900/90 px-4 py-2 text-sm text-white shadow-lg">
+            Para sair da tela cheia, aperte F11
+          </div>
+        ) : null}
       </div>
     </div>
   );

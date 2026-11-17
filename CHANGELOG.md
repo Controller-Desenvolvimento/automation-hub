@@ -10,9 +10,11 @@ configuração, sem dados de infraestrutura. O desenho detalhado de cada funcion
   recolhe, sobrando só uma tira fina no topo; passar o mouse nessa tira (ou tocar nela, no celular/tablet, ou chegar com Tab)
   mostra a faixa de novo, por cima do painel, e ela some meio segundo depois que o mouse sai. O painel ganha cerca de 40 px
   de altura.
-- **Tela cheia sem a faixa.** Com o F11 do navegador, a tira e a faixa somem. A faixa também ganhou um botão de **tela cheia**
-  (a página inteira vai para tela cheia, então o chat do Hub continua visível); Esc ou F11 saem da tela cheia, e o voltar do
-  navegador fecha o painel, como antes.
+- **Tela cheia sem a faixa.** Com o painel aberto, o F11 (ou o novo botão de **tela cheia** da faixa) coloca a página inteira
+  em tela cheia, sem a tira e sem a faixa; o chat do Hub continua visível. **Esc ou F11 saem da tela cheia.** Se o navegador
+  já estava no F11 antes de abrir o painel, ele continua no F11 do navegador (a página não consegue desfazê-lo): o Esc mostra
+  "Para sair da tela cheia, aperte F11".
+- **O Esc não fecha mais o painel.** Só o X fecha (o voltar do navegador também continua fechando).
 - Só frontend: sem mudança no banco, na API nem nos painéis.
 
 ## 2026-11-16 — "Atualizar" de dentro do painel acompanhado até o fim real
