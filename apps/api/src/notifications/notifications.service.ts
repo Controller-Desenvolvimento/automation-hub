@@ -12,6 +12,7 @@ export class NotificationsService {
       orderBy: { createdAt: 'desc' },
       take: 100,
       include: {
+        supportTicket: { select: { id: true, number: true } },
         execution: {
           select: {
             id: true,

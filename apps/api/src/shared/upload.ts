@@ -23,3 +23,15 @@ export const diskUploadLimits: MulterOptions = {
     files: 200,
   },
 };
+
+// Anexos do Suporte (prints, planilhas, PDFs): disco, até 5 por mensagem e 25 MB cada (imagens: 10 MB, conferido no service).
+export const supportUploadLimits: MulterOptions = {
+  storage: diskStorage({
+    destination: tmpdir(),
+    filename: (_req, _file, cb) => cb(null, `ah-support-${randomUUID()}`),
+  }),
+  limits: {
+    fileSize: 25 * 1024 * 1024,
+    files: 5,
+  },
+};

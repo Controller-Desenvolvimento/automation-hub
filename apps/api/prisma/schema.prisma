@@ -202,6 +202,7 @@ model Robot {
   scheduledTasks ScheduledTask[]
   inputExamples  RobotInputExample[]
   favorites      RobotFavorite[]
+  supportTickets SupportTicket[]
 }
 
 model User {
@@ -224,6 +225,10 @@ model User {
   notifications  Notification[]
   robotFavorites RobotFavorite[]
   siteChatMessages SiteChatMessage[]
+
+  supportTicketsAuthored SupportTicket[]  @relation("SupportTicketAuthor")
+  supportTicketsAssigned SupportTicket[]  @relation("SupportTicketAssignee")
+  supportMessages        SupportMessage[] @relation("SupportMessageAuthor")
 }
 
 model SiteChatMessage {
@@ -328,6 +333,7 @@ model Execution {
   @@index([scheduledTaskId])
   @@index([createdAt])
   @@index([cleanedAt, finishedAt])
+  supportTickets SupportTicket[]
 }
 
 model ExecutionLog {
@@ -413,6 +419,8 @@ model Notification {
   user        User       @relation(fields: [userId], references: [id])
   executionId String?
   execution   Execution? @relation(fields: [executionId], references: [id])
+  supportTicketId String?
+  supportTicket   SupportTicket? @relation(fields: [supportTicketId], references: [id], onDelete: Cascade)
   type        String     @default("execution_result")
   title       String
   body        String?
@@ -421,6 +429,7 @@ model Notification {
 
   @@index([userId, isRead, createdAt])
   @@index([executionId])
+  @@index([supportTicketId])
 }
 
 model RobotInputExample {
@@ -510,6 +519,7 @@ model Dashboard {
   linkedSites Site[]
 
   @@index([slug])
+  supportTickets SupportTicket[]
 }
 
 model DevDoc {
@@ -525,4 +535,113 @@ model DevDoc {
   order       Int      @default(0)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
+}
+
+// ---------- Suporte (chamados) ----------
+enum SupportTicketType {
+  problem
+  suggestion
+  question
+}
+
+enum SupportSubject {
+  hub
+  robot
+  dashboard
+  other
+}
+
+enum SupportUrgency {
+  critical
+  high
+  medium
+  low
+}
+
+enum SupportStatus {
+  open
+  review
+  waiting
+  resolved
+  not_issue
+}
+
+enum SupportMessageKind {
+  message
+  internal
+  system
+  system_admin
+}
+
+model SupportTicket {
+  id          String            @id @default(cuid())
+  // Número que as pessoas veem (#1049); o id continua sendo a chave.
+  number      Int               @unique @default(autoincrement())
+  type        SupportTicketType
+  subject     SupportSubject
+  urgency     SupportUrgency    @default(low)
+  status      SupportStatus     @default(open)
+  title       String
+  hubArea     String?
+  robotId     String?
+  robot       Robot?            @relation(fields: [robotId], references: [id], onDelete: SetNull)
+  dashboardId String?
+  dashboard   Dashboard?        @relation(fields: [dashboardId], references: [id], onDelete: SetNull)
+  executionId String?
+  execution   Execution?        @relation(fields: [executionId], references: [id], onDelete: SetNull)
+  // Foto da execução na hora de abrir (erro, parâmetros SEM senhas, fim do log): sobrevive à limpeza das execuções antigas.
+  contextJson Json?
+  authorId    String
+  author      User              @relation("SupportTicketAuthor", fields: [authorId], references: [id], onDelete: Cascade)
+  assigneeId  String?
+  assignee    User?             @relation("SupportTicketAssignee", fields: [assigneeId], references: [id], onDelete: SetNull)
+  // Chamados ligados: os filhos apontam para o principal. Só administradores veem essa ligação.
+  mainTicketId  String?
+  mainTicket    SupportTicket?  @relation("SupportMerge", fields: [mainTicketId], references: [id], onDelete: SetNull)
+  linkedTickets SupportTicket[] @relation("SupportMerge")
+  // Novidades (no lugar de e-mail): os administradores ainda não viram / quem abriu ainda não viu a resposta.
+  needsAdmin      Boolean       @default(true)
+  authorUnread    Boolean       @default(false)
+  authorConfirmed Boolean       @default(false)
+  attachmentsCleanedAt DateTime?
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+  closedAt    DateTime?
+
+  messages      SupportMessage[]
+  notifications Notification[]
+
+  @@index([authorId, updatedAt])
+  @@index([status, updatedAt])
+  @@index([mainTicketId])
+}
+
+model SupportMessage {
+  id        String             @id @default(cuid())
+  ticketId  String
+  ticket    SupportTicket      @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  authorId  String?
+  author    User?              @relation("SupportMessageAuthor", fields: [authorId], references: [id], onDelete: SetNull)
+  kind      SupportMessageKind @default(message)
+  body      String             @default("")
+  createdAt DateTime           @default(now())
+
+  attachments SupportAttachment[]
+
+  @@index([ticketId, createdAt])
+}
+
+model SupportAttachment {
+  id          String         @id @default(cuid())
+  messageId   String
+  message     SupportMessage @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  fileName    String
+  mimeType    String
+  size        Int
+  // Caminho relativo a storage/: support/<id do chamado>/<arquivo>
+  storagePath String
+  isImage     Boolean        @default(false)
+  createdAt   DateTime       @default(now())
+
+  @@index([messageId])
 }

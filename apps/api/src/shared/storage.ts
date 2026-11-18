@@ -12,6 +12,11 @@ export const schedulesRoot = join(storageRoot, 'schedules');
 export const robotsRoot = join(storageRoot, 'robots');
 export const sitesRoot = join(storageRoot, 'sites');
 export const siteChatAttachmentsRoot = join(storageRoot, 'site-chat-attachments');
+export const supportRoot = join(storageRoot, 'support');
+
+export function supportTicketDir(ticketId: string) {
+  return join(supportRoot, ticketId);
+}
 
 export function executionRoot(executionId: string) {
   return join(executionsRoot, executionId);
