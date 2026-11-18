@@ -138,6 +138,7 @@ function NotificationCard({
 }) {
   const { notify } = useHub();
   const isError = notification.type === 'execution_error';
+  const isSupport = notification.type.startsWith('support_');
   const outputFiles = notification.execution?.files ?? [];
 
   return (
@@ -161,15 +162,15 @@ function NotificationCard({
             </div>
           </div>
           <div className="flex shrink-0 items-center gap-2">
-            <Badge variant={isError ? 'error' : 'success'}>
-              {isError ? 'Erro' : 'Sucesso'}
+            <Badge variant={isSupport ? 'default' : isError ? 'error' : 'success'}>
+              {isSupport ? 'Suporte' : isError ? 'Erro' : 'Sucesso'}
             </Badge>
             <span className="text-xs text-slate-400">{formatDate(notification.createdAt)}</span>
           </div>
         </div>
       </CardHeader>
 
-      {(outputFiles.length > 0 || notification.executionId) ? (
+      {(outputFiles.length > 0 || notification.executionId || notification.supportTicketId) ? (
         <CardContent className="flex flex-wrap items-center gap-3 pt-0">
           {outputFiles.map((file) => (
             <button
@@ -182,6 +183,14 @@ function NotificationCard({
               {file.downloadName ?? 'arquivo'}
             </button>
           ))}
+          {notification.supportTicketId ? (
+            <Button asChild variant="outline" size="sm" onClick={onMarkRead}>
+              <Link to={`/support/${notification.supportTicketId}`}>
+                <ExternalLink className="mr-2 h-3.5 w-3.5" />
+                Ver chamado
+              </Link>
+            </Button>
+          ) : null}
           {notification.executionId ? (
             <Button asChild variant="outline" size="sm" onClick={onMarkRead}>
               <Link to={`/executions/${notification.executionId}`}>

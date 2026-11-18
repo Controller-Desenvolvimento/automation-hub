@@ -152,7 +152,7 @@ export class SupportService {
     );
     const suggestions = suggestMergeGroups(
       tickets
-        .filter((t) => OPEN_STATUSES.includes(t.status))
+        .filter((t) => OPEN_STATUSES.includes(t.status) && !t.mainTicketId) // quem já está ligado a outro não é sugerido de novo
         .map((t) => ({
           id: t.id,
           type: t.type,

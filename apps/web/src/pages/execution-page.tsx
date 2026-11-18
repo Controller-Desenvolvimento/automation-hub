@@ -1,4 +1,4 @@
-import { Download, Eye, EyeOff, FileInput, FileSpreadsheet, Files, RefreshCw, SlidersHorizontal, SquareTerminal } from 'lucide-react';
+import { Download, Eye, EyeOff, FileInput, FileSpreadsheet, Files, LifeBuoy, RefreshCw, SlidersHorizontal, SquareTerminal } from 'lucide-react';
 import { useEffect, useState, type ReactNode } from 'react';
 import { PageHeader } from '../components/page-header';
 import { Badge } from '../components/ui/badge';
@@ -150,7 +150,8 @@ export function ExecutionPage() {
         description={`${execution.requestedByName || execution.requestedByEmail || 'Usuário interno'} · ${formatDate(execution.startedAt || execution.createdAt)}`}
         badge={<Badge variant={statusVariant(execution.status)}>{statusLabel(execution.status)}</Badge>}
         actions={
-          isLive ? (
+          <>
+          {isLive ? (
             <Button
               variant="danger"
               disabled={isCanceling}
@@ -187,7 +188,16 @@ export function ExecutionPage() {
                 </Button>
               ) : null}
             </>
-          ) : null
+          ) : null}
+          <Button
+            variant="outline"
+            title="Abre um chamado no Suporte já com esta execução, o erro, os parâmetros (sem senhas) e o fim do log."
+            onClick={() => navigate(`/support/new?execution=${execution.id}`)}
+          >
+            <LifeBuoy className="mr-2 h-4 w-4" />
+            Reportar problema
+          </Button>
+          </>
         }
       />
 

@@ -24,6 +24,9 @@ type HubContextValue = {
   refreshHub: () => Promise<void>;
   unreadNotifications: number;
   refreshUnreadCount: () => Promise<void>;
+  /** Novidades do Suporte (número ao lado do menu): chamados esperando a Inovação e respostas novas aos seus chamados. */
+  supportUnread: number;
+  refreshSupportUnread: () => Promise<void>;
 };
 
 const HubContext = createContext<HubContextValue | null>(null);
@@ -36,6 +39,7 @@ export function HubProvider({ children }: PropsWithChildren) {
   const [departments, setDepartments] = useState<DepartmentConfig[]>([]);
   const [toast, setToast] = useState<string | null>(null);
   const [unreadNotifications, setUnreadNotifications] = useState(0);
+  const [supportUnread, setSupportUnread] = useState(0);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const refreshUnreadCount = useCallback(async () => {
@@ -47,19 +51,33 @@ export function HubProvider({ children }: PropsWithChildren) {
     }
   }, []);
 
+  const refreshSupportUnread = useCallback(async () => {
+    try {
+      const data = await api<{ unread: number }>('/support/summary');
+      setSupportUnread(data.unread);
+    } catch {
+      // silent
+    }
+  }, []);
+
   useEffect(() => {
     // Só faz polling autenticado: na tela de login isso geraria 401 a cada 30s
     if (!user) {
       setUnreadNotifications(0);
+      setSupportUnread(0);
       return;
     }
 
-    void refreshUnreadCount();
-    pollRef.current = setInterval(() => void refreshUnreadCount(), 30_000);
+    const tick = () => {
+      void refreshUnreadCount();
+      void refreshSupportUnread();
+    };
+    tick();
+    pollRef.current = setInterval(tick, 30_000);
     return () => {
       if (pollRef.current) clearInterval(pollRef.current);
     };
-  }, [refreshUnreadCount, user]);
+  }, [refreshUnreadCount, refreshSupportUnread, user]);
 
   const refreshDepartments = useCallback(async () => {
     try {
@@ -93,8 +111,8 @@ export function HubProvider({ children }: PropsWithChildren) {
   const clearToast = useCallback(() => setToast(null), []);
 
   const value = useMemo(
-    () => ({ hub, hubError, executions, departments, refreshDepartments, toast, notify, clearToast, refreshHub, unreadNotifications, refreshUnreadCount }),
-    [clearToast, departments, executions, hub, hubError, notify, refreshDepartments, refreshHub, toast, unreadNotifications, refreshUnreadCount],
+    () => ({ hub, hubError, executions, departments, refreshDepartments, toast, notify, clearToast, refreshHub, unreadNotifications, refreshUnreadCount, supportUnread, refreshSupportUnread }),
+    [clearToast, departments, executions, hub, hubError, notify, refreshDepartments, refreshHub, toast, unreadNotifications, refreshUnreadCount, supportUnread, refreshSupportUnread],
   );
 
   return <HubContext.Provider value={value}>{children}</HubContext.Provider>;

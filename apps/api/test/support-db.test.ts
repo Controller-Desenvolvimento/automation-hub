@@ -330,3 +330,14 @@ test('lista do admin: indicadores, chamados parecidos sugeridos e tempo até a 1
   assert.ok(depois.kpis.avgFirstReplySeconds >= 0);
   assert.equal(depois.kpis.topRobot.name, 'Robô Teste');
 });
+
+test('lista do admin: depois de juntar, os ligados não voltam a ser sugeridos (mas um novo parecido sim)', { skip }, async () => {
+  const a = await open(U.ana);
+  const b = await open(U.bia);
+  assert.equal((await support.list(U.ino)).suggestions.length, 1);
+  await support.merge(U.ino, { mainId: a.id, ticketIds: [b.id] });
+  assert.equal((await support.list(U.ino)).suggestions.length, 0, 'principal + ligado: nada a sugerir');
+  const c = await open(U.caio);
+  const groups = (await support.list(U.ino)).suggestions.map((g: string[]) => [...g].sort());
+  assert.deepEqual(groups, [[a.id, c.id].sort()], 'o novo chamado parecido é sugerido junto do principal');
+});
