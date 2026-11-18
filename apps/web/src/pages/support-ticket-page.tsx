@@ -1,5 +1,5 @@
 import { ArrowLeft, CheckCircle2, ExternalLink, Link2, Send, Unlink } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { AttachmentBar, AttachmentView, useAttachments } from '../components/support-attachments';
 import { StatusBadge, UrgencyBadge } from '../components/support-badges';
@@ -19,7 +19,6 @@ import {
   subjectText,
   type SupportOptions,
   type TicketDetail,
-  type TicketList,
   type TicketMessage,
   type TicketRow,
   type TicketStatus,
@@ -41,7 +40,6 @@ export function SupportTicketPage() {
   const [ticket, setTicket] = useState<TicketDetail | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [options, setOptions] = useState<SupportOptions | null>(null);
-  const [list, setList] = useState<TicketList | null>(null);
   const [body, setBody] = useState('');
   const [internal, setInternal] = useState(false);
   const [alsoLinked, setAlsoLinked] = useState(true);
@@ -75,7 +73,6 @@ export function SupportTicketPage() {
   useEffect(() => {
     if (!isAdmin) return;
     void api<SupportOptions>('/support/options').then(setOptions).catch(() => undefined);
-    void api<TicketList>('/support/tickets').then(setList).catch(() => undefined);
   }, [isAdmin, id]);
 
   useEffect(() => {
@@ -85,11 +82,7 @@ export function SupportTicketPage() {
     lastCount.current = count;
   }, [ticket?.messages.length]);
 
-  const similar = useMemo(() => {
-    if (!isAdmin || !ticket || !list?.suggestions) return [] as TicketRow[];
-    const group = list.suggestions.find((g) => g.includes(ticket.id));
-    return group ? list.tickets.filter((t) => group.includes(t.id) && t.id !== ticket.id) : [];
-  }, [isAdmin, ticket, list]);
+  const similar = ticket?.similar ?? [];
 
   if (loadError) {
     return (
@@ -341,7 +334,7 @@ export function SupportTicketPage() {
                 {similar.map((t) => (
                   <Link key={t.id} to={`/support/${t.id}`} className="text-sky-600 underline dark:text-sky-400">#{t.number} {t.title}</Link>
                 ))}
-                <Button size="sm" variant="outline" onClick={() => setMergeIds([ticket.id, ...similar.map((t) => t.id)])}>
+                <Button size="sm" variant="outline" onClick={() => setMergeIds([ticket.id])}>
                   <Link2 className="mr-1.5 h-3.5 w-3.5" /> Revisar e juntar
                 </Button>
               </CardContent>
@@ -408,7 +401,7 @@ export function SupportTicketPage() {
 
       {mergeIds ? (
         <SupportMergeDialog
-          tickets={mergeIds.map((tid) => (tid === ticket.id ? (ticket as TicketRow) : list?.tickets.find((t) => t.id === tid))).filter((t): t is TicketRow => !!t)}
+          tickets={[ticket as TicketRow, ...similar]}
           onClose={() => setMergeIds(null)}
           onMerged={async (mainId, count) => {
             setMergeIds(null);

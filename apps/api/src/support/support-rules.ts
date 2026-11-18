@@ -45,6 +45,51 @@ export function isClosed(status: TicketStatus) {
   return CLOSED_STATUSES.includes(status);
 }
 
+// ---------- lista paginada ----------
+
+export const DEFAULT_PAGE_SIZE = 25;
+export const MAX_PAGE_SIZE = 100;
+
+export type ListQuery = {
+  page: number;
+  pageSize: number;
+  situation: 'open' | 'closed' | 'all';
+  tab: 'all' | 'mine';
+  urgency: TicketUrgency | null;
+  type: TicketType | null;
+  person: string | null;
+  department: string | null;
+  robot: string | null;
+  q: string;
+  sort: 'recent' | 'oldest' | 'urgency';
+};
+
+function str(value: unknown, max = 100): string {
+  return typeof value === 'string' ? value.trim().slice(0, max) : '';
+}
+
+function posInt(value: unknown, fallback: number, min: number, max: number): number {
+  const n = Math.floor(Number(value));
+  return Number.isFinite(n) ? Math.min(max, Math.max(min, n)) : fallback;
+}
+
+/** Lê os filtros da URL da lista. Valor inválido vira o padrão (nunca erro): a tela pode estar em cache de uma versão antiga. */
+export function parseListQuery(raw: Record<string, unknown>): ListQuery {
+  return {
+    page: posInt(raw.page, 1, 1, 1_000_000),
+    pageSize: posInt(raw.pageSize, DEFAULT_PAGE_SIZE, 5, MAX_PAGE_SIZE),
+    situation: raw.situation === 'closed' || raw.situation === 'all' ? raw.situation : 'open',
+    tab: raw.tab === 'mine' ? 'mine' : 'all',
+    urgency: isOneOf(TICKET_URGENCIES, raw.urgency) ? raw.urgency : null,
+    type: isOneOf(TICKET_TYPES, raw.type) ? raw.type : null,
+    person: str(raw.person) || null,
+    department: str(raw.department) || null,
+    robot: str(raw.robot) || null,
+    q: str(raw.q, 80).replace(/^#/, ''),
+    sort: raw.sort === 'oldest' || raw.sort === 'urgency' ? raw.sort : 'recent',
+  };
+}
+
 // ---------- anexos ----------
 
 const IMAGE_TYPES: Record<string, string> = {

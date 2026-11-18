@@ -1,4 +1,4 @@
-import { FileText, Paperclip, X } from 'lucide-react';
+import { FileText, FileX, Paperclip, X } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState, type ClipboardEvent, type DragEvent } from 'react';
 import { API_BASE_URL, downloadWithFeedback, getStoredToken } from '../lib/api';
 import {
@@ -154,13 +154,14 @@ export function AttachmentView({ attachment, notify }: { attachment: Attachment;
 
   // /storage exige Authorization e um <img> não manda: busca a imagem (até 10 MB) com a sessão e mostra o resultado.
   useEffect(() => {
-    if (!attachment.isImage) return;
+    const address = attachment.downloadUrl;
+    if (!attachment.isImage || attachment.removed || !address) return;
     let url: string | null = null;
     let cancelled = false;
     (async () => {
       try {
         const token = getStoredToken();
-        const response = await fetch(attachment.downloadUrl.startsWith('/storage/') ? attachment.downloadUrl : `${API_BASE_URL}${attachment.downloadUrl}`, {
+        const response = await fetch(address.startsWith('/storage/') ? address : `${API_BASE_URL}${address}`, {
           headers: token ? { Authorization: `Bearer ${token}` } : undefined,
         });
         if (!response.ok) throw new Error(String(response.status));
@@ -174,7 +175,19 @@ export function AttachmentView({ attachment, notify }: { attachment: Attachment;
       cancelled = true;
       if (url) URL.revokeObjectURL(url);
     };
-  }, [attachment.downloadUrl, attachment.isImage]);
+  }, [attachment.downloadUrl, attachment.isImage, attachment.removed]);
+
+  if (attachment.removed || !attachment.downloadUrl) {
+    return (
+      <div className="inline-flex max-w-full items-start gap-2 rounded-lg border border-dashed border-slate-300 bg-slate-50 px-3 py-2 text-xs text-slate-500 dark:border-[#2b2b31] dark:bg-[#0f0f10] dark:text-zinc-400">
+        <FileX className="mt-0.5 h-4 w-4 shrink-0" />
+        <span className="min-w-0">
+          <span className="block max-w-[320px] truncate font-medium text-slate-700 dark:text-zinc-200">{attachment.fileName} ({formatSize(attachment.size)})</span>
+          <span>Arquivo apagado automaticamente, por segurança, 90 dias depois de o chamado ser encerrado.</span>
+        </span>
+      </div>
+    );
+  }
 
   if (attachment.isImage && !failed) {
     return src ? (
@@ -189,7 +202,7 @@ export function AttachmentView({ attachment, notify }: { attachment: Attachment;
   return (
     <button
       type="button"
-      onClick={() => void downloadWithFeedback(attachment.downloadUrl, attachment.fileName, notify)}
+      onClick={() => void downloadWithFeedback(attachment.downloadUrl!, attachment.fileName, notify)}
       className="inline-flex max-w-full items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-left text-xs transition hover:bg-slate-50 dark:border-[#2b2b31] dark:bg-[#0f0f10] dark:hover:bg-[#18181b]"
     >
       <FileText className="h-4 w-4 shrink-0 text-slate-500" />

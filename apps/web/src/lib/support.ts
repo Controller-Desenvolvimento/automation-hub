@@ -110,7 +110,19 @@ export type Kpis = {
   topRobot: { name: string; count: number } | null;
 };
 
-export type TicketList = { tickets: TicketRow[]; kpis?: Kpis; suggestions?: string[][] };
+export type TicketList = {
+  tickets: TicketRow[];
+  page: number;
+  pageSize: number;
+  total: number;
+  totalPages: number;
+  /** Quantos chamados há em cada situação, com os filtros atuais (menos a situação). */
+  counts: { open: number; closed: number; all: number };
+  // só administradores
+  kpis?: Kpis;
+  suggestions?: TicketRow[][];
+  facets?: { people: Array<{ id: string; name: string }>; departments: string[]; robots: Array<{ id: string; name: string }> };
+};
 
 export type Attachment = {
   id: string;
@@ -118,7 +130,9 @@ export type Attachment = {
   mimeType: string;
   size: number;
   isImage: boolean;
-  downloadUrl: string;
+  /** O arquivo foi apagado pela retenção (90 dias depois de o chamado ser encerrado); nome e tamanho continuam. */
+  removed: boolean;
+  downloadUrl: string | null;
 };
 
 export type TicketMessage = {
@@ -147,6 +161,7 @@ export type ExecutionContext = {
 export type TicketDetail = TicketRow & {
   context: ExecutionContext | null;
   main: { id: string; number: number; title: string } | null;
+  similar: TicketRow[];
   linked?: Array<{ id: string; number: number; title: string; status: TicketStatus; author: { id: string; name: string; departments: string[] } }>;
   messages: TicketMessage[];
 };

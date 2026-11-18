@@ -65,6 +65,7 @@ CREATE TABLE "SupportAttachment" (
     "size" INTEGER NOT NULL,
     "storagePath" TEXT NOT NULL,
     "isImage" BOOLEAN NOT NULL DEFAULT false,
+    "removedAt" TIMESTAMP(3),
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
     CONSTRAINT "SupportAttachment_pkey" PRIMARY KEY ("id")

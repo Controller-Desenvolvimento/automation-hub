@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   checkAttachment,
+  parseListQuery,
   cleanText,
   computeKpis,
   suggestMergeGroups,
@@ -101,3 +102,22 @@ test('indicadores: sem dados não quebra', () => {
   assert.equal(kpi.topRobot, null);
   assert.equal(kpi.oldestWithoutReplyAt, null);
 });
+
+test('lista: lê os filtros da URL e cai no padrão quando o valor é inválido', () => {
+  const padrao = parseListQuery({});
+  assert.equal(padrao.page, 1);
+  assert.equal(padrao.pageSize, 25);
+  assert.equal(padrao.situation, 'open');
+  assert.equal(padrao.sort, 'recent');
+  assert.equal(padrao.tab, 'all');
+  assert.equal(padrao.urgency, null);
+  const q = parseListQuery({ page: '3', pageSize: '50', situation: 'closed', tab: 'mine', urgency: 'critical', type: 'question', person: ' p1 ', robot: 'r1', department: 'fiscal', q: '#1049', sort: 'urgency' });
+  assert.deepEqual([q.page, q.pageSize, q.situation, q.tab, q.urgency, q.type, q.person, q.robot, q.department, q.q, q.sort], [3, 50, 'closed', 'mine', 'critical', 'question', 'p1', 'r1', 'fiscal', '1049', 'urgency']);
+  const ruim = parseListQuery({ page: '-5', pageSize: '100000', situation: 'x', urgency: 'x', type: 'x', sort: 'x', tab: 'x' });
+  assert.equal(ruim.page, 1);
+  assert.equal(ruim.pageSize, 100, 'teto do tamanho da página');
+  assert.deepEqual([ruim.situation, ruim.urgency, ruim.type, ruim.sort, ruim.tab], ['open', null, null, 'recent', 'all']);
+  assert.equal(parseListQuery({ pageSize: '1' }).pageSize, 5, 'mínimo de 5 por página');
+  assert.equal(parseListQuery({ page: ['1'], q: 5 }).q, '', 'valores que não são texto são ignorados');
+});
+

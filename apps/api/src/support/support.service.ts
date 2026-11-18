@@ -18,6 +18,7 @@ import {
   MAX_BODY,
   MAX_MERGE,
   MAX_TITLE,
+  CLOSED_STATUSES,
   OPEN_STATUSES,
   STATUS_LABELS,
   TICKET_STATUSES,
@@ -26,12 +27,14 @@ import {
   TICKET_URGENCIES,
   URGENCY_LABELS,
   type TicketStatus,
+  type TicketType,
   type TicketUrgency,
   checkAttachment,
   cleanText,
   computeKpis,
   isClosed,
   isOneOf,
+  parseListQuery,
   suggestMergeGroups,
   toBool,
 } from './support-rules';
@@ -113,19 +116,97 @@ export class SupportService {
     return { unread: forAdmin + forAuthor, forAdmin, forAuthor };
   }
 
-  async list(user: User) {
+  /**
+   * Lista paginada NO SERVIDOR (sem teto de chamados): filtros, ordem, página e contagens vêm do banco. Administradores levam
+   * também os indicadores, as sugestões de juntar e as opções dos filtros.
+   */
+  async list(user: User, rawQuery: Record<string, unknown> = {}) {
     const admin = isAdmin(user);
+    const query = parseListQuery(rawQuery);
+    const base: Prisma.SupportTicketWhereInput = {
+      ...(admin ? {} : { authorId: user.id }),
+      ...(admin && query.tab === 'mine' ? { assigneeId: user.id } : {}),
+      ...(query.urgency ? { urgency: query.urgency } : {}),
+      ...(query.type ? { type: query.type } : {}),
+      ...(admin && query.person ? { authorId: query.person } : {}),
+      ...(admin && query.department ? { author: { departments: { has: query.department } } } : {}),
+      ...(admin && query.robot ? { robotId: query.robot } : {}),
+      ...(query.q
+        ? {
+            OR: [
+              { title: { contains: query.q, mode: 'insensitive' as const } },
+              ...(/^\d{1,9}$/.test(query.q) ? [{ number: Number(query.q) }] : []),
+            ],
+          }
+        : {}),
+    };
+    const statusIn = (list: readonly TicketStatus[]) => ({ status: { in: [...list] } });
+    const where: Prisma.SupportTicketWhereInput = {
+      ...base,
+      ...(query.situation === 'open' ? statusIn(OPEN_STATUSES) : query.situation === 'closed' ? statusIn(CLOSED_STATUSES) : {}),
+    };
+    const orderBy: Prisma.SupportTicketOrderByWithRelationInput[] =
+      query.sort === 'oldest'
+        ? [{ createdAt: 'asc' }, { id: 'asc' }]
+        : query.sort === 'urgency'
+          ? [{ urgency: 'asc' }, { updatedAt: 'desc' }, { id: 'asc' }] // a ordem do enum no banco é crítica, alta, média, baixa
+          : [{ updatedAt: 'desc' }, { id: 'asc' }];
+
+    const [total, open, closed] = await Promise.all([
+      this.prisma.supportTicket.count({ where }),
+      this.prisma.supportTicket.count({ where: { ...base, ...statusIn(OPEN_STATUSES) } }),
+      this.prisma.supportTicket.count({ where: { ...base, ...statusIn(CLOSED_STATUSES) } }),
+    ]);
+    const totalPages = Math.max(1, Math.ceil(total / query.pageSize));
+    const page = Math.min(query.page, totalPages);
     const tickets = await this.prisma.supportTicket.findMany({
-      where: admin ? {} : { authorId: user.id },
+      where,
       select: TICKET_ROW_SELECT,
-      orderBy: { updatedAt: 'desc' },
-      take: 500,
+      orderBy,
+      skip: (page - 1) * query.pageSize,
+      take: query.pageSize,
     });
-    const rows = tickets.map((t) => this.toRow(t, admin));
+    const result = {
+      tickets: tickets.map((t) => this.toRow(t, admin)),
+      page,
+      pageSize: query.pageSize,
+      total,
+      totalPages,
+      counts: { open, closed, all: open + closed },
+    };
     if (!admin) {
-      return { tickets: rows };
+      return result;
     }
 
+    const [{ kpis, suggestions }, authors, robots] = await Promise.all([
+      this.adminOverview(),
+      this.prisma.user.findMany({ where: { supportTicketsAuthored: { some: {} } }, select: { id: true, name: true, departments: true }, orderBy: { name: 'asc' } }),
+      this.prisma.robot.findMany({ where: { supportTickets: { some: {} } }, select: { id: true, name: true }, orderBy: { name: 'asc' } }),
+    ]);
+    return {
+      ...result,
+      kpis,
+      suggestions,
+      facets: {
+        people: authors.map((a) => ({ id: a.id, name: a.name })),
+        departments: [...new Set(authors.flatMap((a) => a.departments))].sort(),
+        robots,
+      },
+    };
+  }
+
+  /** Indicadores e sugestões de juntar: olham os chamados em aberto e os dos últimos 30 dias (não a lista inteira). */
+  private async adminOverview() {
+    const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    const tickets = await this.prisma.supportTicket.findMany({
+      where: { OR: [{ status: { in: [...OPEN_STATUSES] } }, { createdAt: { gte: since } }] },
+      select: {
+        id: true, status: true, urgency: true, createdAt: true, robotId: true, mainTicketId: true, authorId: true,
+        type: true, subject: true, dashboardId: true, hubArea: true, robot: { select: { name: true } },
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 5000,
+    });
     const replies = await this.prisma.supportMessage.findMany({
       where: { kind: 'message', ticketId: { in: tickets.map((t) => t.id) } },
       orderBy: { createdAt: 'asc' },
@@ -140,30 +221,44 @@ export class SupportService {
     }
     const kpis = computeKpis(
       tickets.map((t) => ({
-        id: t.id,
-        status: t.status,
-        urgency: t.urgency,
-        createdAt: t.createdAt,
-        robotId: t.robotId,
-        robotName: t.robot?.name ?? null,
-        mainTicketId: t.mainTicketId,
+        id: t.id, status: t.status, urgency: t.urgency, createdAt: t.createdAt,
+        robotId: t.robotId, robotName: t.robot?.name ?? null, mainTicketId: t.mainTicketId,
       })),
       firstReplyAt,
     );
-    const suggestions = suggestMergeGroups(
+    const groups = suggestMergeGroups(
       tickets
         .filter((t) => OPEN_STATUSES.includes(t.status) && !t.mainTicketId) // quem já está ligado a outro não é sugerido de novo
-        .map((t) => ({
-          id: t.id,
-          type: t.type,
-          subject: t.subject,
-          robotId: t.robotId,
-          dashboardId: t.dashboardId,
-          hubArea: t.hubArea,
-          createdAt: t.createdAt,
-        })),
-    );
-    return { tickets: rows, kpis, suggestions };
+        .map((t) => ({ id: t.id, type: t.type, subject: t.subject, robotId: t.robotId, dashboardId: t.dashboardId, hubArea: t.hubArea, createdAt: t.createdAt })),
+    ).slice(0, 20);
+    const ids = [...new Set(groups.flat())];
+    const rows = ids.length ? await this.prisma.supportTicket.findMany({ where: { id: { in: ids } }, select: TICKET_ROW_SELECT }) : [];
+    const byId = new Map(rows.map((r) => [r.id, this.toRow(r, true)]));
+    const suggestions = groups.map((g) => g.map((id) => byId.get(id)!).filter(Boolean));
+    return { kpis, suggestions };
+  }
+
+  /** Chamados parecidos com este (só administrador, só se está aberto e não ligado a outro). */
+  private async similarTo(ticket: { id: string; type: TicketType; subject: string; robotId: string | null; dashboardId: string | null; hubArea: string | null; status: TicketStatus; mainTicketId: string | null }) {
+    if (ticket.mainTicketId || !OPEN_STATUSES.includes(ticket.status) || ticket.subject === 'other') return [];
+    const target = ticket.robotId
+      ? { robotId: ticket.robotId }
+      : ticket.dashboardId
+        ? { dashboardId: ticket.dashboardId }
+        : ticket.hubArea
+          ? { hubArea: { equals: ticket.hubArea.trim(), mode: 'insensitive' as const } }
+          : null;
+    if (!target) return [];
+    const candidates = await this.prisma.supportTicket.findMany({
+      where: { status: { in: [...OPEN_STATUSES] }, mainTicketId: null, type: ticket.type, subject: ticket.subject as 'hub' | 'robot' | 'dashboard' | 'other', ...target },
+      select: TICKET_ROW_SELECT,
+      orderBy: { createdAt: 'desc' },
+      take: 100,
+    });
+    const group = suggestMergeGroups(
+      candidates.map((t) => ({ id: t.id, type: t.type, subject: t.subject, robotId: t.robotId, dashboardId: t.dashboardId, hubArea: t.hubArea, createdAt: t.createdAt })),
+    ).find((g) => g.includes(ticket.id));
+    return group ? candidates.filter((t) => group.includes(t.id) && t.id !== ticket.id).map((t) => this.toRow(t, true)) : [];
   }
 
   async get(id: string, user: User) {
@@ -222,6 +317,7 @@ export class SupportService {
     return {
       ...this.toRow({ ...ticket, authorUnread: ticket.authorId === user.id ? false : ticket.authorUnread }, admin),
       context: ticket.contextJson ?? null,
+      similar: admin ? await this.similarTo(ticket) : [],
       main: admin ? ticket.mainTicket : null,
       linked: admin
         ? ticket.linkedTickets.map((l) => ({
@@ -247,7 +343,8 @@ export class SupportService {
             mimeType: a.mimeType,
             size: a.size,
             isImage: a.isImage,
-            downloadUrl: `/storage/${a.storagePath}`,
+            removed: !!a.removedAt,
+            downloadUrl: a.removedAt ? null : `/storage/${a.storagePath}`,
           })),
         };
       }),
@@ -566,7 +663,7 @@ export class SupportService {
 
   // ---------- limpeza (chamada pela retenção) ----------
 
-  /** Apaga os anexos de chamados encerrados há mais de `days` dias. O texto continua. */
+  /** Apaga os ARQUIVOS dos anexos de chamados encerrados há mais de `days` dias. O texto continua e cada anexo fica registrado (nome e tamanho) como apagado. */
   async cleanOldAttachments(days: number): Promise<number> {
     if (days <= 0) return 0;
     const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
@@ -579,7 +676,7 @@ export class SupportService {
     for (const ticket of tickets) {
       await rm(supportTicketDir(ticket.id), { recursive: true, force: true });
       await this.prisma.$transaction([
-        this.prisma.supportAttachment.deleteMany({ where: { message: { ticketId: ticket.id } } }),
+        this.prisma.supportAttachment.updateMany({ where: { message: { ticketId: ticket.id }, removedAt: null }, data: { removedAt: new Date() } }),
         this.prisma.supportTicket.update({ where: { id: ticket.id }, data: { attachmentsCleanedAt: new Date() }, select: { id: true } }),
       ]);
       cleaned += 1;

@@ -211,7 +211,10 @@ test('limpeza: anexos de chamado encerrado há mais de N dias somem do disco e d
   assert.equal(await support.cleanOldAttachments(90), 1);
   assert.equal(existsSync(storageFile(url0)), false);
   const depois = await support.get(id, U.ana);
-  assert.equal(depois.messages[0].attachments.length, 0);
+  assert.equal(depois.messages[0].attachments.length, 1, 'o registro fica (nome e tamanho)');
+  assert.equal(depois.messages[0].attachments[0].removed, true);
+  assert.equal(depois.messages[0].attachments[0].downloadUrl, null);
+  assert.equal(depois.messages[0].attachments[0].fileName, 'print.png');
   assert.ok(depois.messages[0].body.length > 0);
   assert.ok(depois.attachmentsCleanedAt);
   assert.equal(await support.cleanOldAttachments(90), 0, 'não repete');
@@ -322,7 +325,7 @@ test('lista do admin: indicadores, chamados parecidos sugeridos e tempo até a 1
   assert.equal(antes.kpis.openCritical, 1);
   assert.equal(antes.kpis.withoutReply, 3);
   assert.equal(antes.kpis.avgFirstReplySeconds, null);
-  assert.deepEqual(antes.suggestions.map((g: string[]) => [...g].sort()), [[a.id, b.id].sort()], 'mesmo robô e tipo: sugere juntar');
+  assert.deepEqual(antes.suggestions.map((g: any[]) => g.map((t) => t.id).sort()), [[a.id, b.id].sort()], 'mesmo robô e tipo: sugere juntar');
   await support.addMessage(a.id, U.ino, { body: 'Olá' });
   const depois = await support.list(U.ino);
   assert.equal(depois.kpis.withoutReply, 2);
@@ -338,6 +341,77 @@ test('lista do admin: depois de juntar, os ligados não voltam a ser sugeridos (
   await support.merge(U.ino, { mainId: a.id, ticketIds: [b.id] });
   assert.equal((await support.list(U.ino)).suggestions.length, 0, 'principal + ligado: nada a sugerir');
   const c = await open(U.caio);
-  const groups = (await support.list(U.ino)).suggestions.map((g: string[]) => [...g].sort());
+  const groups = (await support.list(U.ino)).suggestions.map((g: any[]) => g.map((t) => t.id).sort());
   assert.deepEqual(groups, [[a.id, c.id].sort()], 'o novo chamado parecido é sugerido junto do principal');
 });
+
+test('paginação: páginas, total, contagens, ordem e página fora do limite', { skip }, async () => {
+  for (let i = 1; i <= 7; i++) {
+    await open(i % 2 ? U.ana : U.bia, { title: `Chamado numero ${i}`, urgency: i === 7 ? 'critical' : 'low' });
+  }
+  const p1 = await support.list(U.ino, { pageSize: '5' });
+  assert.equal(p1.tickets.length, 5);
+  assert.equal(p1.total, 7);
+  assert.equal(p1.totalPages, 2);
+  assert.deepEqual(p1.counts, { open: 7, closed: 0, all: 7 });
+  const p2 = await support.list(U.ino, { pageSize: '5', page: '2' });
+  assert.equal(p2.tickets.length, 2);
+  const ids = [...p1.tickets, ...p2.tickets].map((t: any) => t.id);
+  assert.equal(new Set(ids).size, 7, 'nenhum chamado repetido nem perdido entre as páginas');
+  const beyond = await support.list(U.ino, { pageSize: '5', page: '99' });
+  assert.equal(beyond.page, 2, 'página fora do limite volta para a última');
+  assert.equal(beyond.tickets.length, 2);
+  const oldest = await support.list(U.ino, { sort: 'oldest', pageSize: '5' });
+  assert.equal(oldest.tickets[0].title, 'Chamado numero 1');
+  const urgent = await support.list(U.ino, { sort: 'urgency', pageSize: '5' });
+  assert.equal(urgent.tickets[0].title, 'Chamado numero 7', 'crítico primeiro');
+  // valores inválidos viram o padrão (tela antiga em cache não quebra)
+  const weird = await support.list(U.ino, { page: 'abc', pageSize: '-3', sort: 'x', situation: 'y' });
+  assert.equal(weird.page, 1);
+  assert.equal(weird.total, 7);
+  assert.equal(weird.tickets.length, 5, 'tamanho de página inválido vira o mínimo (5)');
+});
+
+test('paginação: filtros no servidor (situação, busca por título e número, pessoa, departamento, robô, atribuídos a mim)', { skip }, async () => {
+  const a = await open(U.ana, { title: 'Falha no Gestta' });
+  const b = await open(U.bia, { title: 'Dúvida sobre relatório', type: 'question', subject: 'other', robotId: null });
+  await support.update(b.id, U.ino, { status: 'resolved', assigneeId: 's-ino' });
+  const titles = async (q: Record<string, unknown>, who = U.ino) => (await support.list(who, q)).tickets.map((t: any) => t.title).sort();
+  assert.deepEqual(await titles({}), ['Falha no Gestta'], 'padrão: só em aberto');
+  assert.deepEqual(await titles({ situation: 'closed' }), ['Dúvida sobre relatório']);
+  assert.equal((await titles({ situation: 'all' })).length, 2);
+  const counts = (await support.list(U.ino, { situation: 'closed' })).counts;
+  assert.deepEqual(counts, { open: 1, closed: 1, all: 2 }, 'as contagens ignoram a situação escolhida');
+  assert.deepEqual(await titles({ situation: 'all', q: 'gesTTa' }), ['Falha no Gestta'], 'busca sem diferenciar maiúsculas');
+  assert.deepEqual(await titles({ situation: 'all', q: `#${b.number}` }), ['Dúvida sobre relatório'], 'busca pelo número');
+  assert.deepEqual(await titles({ situation: 'all', person: 's-bia' }), ['Dúvida sobre relatório']);
+  assert.deepEqual(await titles({ situation: 'all', department: 'fiscal' }).then((x) => x.length), 2);
+  assert.deepEqual(await titles({ situation: 'all', department: 'rh' }), []);
+  assert.deepEqual(await titles({ situation: 'all', robot: 's-robo' }), ['Falha no Gestta']);
+  assert.deepEqual(await titles({ situation: 'all', type: 'question' }), ['Dúvida sobre relatório']);
+  assert.deepEqual(await titles({ situation: 'all', tab: 'mine' }), ['Dúvida sobre relatório'], 'atribuídos a mim');
+  // quem não é admin: os filtros de admin não abrem o chamado de outros
+  assert.deepEqual(await titles({ situation: 'all', person: 's-bia' }, U.ana), ['Falha no Gestta'], 'pessoa comum só enxerga os próprios, mesmo pedindo outra pessoa');
+  assert.deepEqual(await titles({ situation: 'all', q: 'relatório' }, U.ana), []);
+  const r = await support.list(U.ana, { situation: 'all' });
+  assert.equal(r.facets, undefined);
+  assert.equal(r.kpis, undefined);
+  assert.equal(r.suggestions, undefined);
+  const facets = (await support.list(U.ino)).facets;
+  assert.deepEqual(facets.people.map((p: any) => p.id).sort(), ['s-ana', 's-bia']);
+  assert.deepEqual(facets.departments, ['fiscal']);
+  assert.deepEqual(facets.robots.map((x: any) => x.id), ['s-robo']);
+  void a;
+});
+
+test('detalhe do admin traz os chamados parecidos; o autor não', { skip }, async () => {
+  const a = await open(U.ana);
+  const b = await open(U.bia);
+  const own = await support.get(a.id, U.ino);
+  assert.deepEqual(own.similar.map((t: any) => t.id), [b.id]);
+  assert.deepEqual((await support.get(a.id, U.ana)).similar, []);
+  await support.merge(U.ino, { mainId: a.id, ticketIds: [b.id] });
+  assert.deepEqual((await support.get(a.id, U.ino)).similar, [], 'depois de juntar, nada a sugerir');
+  assert.deepEqual((await support.get(b.id, U.ino)).similar, [], 'ligado não recebe sugestão');
+});
+

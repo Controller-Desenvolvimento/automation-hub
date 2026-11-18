@@ -641,6 +641,8 @@ model SupportAttachment {
   // Caminho relativo a storage/: support/<id do chamado>/<arquivo>
   storagePath String
   isImage     Boolean        @default(false)
+  // Preenchido quando o arquivo foi apagado do disco pela retenção (o registro fica: nome e tamanho continuam no histórico).
+  removedAt   DateTime?
   createdAt   DateTime       @default(now())
 
   @@index([messageId])

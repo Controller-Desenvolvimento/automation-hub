@@ -5,6 +5,7 @@ import {
   Param,
   Patch,
   Post,
+  Query,
   Req,
   UploadedFiles,
   UseInterceptors,
@@ -38,9 +39,9 @@ export class SupportController {
   }
 
   @Get('tickets')
-  async list(@Req() request: Request) {
+  async list(@Req() request: Request, @Query() query: Record<string, unknown>) {
     const user = await this.authService.requireUser(request);
-    return this.supportService.list(user);
+    return this.supportService.list(user, query);
   }
 
   // Rotas fixas ANTES das de ":id".

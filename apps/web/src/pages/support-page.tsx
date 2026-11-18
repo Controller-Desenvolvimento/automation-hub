@@ -1,5 +1,5 @@
-import { LifeBuoy, Link2, Plus, Search } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { ChevronLeft, ChevronRight, LifeBuoy, Link2, Plus, Search } from 'lucide-react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { PageHeader } from '../components/page-header';
 import { StatusBadge, UrgencyBadge } from '../components/support-badges';
@@ -11,7 +11,6 @@ import { useAuth } from '../contexts/auth-context';
 import { useHub } from '../contexts/hub-context';
 import { api } from '../lib/api';
 import {
-  OPEN_STATUSES,
   TYPE_LABELS,
   URGENCIES,
   URGENCY_LABELS,
@@ -27,7 +26,22 @@ import { cn, departmentLabel, timeAgo } from '../lib/utils';
 type Situation = 'open' | 'closed' | 'all';
 type SortKey = 'recent' | 'oldest' | 'urgency';
 
-const URGENCY_ORDER: Record<TicketUrgency, number> = { critical: 0, high: 1, medium: 2, low: 3 };
+// Filtros e página: tudo vai para o servidor (a lista é paginada lá, sem limite de chamados).
+type Filters = {
+  tab: 'all' | 'mine';
+  situation: Situation;
+  q: string;
+  urgency: '' | TicketUrgency;
+  person: string;
+  department: string;
+  type: '' | TicketType;
+  robot: string;
+  sort: SortKey;
+  page: number;
+};
+
+const INITIAL: Filters = { tab: 'all', situation: 'open', q: '', urgency: '', person: '', department: '', type: '', robot: '', sort: 'recent', page: 1 };
+const PAGE_SIZE = 25;
 
 const selectClass =
   'h-10 rounded-xl border border-slate-300 bg-white px-3 text-sm text-slate-900 outline-none transition focus:border-sky-500 focus:ring-4 focus:ring-sky-500/15 dark:border-[#2b2b31] dark:bg-[#0f0f10] dark:text-zinc-100';
@@ -38,82 +52,65 @@ export function SupportPage() {
   const { notify, departments, refreshSupportUnread } = useHub();
   const isAdmin = user?.role === 'admin' || user?.departments.includes('inovacao') === true;
 
+  const [filters, setFilters] = useState<Filters>(INITIAL);
+  // A busca por texto só vai ao servidor depois de uma pausa na digitação.
+  const [queryText, setQueryText] = useState('');
   const [data, setData] = useState<TicketList | null>(null);
+  const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [tab, setTab] = useState<'all' | 'mine'>('all');
-  const [situation, setSituation] = useState<Situation>('open');
-  const [query, setQuery] = useState('');
-  const [urgency, setUrgency] = useState<'' | TicketUrgency>('');
-  const [person, setPerson] = useState('');
-  const [department, setDepartment] = useState('');
-  const [type, setType] = useState<'' | TicketType>('');
-  const [robot, setRobot] = useState('');
-  const [sort, setSort] = useState<SortKey>('recent');
+  // A seleção para juntar vale entre páginas: guarda os ids e os dados dos chamados já vistos.
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const known = useRef(new Map<string, TicketRow>());
   const [mergeIds, setMergeIds] = useState<string[] | null>(null);
+  const [mergeRows, setMergeRows] = useState<TicketRow[]>([]);
+  const requestId = useRef(0);
+  const topRef = useRef<HTMLDivElement>(null);
 
-  const load = useCallback(async () => {
-    try {
-      setData(await api<TicketList>('/support/tickets'));
-      setLoadError(null);
-    } catch (err) {
-      setLoadError(err instanceof Error ? err.message : 'Não foi possível carregar os chamados.');
-    }
-  }, []);
+  const update = useCallback((patch: Partial<Filters>) => setFilters((current) => ({ ...current, page: 1, ...patch })), []);
 
   useEffect(() => {
+    const timer = window.setTimeout(() => {
+      if (queryText.trim() !== filters.q) update({ q: queryText.trim() });
+    }, 300);
+    return () => window.clearTimeout(timer);
+  }, [queryText, filters.q, update]);
+
+  const load = useCallback(async () => {
+    const id = ++requestId.current;
+    const params = new URLSearchParams({ page: String(filters.page), pageSize: String(PAGE_SIZE), situation: filters.situation, sort: filters.sort, tab: filters.tab });
+    if (filters.q) params.set('q', filters.q);
+    if (filters.urgency) params.set('urgency', filters.urgency);
+    if (filters.type) params.set('type', filters.type);
+    if (filters.person) params.set('person', filters.person);
+    if (filters.department) params.set('department', filters.department);
+    if (filters.robot) params.set('robot', filters.robot);
+    try {
+      const result = await api<TicketList>(`/support/tickets?${params.toString()}`);
+      if (id !== requestId.current) return; // chegou uma resposta mais nova: esta ficou velha
+      result.tickets.forEach((t) => known.current.set(t.id, t));
+      result.suggestions?.flat().forEach((t) => known.current.set(t.id, t));
+      setData(result);
+      setLoadError(null);
+      // Foi para uma página que não existe mais (chamados encerrados/filtro): o servidor devolve a última.
+      if (result.page !== filters.page) setFilters((current) => ({ ...current, page: result.page }));
+    } catch (err) {
+      if (id === requestId.current) setLoadError(err instanceof Error ? err.message : 'Não foi possível carregar os chamados.');
+    } finally {
+      if (id === requestId.current) setLoading(false);
+    }
+  }, [filters]);
+
+  useEffect(() => {
+    setLoading(true);
     void load();
     const timer = window.setInterval(() => void load(), 30_000);
     return () => window.clearInterval(timer);
   }, [load]);
 
-  const tickets = data?.tickets ?? [];
-  const byId = useMemo(() => new Map(tickets.map((t) => [t.id, t])), [tickets]);
-
-  const people = useMemo(() => {
-    const map = new Map<string, string>();
-    tickets.forEach((t) => t.author && map.set(t.author.id, t.author.name));
-    return [...map.entries()].sort((a, b) => a[1].localeCompare(b[1], 'pt-BR'));
-  }, [tickets]);
-  const robots = useMemo(() => {
-    const map = new Map<string, string>();
-    tickets.forEach((t) => t.robot && map.set(t.robot.id, t.robot.name));
-    return [...map.entries()].sort((a, b) => a[1].localeCompare(b[1], 'pt-BR'));
-  }, [tickets]);
-  const authorDepartments = useMemo(
-    () => [...new Set(tickets.flatMap((t) => t.author?.departments ?? []))].sort(),
-    [tickets],
-  );
-
-  const scoped = useMemo(
-    () => (isAdmin && tab === 'mine' ? tickets.filter((t) => t.assignee?.id === user?.id) : tickets),
-    [isAdmin, tab, tickets, user?.id],
-  );
-  const counts = useMemo(() => {
-    const open = scoped.filter((t) => OPEN_STATUSES.includes(t.status)).length;
-    return { open, closed: scoped.length - open, all: scoped.length };
-  }, [scoped]);
-
-  const rows = useMemo(() => {
-    const term = query.trim().toLowerCase().replace(/^#/, '');
-    const list = scoped.filter((t) => {
-      if (situation === 'open' && !OPEN_STATUSES.includes(t.status)) return false;
-      if (situation === 'closed' && OPEN_STATUSES.includes(t.status)) return false;
-      if (urgency && t.urgency !== urgency) return false;
-      if (type && t.type !== type) return false;
-      if (person && t.author?.id !== person) return false;
-      if (department && !t.author?.departments.includes(department)) return false;
-      if (robot && t.robot?.id !== robot) return false;
-      if (term && !t.title.toLowerCase().includes(term) && !String(t.number).includes(term)) return false;
-      return true;
-    });
-    const sorters: Record<SortKey, (a: TicketRow, b: TicketRow) => number> = {
-      recent: (a, b) => +new Date(b.updatedAt) - +new Date(a.updatedAt),
-      oldest: (a, b) => +new Date(a.createdAt) - +new Date(b.createdAt),
-      urgency: (a, b) => URGENCY_ORDER[a.urgency] - URGENCY_ORDER[b.urgency] || +new Date(b.updatedAt) - +new Date(a.updatedAt),
-    };
-    return list.sort(sorters[sort]);
-  }, [scoped, situation, urgency, type, person, department, robot, query, sort]);
+  function goToPage(page: number) {
+    update({ page });
+    topRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
 
   function toggle(id: string) {
     setSelected((current) => {
@@ -124,10 +121,23 @@ export function SupportPage() {
     });
   }
 
-  const suggestions = (data?.suggestions ?? []).filter((group) => group.every((id) => byId.has(id)));
+  function openMerge(ids: string[]) {
+    const rows = ids.map((id) => known.current.get(id)).filter((t): t is TicketRow => !!t);
+    setMergeRows(rows);
+    setMergeIds(ids);
+  }
+
+  const tickets = data?.tickets ?? [];
+  const counts = data?.counts ?? { open: 0, closed: 0, all: 0 };
+  const total = data?.total ?? 0;
   const kpis = data?.kpis;
+  const facets = data?.facets;
+  const suggestions = (data?.suggestions ?? []).filter((group) => group.length >= 2);
   const viewer = isAdmin ? 'admin' : 'author';
   const wait = formatWait(kpis?.avgFirstReplySeconds ?? null);
+  const filtered = !!(filters.q || filters.urgency || filters.type || filters.person || filters.department || filters.robot || filters.tab === 'mine');
+  const firstShown = total === 0 ? 0 : ((data?.page ?? 1) - 1) * PAGE_SIZE + 1;
+  const lastShown = firstShown === 0 ? 0 : firstShown + tickets.length - 1;
 
   return (
     <div className="space-y-6">
@@ -176,13 +186,13 @@ export function SupportPage() {
           </div>
           <ul className="mt-2 grid gap-2">
             {suggestions.map((group) => {
-              const first = byId.get(group[0])!;
+              const first = group[0];
               return (
-                <li key={group.join('-')} className="flex flex-wrap items-center gap-3">
+                <li key={group.map((t) => t.id).join('-')} className="flex flex-wrap items-center gap-3">
                   <span>
-                    {group.map((id) => `#${byId.get(id)!.number}`).join(', ')} — {subjectText(first)} ({TYPE_LABELS[first.type].toLowerCase()})
+                    {group.map((t) => `#${t.number}`).join(', ')} — {subjectText(first)} ({TYPE_LABELS[first.type].toLowerCase()})
                   </span>
-                  <Button size="sm" variant="outline" onClick={() => setMergeIds(group)}>
+                  <Button size="sm" variant="outline" onClick={() => openMerge(group.map((t) => t.id))}>
                     <Link2 className="mr-1.5 h-3.5 w-3.5" />
                     Revisar e juntar
                   </Button>
@@ -195,6 +205,7 @@ export function SupportPage() {
 
       <Card className="rounded-3xl">
         <CardContent className="space-y-4">
+          <div ref={topRef} />
           {isAdmin ? (
             <div role="tablist" aria-label="Quais chamados" className="flex gap-2 border-b border-slate-200 pb-3 dark:border-[#2b2b31]">
               {([['all', 'Todos os chamados'], ['mine', 'Atribuídos a mim']] as const).map(([value, label]) => (
@@ -202,11 +213,11 @@ export function SupportPage() {
                   key={value}
                   type="button"
                   role="tab"
-                  aria-selected={tab === value}
-                  onClick={() => setTab(value)}
+                  aria-selected={filters.tab === value}
+                  onClick={() => update({ tab: value })}
                   className={cn(
                     'rounded-lg px-3 py-1.5 text-sm font-medium transition',
-                    tab === value ? 'bg-slate-100 text-slate-950 dark:bg-[#1b1b20] dark:text-white' : 'text-slate-500 hover:text-slate-900 dark:text-zinc-400 dark:hover:text-white',
+                    filters.tab === value ? 'bg-slate-100 text-slate-950 dark:bg-[#1b1b20] dark:text-white' : 'text-slate-500 hover:text-slate-900 dark:text-zinc-400 dark:hover:text-white',
                   )}
                 >
                   {label}
@@ -221,11 +232,11 @@ export function SupportPage() {
                 <button
                   key={value}
                   type="button"
-                  aria-pressed={situation === value}
-                  onClick={() => setSituation(value)}
+                  aria-pressed={filters.situation === value}
+                  onClick={() => update({ situation: value })}
                   className={cn(
                     'px-3 py-2 text-sm transition',
-                    situation === value ? 'bg-slate-950 text-white dark:bg-white dark:text-slate-950' : 'bg-white text-slate-600 hover:bg-slate-50 dark:bg-[#0f0f10] dark:text-zinc-300 dark:hover:bg-[#18181b]',
+                    filters.situation === value ? 'bg-slate-950 text-white dark:bg-white dark:text-slate-950' : 'bg-white text-slate-600 hover:bg-slate-50 dark:bg-[#0f0f10] dark:text-zinc-300 dark:hover:bg-[#18181b]',
                   )}
                 >
                   {label}
@@ -234,33 +245,33 @@ export function SupportPage() {
             </div>
             <div className="relative min-w-[220px] flex-1">
               <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-              <Input aria-label="Buscar" className="pl-9" placeholder="Buscar por título ou número" value={query} onChange={(e) => setQuery(e.target.value)} />
+              <Input aria-label="Buscar" className="pl-9" placeholder="Buscar por título ou número" value={queryText} onChange={(e) => setQueryText(e.target.value)} />
             </div>
           </div>
 
           {isAdmin ? (
             <div className="flex flex-wrap items-center gap-2">
-              <select aria-label="Urgência" className={selectClass} value={urgency} onChange={(e) => setUrgency(e.target.value as '' | TicketUrgency)}>
+              <select aria-label="Urgência" className={selectClass} value={filters.urgency} onChange={(e) => update({ urgency: e.target.value as '' | TicketUrgency })}>
                 <option value="">Toda urgência</option>
                 {URGENCIES.map((u) => <option key={u} value={u}>{URGENCY_LABELS[u]}</option>)}
               </select>
-              <select aria-label="Pessoa" className={selectClass} value={person} onChange={(e) => setPerson(e.target.value)}>
+              <select aria-label="Pessoa" className={selectClass} value={filters.person} onChange={(e) => update({ person: e.target.value })}>
                 <option value="">Toda pessoa</option>
-                {people.map(([id, name]) => <option key={id} value={id}>{name}</option>)}
+                {(facets?.people ?? []).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
               </select>
-              <select aria-label="Departamento" className={selectClass} value={department} onChange={(e) => setDepartment(e.target.value)}>
+              <select aria-label="Departamento" className={selectClass} value={filters.department} onChange={(e) => update({ department: e.target.value })}>
                 <option value="">Todo departamento</option>
-                {authorDepartments.map((d) => <option key={d} value={d}>{departmentLabel(d, departments)}</option>)}
+                {(facets?.departments ?? []).map((d) => <option key={d} value={d}>{departmentLabel(d, departments)}</option>)}
               </select>
-              <select aria-label="Tipo" className={selectClass} value={type} onChange={(e) => setType(e.target.value as '' | TicketType)}>
+              <select aria-label="Tipo" className={selectClass} value={filters.type} onChange={(e) => update({ type: e.target.value as '' | TicketType })}>
                 <option value="">Todo tipo</option>
                 {(Object.keys(TYPE_LABELS) as TicketType[]).map((t) => <option key={t} value={t}>{TYPE_LABELS[t]}</option>)}
               </select>
-              <select aria-label="Robô" className={selectClass} value={robot} onChange={(e) => setRobot(e.target.value)}>
+              <select aria-label="Robô" className={selectClass} value={filters.robot} onChange={(e) => update({ robot: e.target.value })}>
                 <option value="">Todo robô</option>
-                {robots.map(([id, name]) => <option key={id} value={id}>{name}</option>)}
+                {(facets?.robots ?? []).map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
               </select>
-              <select aria-label="Ordenar" className={selectClass} value={sort} onChange={(e) => setSort(e.target.value as SortKey)}>
+              <select aria-label="Ordenar" className={selectClass} value={filters.sort} onChange={(e) => update({ sort: e.target.value as SortKey })}>
                 <option value="recent">Mais recentes primeiro</option>
                 <option value="oldest">Mais antigos primeiro</option>
                 <option value="urgency">Mais urgentes primeiro</option>
@@ -271,7 +282,7 @@ export function SupportPage() {
           {isAdmin && selected.size > 0 ? (
             <div className="flex flex-wrap items-center gap-3 rounded-xl bg-sky-50 px-4 py-2.5 text-sm dark:bg-sky-950/30">
               <span className="font-medium">{selected.size} selecionado{selected.size === 1 ? '' : 's'}</span>
-              <Button size="sm" disabled={selected.size < 2} onClick={() => setMergeIds([...selected])} title={selected.size < 2 ? 'Marque pelo menos 2 chamados' : undefined}>
+              <Button size="sm" disabled={selected.size < 2} onClick={() => openMerge([...selected])} title={selected.size < 2 ? 'Marque pelo menos 2 chamados' : undefined}>
                 <Link2 className="mr-1.5 h-3.5 w-3.5" />
                 Juntar chamados
               </Button>
@@ -283,21 +294,21 @@ export function SupportPage() {
             <p className="rounded-xl bg-rose-50 px-4 py-3 text-sm text-rose-700 dark:bg-rose-950/40 dark:text-rose-200">{loadError}</p>
           ) : !data ? (
             <div className="space-y-2">{[1, 2, 3].map((i) => <div key={i} className="h-16 animate-pulse rounded-xl bg-slate-100 dark:bg-slate-800/60" />)}</div>
-          ) : rows.length === 0 ? (
+          ) : tickets.length === 0 ? (
             <div className="py-12 text-center">
               <LifeBuoy className="mx-auto mb-3 h-9 w-9 text-slate-300 dark:text-zinc-600" />
               <p className="text-sm text-slate-500 dark:text-zinc-400">
-                {tickets.length === 0
+                {counts.all === 0 && !filtered
                   ? isAdmin ? 'Nenhum chamado aberto ainda.' : 'Você ainda não abriu nenhum chamado.'
                   : 'Nenhum chamado com esses filtros.'}
               </p>
-              {tickets.length === 0 && !isAdmin ? (
+              {counts.all === 0 && !filtered && !isAdmin ? (
                 <Button className="mt-4" onClick={() => navigate('/support/new')}>Abrir meu primeiro chamado</Button>
               ) : null}
             </div>
           ) : (
-            <ul className="divide-y divide-slate-100 dark:divide-white/[0.06]">
-              {rows.map((t) => {
+            <ul className={cn('divide-y divide-slate-100 transition-opacity dark:divide-white/[0.06]', loading && 'opacity-60')} aria-busy={loading}>
+              {tickets.map((t) => {
                 const unread = isAdmin ? !!t.needsAdmin && !t.mainTicketId : t.authorUnread;
                 return (
                   <li key={t.id} className="flex items-start gap-3 py-3">
@@ -343,24 +354,75 @@ export function SupportPage() {
               })}
             </ul>
           )}
+
+          {data && total > 0 ? (
+            <Pagination page={data.page} totalPages={data.totalPages} from={firstShown} to={lastShown} total={total} onPage={goToPage} />
+          ) : null}
         </CardContent>
       </Card>
 
       {mergeIds ? (
         <SupportMergeDialog
-          tickets={mergeIds.map((id) => byId.get(id)).filter((t): t is TicketRow => !!t)}
+          tickets={mergeRows}
           onClose={() => setMergeIds(null)}
           onMerged={async (mainId, count) => {
             setMergeIds(null);
             setSelected(new Set());
-            notify(`${count} chamado${count === 1 ? '' : 's'} ligado${count === 1 ? '' : 's'} ao #${byId.get(mainId)?.number ?? ''}. Responda uma vez no principal.`);
-            await load();
+            notify(`${count} chamado${count === 1 ? '' : 's'} ligado${count === 1 ? '' : 's'} ao #${known.current.get(mainId)?.number ?? ''}. Responda uma vez no principal.`);
             void refreshSupportUnread();
             navigate(`/support/${mainId}`);
           }}
         />
       ) : null}
     </div>
+  );
+}
+
+/** Números de página com reticências: 1 … 4 5 6 … 20. */
+function pageList(page: number, totalPages: number): Array<number | '…'> {
+  const wanted = new Set([1, totalPages, page - 1, page, page + 1]);
+  const pages = [...wanted].filter((n) => n >= 1 && n <= totalPages).sort((a, b) => a - b);
+  const out: Array<number | '…'> = [];
+  pages.forEach((n, i) => {
+    if (i > 0 && n - pages[i - 1] > 1) out.push('…');
+    out.push(n);
+  });
+  return out;
+}
+
+function Pagination({ page, totalPages, from, to, total, onPage }: { page: number; totalPages: number; from: number; to: number; total: number; onPage: (page: number) => void }) {
+  return (
+    <nav aria-label="Páginas de chamados" className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 pt-4 dark:border-white/[0.06]">
+      <span className="text-xs text-slate-500 dark:text-zinc-400">
+        Mostrando {from}–{to} de {total} chamado{total === 1 ? '' : 's'}
+      </span>
+      {totalPages > 1 ? (
+        <div className="flex items-center gap-1">
+          <Button size="sm" variant="outline" disabled={page <= 1} onClick={() => onPage(page - 1)} aria-label="Página anterior">
+            <ChevronLeft className="h-4 w-4" />
+          </Button>
+          {pageList(page, totalPages).map((n, i) =>
+            n === '…' ? (
+              <span key={`gap-${i}`} className="px-1.5 text-sm text-slate-400">…</span>
+            ) : (
+              <Button
+                key={n}
+                size="sm"
+                variant={n === page ? 'default' : 'ghost'}
+                aria-current={n === page ? 'page' : undefined}
+                aria-label={`Página ${n}`}
+                onClick={() => onPage(n)}
+              >
+                {n}
+              </Button>
+            ),
+          )}
+          <Button size="sm" variant="outline" disabled={page >= totalPages} onClick={() => onPage(page + 1)} aria-label="Próxima página">
+            <ChevronRight className="h-4 w-4" />
+          </Button>
+        </div>
+      ) : null}
+    </nav>
   );
 }
 

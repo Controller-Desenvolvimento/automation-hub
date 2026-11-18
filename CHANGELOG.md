@@ -19,11 +19,16 @@ configuração, sem dados de infraestrutura. O desenho detalhado de cada funcion
 - **Anexos** na abertura e em qualquer resposta, dos dois lados: Ctrl+V de um print, arrastar ou escolher; imagens
   (png, jpg, gif, webp, até 10 MB) e arquivos (xlsx, xls, csv, pdf, doc, docx, txt, até 25 MB); até 5 por mensagem. Só quem
   abriu o chamado e os administradores baixam (mesma proteção do `/storage`). Os anexos de um chamado **encerrado há mais de
-  90 dias são apagados** (o texto fica); `SUPPORT_ATTACHMENT_RETENTION_DAYS` muda o prazo (0 = nunca apagar).
+  90 dias são apagados** do disco (o texto e o registro do anexo ficam: no lugar do arquivo aparece o nome, o tamanho e o aviso
+  "apagado automaticamente, por segurança, 90 dias depois de o chamado ser encerrado"); `SUPPORT_ATTACHMENT_RETENTION_DAYS` muda o
+  prazo (0 = nunca apagar). Os chamados em si nunca são apagados: ficam na aba "Encerrados" como histórico.
 - **Juntar chamados** (administrador): o Hub sugere os parecidos (mesmo tipo e mesmo assunto, abertos, até 14 dias de diferença)
   e também dá para marcar caixinhas na lista e clicar em "Juntar chamados". No principal, o administrador vê o que cada autor
   escreveu e **responde uma vez**: a resposta (com anexos) chega na conversa de cada um; o status do principal vale para todos;
   a nota interna nunca vai. Cada pessoa continua vendo só o próprio chamado. Dá para desligar um chamado do grupo.
+- **Lista paginada no servidor, sem limite de chamados** (25 por página): situação (em aberto/encerrados/todos), busca por título ou
+  número, urgência, pessoa, departamento, tipo, robô, "atribuídos a mim" e ordem são aplicados no banco; a seleção para juntar vale
+  entre páginas. Indicadores e sugestões de juntar olham os chamados em aberto e os dos últimos 30 dias.
 - Quem abriu confirma ("Sim, obrigado" / "Sim, concordo") ou reabre ("Ainda acontece"). O rascunho de um chamado novo fica
   guardado no navegador.
 
