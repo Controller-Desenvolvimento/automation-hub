@@ -3,6 +3,19 @@
 Mudanças do Automation Hub por data. Este arquivo é **público**: descreve o que mudou no produto, no banco e na
 configuração, sem dados de infraestrutura. O desenho detalhado de cada funcionalidade está no `CLAUDE.md`.
 
+## 2026-11-19 — Suporte: botão Enviar com menu e reabrir chamado separado de responder
+
+### Mudado (só frontend: sem mudança na API nem no banco)
+- **Um só lugar para mudar o status ao responder.** Sai o campo "Depois de enviar". O botão **Enviar** da Inovação ganha um menu:
+  "Enviar e aguardar usuário", "Enviar e resolver" e "Enviar e marcar como Não é problema" (num chamado encerrado, "Enviar e
+  reabrir"). O clique principal só responde e mantém o status. O seletor "Status" da lateral continua para mudar sem escrever.
+- **Quem abriu um chamado encerrado não vê mais a caixa de resposta**, para que um "obrigado" não reabra o chamado (e mande e-mail
+  de reaberto) sem querer. Ele agradece com **"Sim, obrigado" / "Sim, concordo"** (registra a confirmação, não reabre) e, se ainda
+  acontece, clica em **"Ainda acontece (reabrir)"** / **"Reabrir chamado"**, que abre um formulário com o motivo obrigatório e
+  anexos; só ao enviar o chamado reabre e a Inovação é avisada.
+- Corrigido: o rótulo "Responder (reabre o chamado)" aparecia também para administradores, para quem não é verdade (a resposta da
+  Inovação não reabre; só a de quem abriu).
+
 ## 2026-11-19 — Suporte: e-mail para a equipe de Inovação
 
 ### Novo
