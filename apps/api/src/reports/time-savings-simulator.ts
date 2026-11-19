@@ -3,7 +3,7 @@
 
 import { dayStart as reportDayStart, toReportDay } from './time-savings-metrics';
 
-export const MONTH_DAYS = 30.4375; // dias de um mês médio
+export const MONTH_DAYS = 30.4375; // dias de um mês médio (só para referência: a projeção usa meses do calendário, ver `monthsBetween`)
 export const BUSINESS_DAYS = 21; // dias úteis por mês (pessoas equivalentes = horas por mês ÷ (jornada × 21))
 export const DAY_MS = 86_400_000;
 export const MAX_SIM_SECONDS = 86_400; // o mesmo teto do tempo manual configurado
@@ -91,22 +91,55 @@ function periodEnd(input: Pick<SimInput, 'to' | 'now'>): number {
   return input.to === null || input.to === undefined || !Number.isFinite(input.to) ? today : Math.min(today, dayStart(input.to));
 }
 
+/** Início do período (ms): o "De" ou, no histórico todo, o dia da primeira execução. */
+function periodStart(input: Pick<SimInput, 'robots' | 'from' | 'now'>): number {
+  if (input.from !== null && Number.isFinite(input.from)) return dayStart(input.from);
+  let first = Infinity;
+  for (const r of input.robots) if (r.firstAt && r.firstAt < first) first = r.firstAt;
+  return Number.isFinite(first) ? dayStart(first) : dayStart(input.now);
+}
+
 export function periodDays(input: Pick<SimInput, 'robots' | 'from' | 'to' | 'now'>): number {
-  let from = input.from;
-  if (from === null || !Number.isFinite(from)) {
-    let first = Infinity;
-    for (const r of input.robots) if (r.firstAt && r.firstAt < first) first = r.firstAt;
-    from = Number.isFinite(first) ? dayStart(first) : input.now;
-  }
   // dias corridos entre o início e o fim do período (o "Até", ou hoje), contando os dois; o horário de agora não vira um dia a mais
-  return Math.max(1, Math.round((periodEnd(input) - dayStart(from)) / DAY_MS) + 1);
+  return Math.max(1, Math.round((periodEnd(input) - periodStart(input)) / DAY_MS) + 1);
+}
+
+/**
+ * Quantos "meses" tem um intervalo de dias, pelo calendário: um mês inteiro vale exatamente 1 (outubro = 1, fevereiro = 1) e um
+ * pedaço de mês vale a fração dos dias dele (19 dias de novembro = 19/30). Assim 119 execuções de 5 min em outubro inteiro dão
+ * 9,9 h por mês, e não 9,7 h (que sairia de dividir 31 dias por um mês "médio" de 30,4375).
+ */
+export function monthsBetween(startMs: number, endMs: number): number {
+  const a = toReportDay(new Date(startMs));
+  let b = toReportDay(new Date(endMs));
+  if (b < a) b = a;
+  let year = Number(a.slice(0, 4));
+  let month = Number(a.slice(5, 7)); // 1..12
+  const lastYear = Number(b.slice(0, 4));
+  const lastMonth = Number(b.slice(5, 7));
+  let total = 0;
+  while (year < lastYear || (year === lastYear && month <= lastMonth)) {
+    const inMonth = new Date(Date.UTC(year, month, 0)).getUTCDate();
+    const first = year === Number(a.slice(0, 4)) && month === Number(a.slice(5, 7)) ? Number(a.slice(8, 10)) : 1;
+    const last = year === lastYear && month === lastMonth ? Number(b.slice(8, 10)) : inMonth;
+    total += (last - first + 1) / inMonth;
+    month += 1;
+    if (month > 12) {
+      month = 1;
+      year += 1;
+    }
+  }
+  return total;
+}
+
+/** Primeiro dia em que o robô conta no período: um robô que começou há 20 dias não é diluído no período inteiro. */
+function robotStart(robot: SimRobot, input: Pick<SimInput, 'robots' | 'from' | 'now'>): number {
+  const start = periodStart(input);
+  return robot.firstAt ? Math.max(start, dayStart(robot.firstAt)) : start;
 }
 
 function robotDays(robot: SimRobot, input: Pick<SimInput, 'robots' | 'from' | 'to' | 'now'>): number {
-  const pd = periodDays(input);
-  if (!robot.firstAt) return pd;
-  const from = Math.max(input.from ?? -Infinity, dayStart(robot.firstAt));
-  return Math.min(pd, Math.max(1, Math.round((periodEnd(input) - from) / DAY_MS) + 1));
+  return Math.max(1, Math.round((periodEnd(input) - robotStart(robot, input)) / DAY_MS) + 1);
 }
 
 /** Itens de cada execução; as que não informaram a quantidade usam a média do robô (e contam como "estimadas"). */
@@ -125,7 +158,8 @@ function unitsOf(robot: SimRobot, base: SimBase, hasTimeRobot: boolean): { total
 /** `mult` = faixa (×0,5 / ×1 / ×1,5): vale só para os tempos estimados dos robôs sem tempo; os novos tempos escolhidos não variam. */
 export function simulate(input: SimInput, mult = 1): SimResult {
   const days = periodDays(input);
-  const months = days / MONTH_DAYS;
+  const end = periodEnd(input);
+  const months = Math.max(1 / 31, monthsBetween(periodStart(input), end));
   const rows: SimRow[] = [];
   let estimatedExecutions = 0;
 
@@ -135,7 +169,8 @@ export function simulate(input: SimInput, mult = 1): SimResult {
     const guess = input.times[robot.robotId];
     const has = Number.isFinite(guess) && guess > 0;
     const d = list.length ? robotDays(robot, input) : days;
-    const mr = d / MONTH_DAYS;
+    // meses do calendário que o robô cobre no período (um robô novo conta só desde o 1º dia dele)
+    const mr = Math.max(1 / 31, list.length ? monthsBetween(robotStart(robot, input), end) : months);
     let simulated: number;
     let source: SimSource;
     let perExecution: number | null = null;

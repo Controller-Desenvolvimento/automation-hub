@@ -362,7 +362,7 @@ export function GainSimulator({
       {result ? (
         <div className={cn('space-y-6 transition-opacity', stale && 'opacity-50')} aria-busy={busy}>
           <p className="text-xs text-slate-500 dark:text-zinc-400">
-            Base: execuções reais de {nf(result.days)} {result.days === 1 ? 'dia' : 'dias'}, levadas para 1 mês (jornada de {nf(result.workdayHours)} h por dia, 21 dias úteis).
+            Base: execuções reais de {nf(result.days)} {result.days === 1 ? 'dia' : 'dias'}, levadas para 1 mês do calendário (um mês inteiro vale 1; um pedaço vale a fração dos dias dele). Jornada de {nf(result.workdayHours)} h por dia, 21 dias úteis.
           </p>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
             <Stat label="Ganho a mais por mês" value={signedDur(result.extraMonth)} hint={`${signedDur(result.extraYear)} por ano`} />

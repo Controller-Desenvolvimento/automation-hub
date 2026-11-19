@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { DAY_MS, MONTH_DAYS, peopleOf, periodDays, simInsights, simulate, simulateMonthly, type SimExecution, type SimInput, type SimRobot } from '../src/reports/time-savings-simulator';
+import { DAY_MS, monthsBetween, peopleOf, periodDays, simInsights, simulate, simulateMonthly, type SimExecution, type SimInput, type SimRobot } from '../src/reports/time-savings-simulator';
 
 const NOW = new Date(2026, 10, 19, 12, 0, 0).getTime();
 const day = (n: number) => new Date(2026, 10, 19 - n, 0, 0, 0).getTime();
@@ -11,7 +11,7 @@ const robot = (id: string, n: number, over: Partial<SimRobot> = {}, e: Partial<S
 const input = (robots: SimRobot[], over: Partial<SimInput> = {}): SimInput => ({
   robots, base: 'exec', times: {}, workdayHours: 7, from: day(29), now: NOW, reportSavedSeconds: 0, ...over,
 });
-const MONTHS = 30 / MONTH_DAYS; // período de 30 dias
+const MONTHS = 11 / 31 + 19 / 30; // período de 30 dias (21/10 a 19/11): 11 dias de outubro + 19 de novembro, em meses do calendário
 
 test('período: dias entre o início e hoje; sem início vale a primeira execução', () => {
   assert.equal(periodDays(input([], { from: day(29) })), 30);
@@ -79,7 +79,7 @@ test('robô que começou há pouco não é diluído no período inteiro', () => 
   const young = simulate(input([robot('a', 10, { firstAt: day(9) })], { times: { a: 60 } }));
   const old = simulate(input([robot('a', 10)], { times: { a: 60 } }));
   assert.equal(young.rows[0].days, 10);
-  assert.ok(Math.abs(young.rows[0].simulatedMonth - (600 / (10 / MONTH_DAYS))) < 1e-6);
+  assert.ok(Math.abs(young.rows[0].simulatedMonth - 600 / (10 / 30)) < 1e-6, '10 dias de novembro = 10/30 do mês');
   assert.ok(young.rows[0].simulatedMonth > old.rows[0].simulatedMonth);
 });
 
@@ -169,9 +169,10 @@ test('período com "Até" no passado: os dias vão do "De" até o "Até", não a
   assert.equal(r.days, 31);
   const a = r.rows[0];
   assert.equal(a.days, 31);
-  // 119 execuções × 5 min = 35.700 s em 31 dias → por mês (30,4375 dias)
-  assert.ok(Math.abs(a.simulatedMonth - (300 * 119) / (31 / MONTH_DAYS)) < 1e-6, String(a.simulatedMonth));
-  assert.ok(Math.abs(simulate(input([robot('a', 119)], { from: day(49), to, times: { a: 300 }, reportSavedSeconds: 31 * 3600 })).reportMonth - (31 * 3600) / (31 / MONTH_DAYS)) < 1e-6, 'o relatório do período também usa os dias do período');
+  // outubro inteiro = exatamente 1 mês: 119 execuções × 5 min = 35.700 s (9,9 h) por mês
+  assert.ok(Math.abs(a.simulatedMonth - 300 * 119) < 1e-6, String(a.simulatedMonth));
+  assert.equal(r.months, 1);
+  assert.ok(Math.abs(simulate(input([robot('a', 119)], { from: day(49), to, times: { a: 300 }, reportSavedSeconds: 31 * 3600 })).reportMonth - 31 * 3600) < 1e-6, 'o relatório do período também usa os meses do período');
 });
 
 test('período: "Até" depois de hoje vale hoje; sem "Até" vale hoje; robô novo conta só até o "Até"', () => {
@@ -187,4 +188,16 @@ test('período: o dia é o do fuso do relatório, mesmo com "agora" perto da mei
   const lateNow = Date.parse('2026-11-19T22:30:00-03:00');
   const inp = input([], { from: Date.parse('2026-11-01T00:00:00-03:00'), now: lateNow });
   assert.equal(periodDays(inp), 19);
+});
+
+test('meses do calendário: mês inteiro vale 1 (31, 30 ou 28 dias); pedaço de mês é a fração; vários meses somam', () => {
+  const d = (y: number, m: number, dd: number) => new Date(y, m - 1, dd, 12).getTime();
+  assert.equal(monthsBetween(d(2026, 10, 1), d(2026, 10, 31)), 1, 'outubro (31 dias)');
+  assert.equal(monthsBetween(d(2026, 11, 1), d(2026, 11, 30)), 1, 'novembro (30 dias)');
+  assert.equal(monthsBetween(d(2026, 2, 1), d(2026, 2, 28)), 1, 'fevereiro (28 dias)');
+  assert.equal(monthsBetween(d(2026, 10, 1), d(2026, 11, 30)), 2);
+  assert.equal(monthsBetween(d(2025, 12, 1), d(2026, 1, 31)), 2, 'vira o ano');
+  assert.ok(Math.abs(monthsBetween(d(2026, 11, 1), d(2026, 11, 19)) - 19 / 30) < 1e-12);
+  assert.ok(Math.abs(monthsBetween(d(2026, 10, 21), d(2026, 11, 19)) - (11 / 31 + 19 / 30)) < 1e-12, 'um pedaço de cada mês');
+  assert.ok(Math.abs(monthsBetween(d(2026, 11, 10), d(2026, 11, 10)) - 1 / 30) < 1e-12, 'um dia só');
 });
