@@ -27,6 +27,15 @@ export type HealthExecution = {
   errorMessage: string | null;
 };
 
+/** Quantil por interpolação linear (a lista precisa estar ordenada). */
+export function quantile(sorted: number[], p: number): number | null {
+  if (!sorted.length) return null;
+  const pos = (sorted.length - 1) * p;
+  const lo = Math.floor(pos);
+  const hi = Math.ceil(pos);
+  return sorted[lo] + (sorted[hi] - sorted[lo]) * (pos - lo);
+}
+
 export type Totals = {
   executions: number;
   success: number;
@@ -38,6 +47,14 @@ export type Totals = {
   successRate: number | null;
   errorRate: number | null;
   avgDurationSeconds: number | null;
+  /** Duração típica (mediana) e dos 5% mais lentos (p95), só de sucessos. */
+  medianDurationSeconds: number | null;
+  p95DurationSeconds: number | null;
+  /** Quantas execuções com sucesso entraram na duração. */
+  durationSamples: number;
+  /** Todos os erros (inclui os do Hub) e quantos deles ficaram "sem causa" (o robô não disse o motivo). */
+  errorsAll: number;
+  semErrors: number;
 };
 
 export function situationOf(concluded: number, errors: number): Situation {
@@ -66,9 +83,11 @@ export function summarize(list: HealthExecution[], classify = createClassifier()
   let success = 0;
   let errors = 0;
   let hubErrors = 0;
+  let semErrors = 0;
   let canceled = 0;
   let durationSum = 0;
   let durationCount = 0;
+  const durations: number[] = [];
   for (const e of list) {
     if (e.status === 'success') {
       success += 1;
@@ -77,10 +96,13 @@ export function summarize(list: HealthExecution[], classify = createClassifier()
         if (seconds > 0) {
           durationSum += seconds;
           durationCount += 1;
+          durations.push(seconds);
         }
       }
     } else if (e.status === 'error') {
-      if (classify(e.errorMessage).category === 'hub') hubErrors += 1;
+      const category = classify(e.errorMessage).category;
+      if (category === 'sem') semErrors += 1;
+      if (category === 'hub') hubErrors += 1;
       else errors += 1;
     } else {
       canceled += 1;
@@ -97,6 +119,11 @@ export function summarize(list: HealthExecution[], classify = createClassifier()
     successRate: concluded ? success / concluded : null,
     errorRate: concluded ? errors / concluded : null,
     avgDurationSeconds: durationCount ? durationSum / durationCount : null,
+    medianDurationSeconds: quantile(durations.sort((a, b) => a - b), 0.5),
+    p95DurationSeconds: quantile(durations, 0.95),
+    durationSamples: durationCount,
+    errorsAll: errors + hubErrors,
+    semErrors,
   };
 }
 
@@ -105,6 +132,10 @@ export type RobotHealthRow = Totals & {
   situation: Situation;
   lastRunAt: string;
   mainCause: { cause: string; category: ErrorCategory; count: number } | null;
+  /** Última execução com sucesso (null se nenhuma no período). */
+  lastSuccessAt: string | null;
+  /** Taxa de sucesso por balde do minigráfico (null = nenhuma concluída no balde). */
+  trend: Array<number | null>;
   /** Taxa de erro do período anterior (para ver se piorou ou melhorou); null sem dados suficientes. */
   previousErrorRate: number | null;
 };
@@ -135,6 +166,11 @@ export function byRobot(current: HealthExecution[], previous: HealthExecution[],
       robotId,
       situation: situationOf(totals.concluded, totals.errors),
       lastRunAt: new Date(Math.max(...list.map((e) => e.createdAt.getTime()))).toISOString(),
+      lastSuccessAt: (() => {
+        const wins = list.filter((e) => e.status === 'success').map((e) => e.createdAt.getTime());
+        return wins.length ? new Date(Math.max(...wins)).toISOString() : null;
+      })(),
+      trend: [],
       mainCause: main,
       previousErrorRate: prev.concluded >= MIN_CONCLUDED ? prev.errorRate : null,
     });
@@ -232,9 +268,11 @@ export function evolutionSeries(list: HealthExecution[], from: Date, to: Date, g
   });
 }
 
-export type DurationPoint = { start: string; avgSeconds: number | null; n: number };
+export type DurationPoint = { start: string; n: number; med: number | null; p95: number | null };
 
-/** Duração média (só sucessos) por balde, para cada robô pedido. */
+export const MIN_DURATION_SAMPLE = 3;
+
+/** Duração típica (mediana) e dos 5% mais lentos por balde, para cada robô pedido (só sucessos; menos de 3 = sem ponto). */
 export function durationSeries(
   list: HealthExecution[],
   robotIds: string[],
@@ -244,17 +282,73 @@ export function durationSeries(
 ): Array<{ robotId: string; points: DurationPoint[] }> {
   const keys = bucketKeys(from, to, granularity);
   return robotIds.map((robotId) => {
-    const sums = new Map<string, { sum: number; n: number }>(keys.map((k) => [k, { sum: 0, n: 0 }]));
+    const groups = new Map<string, number[]>(keys.map((k) => [k, []]));
     for (const e of list) {
       if (e.robotId !== robotId || e.status !== 'success' || !e.startedAt || !e.finishedAt) continue;
       const seconds = (e.finishedAt.getTime() - e.startedAt.getTime()) / 1000;
-      const bucket = sums.get(dayKey(bucketStart(e.createdAt, granularity)));
-      if (!bucket || seconds <= 0) continue;
-      bucket.sum += seconds;
-      bucket.n += 1;
+      if (seconds <= 0) continue;
+      groups.get(dayKey(bucketStart(e.createdAt, granularity)))?.push(seconds);
     }
-    return { robotId, points: keys.map((start) => ({ start, avgSeconds: sums.get(start)!.n ? sums.get(start)!.sum / sums.get(start)!.n : null, n: sums.get(start)!.n })) };
+    return {
+      robotId,
+      points: keys.map((start) => {
+        const values = (groups.get(start) ?? []).sort((x, y) => x - y);
+        const enough = values.length >= MIN_DURATION_SAMPLE;
+        return { start, n: values.length, med: enough ? quantile(values, 0.5) : null, p95: enough ? quantile(values, 0.95) : null };
+      }),
+    };
   });
+}
+
+// ---------- minigráficos (cartões e tendência por robô) ----------
+
+/** Minigráficos: por dia até 14 dias, por semana até ~3 meses, por mês acima disso (nunca 1 ou 2 pontos, nem centenas). */
+export function miniGranularity(days: number): Granularity {
+  return days <= 14 ? 'day' : days <= 93 ? 'week' : 'month';
+}
+
+export type MiniBucket = {
+  start: string;
+  /** Execuções terminadas por dia (média do balde, para semana ou mês incompletos não parecerem queda). */
+  executionsPerDay: number;
+  /** Só com 3 concluídas ou mais. */
+  successRate: number | null;
+  medianDurationSeconds: number | null;
+  errors: number;
+  /** Parte dos erros que ficou "sem causa" (null se não houve erro). */
+  semShare: number | null;
+};
+
+export function miniSeries(list: HealthExecution[], from: Date, to: Date, granularity: Granularity, classify = createClassifier()): MiniBucket[] {
+  const keys = bucketKeys(from, to, granularity);
+  const groups = new Map<string, HealthExecution[]>(keys.map((k) => [k, []]));
+  for (const e of list) groups.get(dayKey(bucketStart(e.createdAt, granularity)))?.push(e);
+  const DAY = 24 * 60 * 60 * 1000;
+  return keys.map((start) => {
+    const items = groups.get(start) ?? [];
+    const t = summarize(items, classify);
+    // dias do balde que caem dentro do período
+    const bucketFrom = new Date(start + 'T00:00:00');
+    const bucketTo = nextBucket(bucketFrom, granularity);
+    const a = Math.max(bucketFrom.getTime(), from.getTime());
+    const b = Math.min(bucketTo.getTime() - 1, to.getTime());
+    const days = Math.max(1, Math.round((b - a + 1) / DAY));
+    return {
+      start,
+      executionsPerDay: t.executions / days,
+      successRate: t.concluded >= 3 ? t.successRate : null,
+      medianDurationSeconds: t.medianDurationSeconds,
+      errors: t.errors,
+      semShare: t.errorsAll ? t.semErrors / t.errorsAll : null,
+    };
+  });
+}
+
+/** Taxa de sucesso de um robô por balde (qualquer quantidade de concluídas; null = nenhuma). */
+export function robotTrend(list: HealthExecution[], keys: string[], granularity: Granularity, classify = createClassifier()): Array<number | null> {
+  const groups = new Map<string, HealthExecution[]>(keys.map((k) => [k, []]));
+  for (const e of list) groups.get(dayKey(bucketStart(e.createdAt, granularity)))?.push(e);
+  return keys.map((k) => summarize(groups.get(k) ?? [], classify).successRate);
 }
 
 // ---------- mapa robô × dia ----------
@@ -291,20 +385,37 @@ export function heatmapGrid(list: HealthExecution[], from: Date, to: Date, granu
 
 // ---------- principais causas ----------
 
-export type CauseRow = { cause: string; category: ErrorCategory; description: string; count: number; robots: number };
+export type CauseRobot = { robotId: string; count: number; lastAt: string };
+export type CauseRow = { cause: string; category: ErrorCategory; description: string; count: number; robots: number; robotList: CauseRobot[]; lastAt: string };
 
-export function topCauses(list: HealthExecution[], classify = createClassifier(), limit = 12): CauseRow[] {
-  const map = new Map<string, { row: CauseRow; robots: Set<string> }>();
+export function topCauses(list: HealthExecution[], classify = createClassifier(), limit = 40): CauseRow[] {
+  const map = new Map<string, { cause: string; category: ErrorCategory; description: string; count: number; robots: Map<string, { count: number; last: number }> }>();
   for (const e of list) {
     if (e.status !== 'error') continue;
     const c = classify(e.errorMessage);
-    const entry = map.get(c.cause) ?? { row: { cause: c.cause, category: c.category, description: c.description, count: 0, robots: 0 }, robots: new Set<string>() };
-    entry.row.count += 1;
-    entry.robots.add(e.robotId);
+    const entry = map.get(c.cause) ?? { cause: c.cause, category: c.category, description: c.description, count: 0, robots: new Map() };
+    entry.count += 1;
+    const r = entry.robots.get(e.robotId) ?? { count: 0, last: 0 };
+    r.count += 1;
+    r.last = Math.max(r.last, e.createdAt.getTime());
+    entry.robots.set(e.robotId, r);
     map.set(c.cause, entry);
   }
   return [...map.values()]
-    .map(({ row, robots }) => ({ ...row, robots: robots.size }))
+    .map((entry) => {
+      const robotList = [...entry.robots.entries()]
+        .map(([robotId, r]) => ({ robotId, count: r.count, lastAt: new Date(r.last).toISOString() }))
+        .sort((a, b) => b.count - a.count);
+      return {
+        cause: entry.cause,
+        category: entry.category,
+        description: entry.description,
+        count: entry.count,
+        robots: robotList.length,
+        robotList,
+        lastAt: robotList.reduce((m, r) => (r.lastAt > m ? r.lastAt : m), ''),
+      };
+    })
     .sort((a, b) => b.count - a.count)
     .slice(0, limit);
 }

@@ -3,6 +3,26 @@
 Mudanças do Automation Hub por data. Este arquivo é **público**: descreve o que mudou no produto, no banco e na
 configuração, sem dados de infraestrutura. O desenho detalhado de cada funcionalidade está no `CLAUDE.md`.
 
+## 2026-11-19 — Saúde dos robôs: visual igual ao do protótipo HTML aprovado (etapas 1 e 2)
+
+### Mudado (só administradores; só leitura; sem mudança no banco)
+- **Cores e ordem das categorias como no HTML:** Entrada (laranja), Sistema externo (verde-água), Hub (amarelo), Configuração
+  (violeta), Robô (magenta) e Sem causa (ardósia), nessa ordem. Antes a ordem e as cores estavam diferentes.
+- **Linhas suaves** (interpolação monótona) com **área em degradê**, pontos com anel, rótulo do último valor, linha **dourada
+  tracejada** da média e trechos sem dados ligados por tracejado; **barras com degradê**, ponta arredondada e vão de 2 px; grade
+  **pontilhada**; eixo fixo à esquerda e área rolável (começa no dia mais recente); dica flutuante que acompanha o mouse.
+- **Mapa "Resultado por robô, dia a dia" como no HTML:** células que ocupam a largura do cartão, 0% de erro em verde-água claro,
+  com erro numa **rampa vermelha** (quanto mais erro, mais forte), sem execução = contorno tracejado, legenda em faixas (0%, até
+  25%, 25% a 50%, 50% ou mais), robôs do que mais executou para o que menos, nomes e datas fixos. Sem símbolos dentro das células.
+- **Indicadores** centralizados, com barra de acento, rótulo em maiúsculas, pílula de variação (verde/vermelho/estável),
+  **minigráfico** com ponto dourado e "i" que explica período atual, comparado, variação e minigráfico. Agora: Execuções, Taxa de
+  sucesso, **Duração típica (mediana, com "95% terminam em até")** e **Erros sem causa**.
+- **Duração** como no HTML: **mediana e 95% mais lentos** de cada um dos robôs mais usados, com a linha do **T2** do agendamento.
+- **Causas de erro (Pareto)** com barras em pílula e degradê, **acumulado**, e clique na causa para ver o que significa e quais robôs
+  a tiveram. **Tabela de robôs** com **Tendência** (minigráfico), **Última com sucesso** e **Duração típica**.
+- Cartões macios com ponto dourado no título; o "i" é o círculo com "i" em itálico; cada gráfico tem **Gráfico/Tabela**; o
+  **Agrupar por Dia/Semana/Mês** voltou para o cabeçalho dos gráficos de evolução (os três mudam juntos).
+
 ## 2026-11-19 — Saúde dos robôs, etapa 2: evolução, duração e mapa robô × dia
 
 ### Novo (só administradores; só leitura; sem mudança no banco)

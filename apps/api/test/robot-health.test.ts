@@ -11,6 +11,10 @@ import {
   evolutionSeries,
   heatGranularity,
   heatmapGrid,
+  miniGranularity,
+  miniSeries,
+  robotTrend,
+  quantile,
   dayKey,
   parseDay,
   previousPeriod,
@@ -50,7 +54,7 @@ test('causas: cada mensagem real cai na categoria combinada', () => {
 });
 
 test('categorias: são 6, todas com explicação para o "i", e só Hub fica fora da conta do robô', () => {
-  assert.deepEqual([...ERROR_CATEGORIES].sort(), ['config', 'entrada', 'externo', 'hub', 'robo', 'sem']);
+  assert.deepEqual([...ERROR_CATEGORIES], ['entrada', 'externo', 'hub', 'config', 'robo', 'sem'], 'ordem do protótipo aprovado');
   for (const key of ERROR_CATEGORIES) {
     const info = CATEGORY_INFO[key];
     assert.ok(info.label && info.summary && info.example && info.who, key);
@@ -138,6 +142,8 @@ test('principais causas: contagem, robôs distintos e ordem', () => {
   ];
   const causes = topCauses(list);
   assert.deepEqual(causes.map((c) => [c.cause, c.count, c.robots]), [['Exceção não tratada no robô', 3, 2], ['Portal com falha interna (HTTP 5xx)', 1, 1]]);
+  assert.deepEqual(causes[0].robotList.map((r) => [r.robotId, r.count]), [['a', 2], ['b', 1]], 'robôs da causa, do que mais teve para o que menos teve');
+  assert.ok(causes[0].lastAt);
 });
 
 test('período: padrão 30 dias, anterior do mesmo tamanho, datas inválidas e trocadas', () => {
@@ -187,17 +193,54 @@ test('evolução: um balde por dia, taxa e duração do balde, buraco vira "sem 
   assert.deepEqual(bucketKeys(new Date(2026, 10, 18), new Date(2026, 10, 30), 'week'), ['2026-11-16', '2026-11-23', '2026-11-30']);
 });
 
-test('duração por robô: só sucessos, por balde, com o número de execuções', () => {
+test('duração por robô: mediana e p95 só de sucessos, e só com 3 amostras ou mais', () => {
+  const ok = (robotId: string, day: number, minutes: number) => exec({ robotId, createdAt: at(day), startedAt: at(day), finishedAt: new Date(at(day).getTime() + mins(minutes)) });
   const list = [
-    exec({ robotId: 'a', createdAt: at(10), finishedAt: new Date(at(10).getTime() + mins(10)) }),
-    exec({ robotId: 'a', createdAt: at(10), finishedAt: new Date(at(10).getTime() + mins(20)) }),
-    err('HTTP 500', { robotId: 'a', createdAt: at(10), finishedAt: new Date(at(10).getTime() + mins(99)) }),
-    exec({ robotId: 'b', createdAt: at(11), startedAt: at(11), finishedAt: new Date(at(11).getTime() + mins(1)) }),
+    ok('a', 10, 10), ok('a', 10, 20), ok('a', 10, 30), ok('a', 10, 100),
+    err('HTTP 500', { robotId: 'a', createdAt: at(10), finishedAt: new Date(at(10).getTime() + mins(999)) }),
+    ok('a', 11, 5), ok('a', 11, 6), // só 2: sem ponto
+    ok('b', 11, 1), ok('b', 11, 2), ok('b', 11, 3),
   ];
   const series = durationSeries(list, ['a', 'b'], at(10), at(12), 'day');
-  assert.equal(series[0].robotId, 'a');
-  assert.deepEqual(series[0].points.map((p) => [p.start, p.avgSeconds, p.n]), [['2026-11-10', 900, 2], ['2026-11-11', null, 0], ['2026-11-12', null, 0]]);
-  assert.equal(series[1].points[1].avgSeconds, 60);
+  const a = series[0].points;
+  assert.equal(a[0].n, 4);
+  assert.equal(a[0].med, 25 * 60, 'mediana de 10, 20, 30 e 100 min');
+  assert.ok(Math.abs(a[0].p95! - (30 + 0.85 * 70) * 60) < 1e-6, 'p95 interpolado');
+  assert.deepEqual([a[1].n, a[1].med, a[1].p95], [2, null, null], 'menos de 3 sucessos: sem ponto');
+  assert.deepEqual([a[2].n, a[2].med], [0, null]);
+  assert.equal(series[1].points[1].med, 120);
+});
+
+test('totais: erros sem causa e total de erros (com os do Hub)', () => {
+  const t = summarize([err('Comando finalizado com codigo 1'), err('Comando finalizado com codigo 1'), err("KeyError: 'x'"), err('Execução interrompida: o servidor do Hub foi reiniciado'), exec()]);
+  assert.equal(t.errorsAll, 4);
+  assert.equal(t.semErrors, 2);
+  assert.equal(t.errors, 3, 'o do Hub não conta contra o robô');
+});
+
+test('totais: mediana, p95 e amostras de duração', () => {
+  const t = summarize([1, 2, 3, 4].map((m) => exec({ finishedAt: new Date(at(10).getTime() + mins(m)) })));
+  assert.equal(t.medianDurationSeconds, 150);
+  assert.equal(t.durationSamples, 4);
+  assert.ok(t.p95DurationSeconds! > 220 && t.p95DurationSeconds! <= 240);
+});
+
+test('minigráficos: granularidade pelo tamanho do período, execuções por dia e taxa só com 3 concluídas', () => {
+  assert.equal(miniGranularity(14), 'day');
+  assert.equal(miniGranularity(30), 'week');
+  assert.equal(miniGranularity(93), 'week');
+  assert.equal(miniGranularity(94), 'month');
+  const list = [exec({ createdAt: at(10) }), exec({ createdAt: at(10) }), exec({ createdAt: at(10) }), err("KeyError: 'x'", { createdAt: at(11) })];
+  const mini = miniSeries(list, at(10), at(12), 'day');
+  assert.deepEqual(mini.map((m) => m.start), ['2026-11-10', '2026-11-11', '2026-11-12']);
+  assert.equal(mini[0].executionsPerDay, 3);
+  assert.equal(mini[0].successRate, 1, '3 concluídas já dão taxa');
+  assert.equal(mini[1].successRate, null, 'só 1 concluída: sem taxa');
+  // 10/11 é terça: a semana de 9 a 15 só tem 6 dias dentro do período (10 a 15), então a média é por esses 6 dias
+  const semana = miniSeries(list, new Date(2026, 10, 10), new Date(2026, 10, 15, 23, 59, 59, 999), 'week'); // períodos reais: dias inteiros
+  assert.equal(semana.length, 1);
+  assert.ok(Math.abs(semana[0].executionsPerDay - 4 / 6) < 1e-9, 'média por dia, só com os dias do período');
+  assert.deepEqual(robotTrend(list, ['2026-11-10', '2026-11-11'], 'day'), [1, 0]);
 });
 
 test('mapa robô × dia: contagens por célula (sucesso, erro do robô, erro do Hub, cancelada)', () => {
