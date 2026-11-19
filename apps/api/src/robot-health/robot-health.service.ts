@@ -24,8 +24,16 @@ import {
   type Granularity,
   type HealthExecution,
 } from './robot-health-metrics';
+import { buildInsights } from './robot-health-insights';
+import { capacityByHour, cyclesOf } from './robot-health-server';
 
 export type HealthScope = 'all' | 'manual' | 'scheduled';
+
+/** Quantos robôs o servidor roda ao mesmo tempo (o mesmo cálculo do ExecutionRunnerService). */
+function runnerLimit() {
+  const raw = Number(process.env.RUNNER_MAX_CONCURRENCY ?? 2);
+  return Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : 2;
+}
 
 @Injectable()
 export class RobotHealthService {
@@ -56,7 +64,8 @@ export class RobotHealthService {
       where: { ...hubRobots, ...scopeWhere, createdAt: { gte: previous?.from ?? period.from, lte: period.to } },
       select: {
         id: true, robotId: true, status: true, createdAt: true, startedAt: true, finishedAt: true, scheduledTaskId: true,
-        // A mensagem só é lida para erros (é ela que diz a causa).
+        attempt: true, restartOfId: true,
+        // A mensagem diz a causa do erro e o motivo do cancelamento (T2, teto de tempo, agendamento pulado).
         errorMessage: true,
       },
     });
@@ -68,7 +77,10 @@ export class RobotHealthService {
       startedAt: r.startedAt,
       finishedAt: r.finishedAt,
       scheduled: r.scheduledTaskId !== null,
-      errorMessage: r.status === 'error' ? r.errorMessage : null,
+      errorMessage: r.status === 'error' || r.status === 'canceled' ? r.errorMessage : null,
+      scheduledTaskId: r.scheduledTaskId,
+      attempt: r.attempt,
+      restartOfId: r.restartOfId,
     }));
     const current = executions.filter((e) => e.createdAt >= period.from && e.createdAt <= period.to);
     const before = previous ? executions.filter((e) => e.createdAt >= previous.from && e.createdAt <= previous.to) : [];
@@ -102,6 +114,43 @@ export class RobotHealthService {
       t2.set(t.robotId, Math.min(t2.get(t.robotId) ?? Infinity, limit));
     }
 
+    // Etapa 3. Capacidade do servidor e ciclos dos agendamentos olham o período inteiro, sem o filtro de origem (manual/agendada).
+    const finished = await this.prisma.execution.findMany({
+      where: { ...hubRobots, startedAt: { not: null, lte: period.to }, finishedAt: { gte: period.from } },
+      select: { id: true, robotId: true, status: true, createdAt: true, startedAt: true, finishedAt: true, errorMessage: true },
+    });
+    const capacity = capacityByHour(
+      finished.map((r) => ({ id: r.id, robotId: r.robotId, status: r.status as HealthExecution['status'], createdAt: r.createdAt, startedAt: r.startedAt, finishedAt: r.finishedAt, scheduled: false, errorMessage: r.status === 'error' ? r.errorMessage : null })),
+      period.from, period.to, runnerLimit(), new Date(), classify,
+    );
+    const taskRows = await this.prisma.scheduledTask.findMany({
+      where: { robot: { isExternal: false } },
+      select: { id: true, name: true, robotId: true, isActive: true, verifyT0Minutes: true, verifyT1Minutes: true, verifyT2Minutes: true, robot: { select: { name: true } } },
+    });
+    const taskT2 = new Map<string, number>();
+    for (const t of taskRows) {
+      if (t.verifyT0Minutes !== null && t.verifyT1Minutes !== null && t.verifyT2Minutes !== null) taskT2.set(t.id, t.verifyT0Minutes + t.verifyT1Minutes + t.verifyT2Minutes);
+    }
+    const cycleRows = await this.prisma.execution.findMany({
+      where: { ...hubRobots, status: { in: ['success', 'error', 'canceled', 'queued', 'running'] }, scheduledTaskId: { not: null }, createdAt: { gte: period.from, lte: new Date(period.to.getTime() + 86_400_000) } },
+      select: { id: true, robotId: true, status: true, createdAt: true, scheduledTaskId: true, attempt: true, restartOfId: true },
+    });
+    const taskNames = new Map(taskRows.map((t) => [t.id, t]));
+    const cycles = cyclesOf(
+      taskRows.map((t) => ({ id: t.id, hasRestart: taskT2.has(t.id) })),
+      cycleRows.map((r) => ({ id: r.id, robotId: r.robotId, createdAt: r.createdAt, status: r.status as 'success', scheduledTaskId: r.scheduledTaskId, attempt: r.attempt, restartOfId: r.restartOfId })),
+      period.from, period.to,
+    )
+      .filter((c) => c.ok + c.recovered + c.failed + c.canceled + c.attempting > 0)
+      .map((c) => ({ ...c, name: taskNames.get(c.taskId)?.name ?? 'Agendamento removido', robotName: taskNames.get(c.taskId)?.robot.name ?? '' }))
+      .sort((a, b) => b.failed - a.failed || b.recovered - a.recovered || a.name.localeCompare(b.name, 'pt-BR'));
+
+    const insights = buildInsights({
+      current, previous: previous ? before : null, days: period.days, from: dayKey(period.from), to: dayKey(period.to),
+      previousRange: previous ? { from: dayKey(previous.from), to: dayKey(previous.to) } : null,
+      robotNames: new Map([...names].map(([id, r]) => [id, r.name])), capacity, cycles, taskT2,
+    });
+
     const granularity: Granularity = query.granularity === 'day' || query.granularity === 'week' || query.granularity === 'month' ? query.granularity : autoGranularity(period.days);
 
     return {
@@ -131,6 +180,9 @@ export class RobotHealthService {
       },
       causes: topCauses(current, classify).map((c) => ({ ...c, robotList: c.robotList.map((r) => ({ ...r, name: names.get(r.robotId)?.name ?? 'Robô removido' })) })),
       categoryInfo: ERROR_CATEGORIES.map((key) => ({ key, ...CATEGORY_INFO[key] })),
+      capacity,
+      cycles,
+      insights,
     };
   }
 }

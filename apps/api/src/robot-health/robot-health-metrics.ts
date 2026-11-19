@@ -25,6 +25,10 @@ export type HealthExecution = {
   finishedAt: Date | null;
   scheduled: boolean;
   errorMessage: string | null;
+  /** Só na etapa 3 (ciclos dos agendamentos e insights). */
+  scheduledTaskId?: string | null;
+  attempt?: number;
+  restartOfId?: string | null;
 };
 
 /** Quantil por interpolação linear (a lista precisa estar ordenada). */

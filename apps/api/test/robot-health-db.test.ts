@@ -70,6 +70,7 @@ before(async () => {
 
 async function wipe() {
   await prisma.execution.deleteMany({ where: { id: { startsWith: 'h-ex' } } });
+  await prisma.scheduledTask.deleteMany({ where: { id: { startsWith: 'h-task' } } });
   await prisma.robot.deleteMany({ where: { id: { in: ids.robots } } });
 }
 
@@ -168,3 +169,32 @@ test('etapa 2: evolução, duração dos robôs mais usados e mapa robô × dia 
   assert.ok(['day', 'week', 'month'].includes(longo.heatmap.granularity));
 });
 
+
+test('etapa 3: capacidade do servidor, ciclos dos agendamentos e insights na resposta', { skip }, async () => {
+  await prisma.scheduledTask.create({
+    data: { id: 'h-task1', name: 'Agendamento Saúde', robotId: 'h-b', userId: 'h-emp', frequency: 'daily', timeOfDay: '08:00', nextRunAt: new Date(Date.now() + 86400_000), verifyT0Minutes: 10, verifyT1Minutes: 10, verifyT2Minutes: 10 },
+  });
+  const mk = (id: string, status: string, when: Date, extra: Record<string, unknown> = {}) =>
+    prisma.execution.create({ data: { id, robotId: 'h-b', userId: 'h-emp', status, createdAt: when, startedAt: when, finishedAt: new Date(when.getTime() + 120_000), scheduledTaskId: 'h-task1', ...extra } });
+  await mk('h-ex-c1', 'success', day(8));
+  await mk('h-ex-c2', 'error', day(9), { errorMessage: 'HTTP 503' });
+  await mk('h-ex-c3', 'success', day(9, 11), { attempt: 2, restartOfId: 'h-ex-c2' });
+  await mk('h-ex-c4', 'canceled', day(10), { errorMessage: 'Cancelada automaticamente: passou do tempo máximo (60 min desde o início). Não foi reiniciada.' });
+
+  const r = await health.overview(U.adm, {});
+  assert.equal(r.capacity.hours.length, 24);
+  assert.ok(r.capacity.limit >= 1 && r.capacity.any === true);
+  assert.ok(Array.isArray(r.capacity.quiet.ranges));
+  const c = r.cycles.find((x: any) => x.taskId === 'h-task1');
+  assert.ok(c, 'o agendamento aparece nos ciclos');
+  assert.equal(c.name, 'Agendamento Saúde');
+  assert.equal(c.hasRestart, true);
+  assert.deepEqual([c.ok, c.recovered, c.failed, c.canceled], [1, 1, 0, 1]);
+  assert.ok(Array.isArray(r.insights) && r.insights.every((i: any) => i.id && i.title && i.why && ['crit', 'warn', 'info', 'good'].includes(i.sev)));
+  assert.ok(r.insights.some((i: any) => i.id === 'agend-salvos'), 'o reinício que salvou um ciclo é lembrado');
+
+  // a capacidade e os ciclos ignoram o filtro de origem; os insights seguem o filtro
+  const manual = await health.overview(U.adm, { scope: 'manual' });
+  assert.deepEqual(manual.capacity.hours.map((h: any) => h.peak), r.capacity.hours.map((h: any) => h.peak));
+  assert.ok(manual.cycles.find((x: any) => x.taskId === 'h-task1'));
+});
