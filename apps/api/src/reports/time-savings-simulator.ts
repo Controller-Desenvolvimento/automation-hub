@@ -332,7 +332,7 @@ export function simInsights(result: SimResult, input: SimInsightOptions): SimIns
   }
   const news = rows.filter((r) => r.source === 'novo');
   const ext = news.filter((r) => r.external);
-  if (ext.length) out.push({ kind: 'info', icon: '↗', text: `${names(ext)} ${ext.length === 1 ? 'é um robô externo' : 'são robôs externos'}: o ganho ${ext.length === 1 ? 'dele' : 'deles'} vem do próprio sistema que o executa. O novo tempo aqui só simula; "Usar estes tempos" não grava nada neles.` });
+  if (ext.length) out.push({ kind: 'info', icon: '↗', text: `${names(ext)} ${ext.length === 1 ? 'é um robô externo' : 'são robôs externos'}: o ganho ${ext.length === 1 ? 'dele' : 'deles'} vem do próprio sistema que ${ext.length === 1 ? 'o executa' : 'os executa'}. O novo tempo aqui só simula; "Usar estes tempos" não grava nada neles.` });
   if (news.length) out.push({ kind: 'info', icon: '↻', text: `Novos tempos em ${pl(news.length, 'robô que já tem ganho', 'robôs que já têm ganho')}: ${result.fromNewTimes >= 0 ? '+' : '−'}${dur(Math.abs(result.fromNewTimes))} por mês em relação aos tempos atuais.${result.fromNewTimes < 0 ? ' Os tempos novos são menores que os cadastrados hoje.' : ''}` });
   // sensibilidade: o robô em que cada unidade de tempo a mais pesa mais no mês é o que vale estimar com mais cuidado
   const unitName = input.unit ?? 'minutes';

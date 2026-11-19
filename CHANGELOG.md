@@ -3,6 +3,13 @@
 Mudanças do Automation Hub por data. Este arquivo é **público**: descreve o que mudou no produto, no banco e na
 configuração, sem dados de infraestrutura. O desenho detalhado de cada funcionalidade está no `CLAUDE.md`.
 
+## 2026-11-19 — Auditoria do sino dos ligados e dos robôs externos no simulador
+
+### Corrigido
+- **Simulador, robô externo que não rodou no período:** a linha mostrava "hoje: 0 s por execução" e o campo "atual: 0", como se o
+  robô ganhasse 0 s. Agora diz que ele não rodou no período (sem média de hoje) e o campo fica "novo tempo".
+- **Simulador, frase dos robôs externos no plural:** "que o executa" passa a "que os executa" quando são vários.
+
 ## 2026-11-19 — Suporte: o sino também avisa quem tem chamado ligado
 
 ### Alterado

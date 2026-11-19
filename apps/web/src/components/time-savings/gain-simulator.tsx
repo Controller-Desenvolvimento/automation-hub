@@ -409,16 +409,18 @@ export function GainSimulator({
                   const seg = r.external ? Math.round(r.currentPerUnit ?? 0) : hub?.manualSecondsPerUnit ?? 0;
                   const label = r.external ? ((r.avgItems ?? 1) > 1.05 ? 'item' : 'execução') : hub?.unitLabel || 'item';
                   const sub: string[] = [];
-                  if (r.external) sub.push(`externo: hoje ${perUnitTxt(seg, label)} em média (informado pelo próprio sistema)`);
+                  // externo que não rodou no período não tem média (antes aparecia "hoje: 0 s por execução")
+                  const noAverage = r.external && r.currentPerUnit === null;
+                  if (r.external) sub.push(noAverage ? 'externo: não rodou no período, então não há média de hoje (o ganho vem do próprio sistema)' : `externo: hoje ${perUnitTxt(seg, label)} em média (informado pelo próprio sistema)`);
                   else if (r.hasTime) sub.push(`hoje: ${perUnitTxt(seg, label)}`);
                   if (base === 'item' && !r.hasTime) sub.push(r.metricKey ? `informa ${r.metricKey} (média ${nf(r.metricAvg ?? 0, (r.metricAvg ?? 0) < 10 ? 1 : 0)})` : 'não informa itens: 1 por execução');
                   const off = excluded.has(r.robotId);
                   let cell: ReactNode;
                   if (r.hasTime && scope === 'todos' && newTimes) {
-                    const current = nfx(Math.round((seg / unitSec) * 100) / 100);
+                    const current = noAverage ? '' : nfx(Math.round((seg / unitSec) * 100) / 100);
                     cell = (
                       <div className="tcell">
-                        <NumField value={perCurrent[r.robotId] ?? ''} onChange={(v) => { setPerCurrent((p) => ({ ...p, [r.robotId]: v })); remember(`c:${r.robotId}`, v); }} max={maxInUnit} min={minInUnit} minMessage={MIN_MSG} width={110} placeholder={`atual: ${current}`} label={`Novo tempo de ${r.name} (hoje ${current} ${UNIT_AB[unit]} por ${label})`} />
+                        <NumField value={perCurrent[r.robotId] ?? ''} onChange={(v) => { setPerCurrent((p) => ({ ...p, [r.robotId]: v })); remember(`c:${r.robotId}`, v); }} max={maxInUnit} min={minInUnit} minMessage={MIN_MSG} width={110} placeholder={noAverage ? 'novo tempo' : `atual: ${current}`} label={noAverage ? `Novo tempo de ${r.name} (sem execuções no período)` : `Novo tempo de ${r.name} (hoje ${current} ${UNIT_AB[unit]} por ${label})`} />
                         <span className="ro un">
                           {UNIT_AB[unit]} por {label}
                         </span>
