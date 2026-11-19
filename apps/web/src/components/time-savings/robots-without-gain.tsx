@@ -1,5 +1,6 @@
 import { Settings2, X } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useHub } from '../../contexts/hub-context';
 import { api } from '../../lib/api';
 import {
   DEFAULT_METRIC_KEY,
@@ -17,6 +18,7 @@ import { Badge } from '../ui/badge';
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../ui/table';
+import { GainSimulator } from './gain-simulator';
 
 const plural = (n: number, one: string, many: string) => (n === 1 ? one : many);
 const nf0 = (n: number) => n.toLocaleString('pt-BR', { maximumFractionDigits: 0 });
@@ -230,6 +232,8 @@ export function RobotsWithoutGain({
   departmentLabel,
   notify,
   onChanged,
+  sub,
+  onSub,
 }: {
   from: string;
   to: string;
@@ -237,7 +241,11 @@ export function RobotsWithoutGain({
   notify: (message: string) => void;
   /** Avisa a página que um tempo foi salvo (ela atualiza a lista de robôs e a contagem da aba). */
   onChanged: () => void;
+  /** Sub-aba: a lista ou o simulador de ganhos (vive na URL: `aba=simular`). */
+  sub: 'lista' | 'sim';
+  onSub: (sub: 'lista' | 'sim') => void;
 }) {
+  const { hub } = useHub();
   const [data, setData] = useState<RobotsWithoutGainResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -270,6 +278,10 @@ export function RobotsWithoutGain({
   }, [load]);
 
   const robots = data?.robots ?? [];
+  const hubRobots = (hub?.robots ?? [])
+    .filter((r) => r.isActive && !r.isExternal)
+    .map((r) => ({ id: r.id, name: r.name, manualSecondsPerUnit: r.manualSecondsPerUnit ?? 0 }))
+    .sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'));
   const totalRuns = robots.reduce((sum, r) => sum + r.executions, 0);
   const withRuns = robots.filter((r) => r.executions > 0).length;
 
@@ -290,6 +302,44 @@ export function RobotsWithoutGain({
 
   return (
     <section aria-busy={loading} className={cn('min-w-0 space-y-5 transition-opacity', loading && 'opacity-60')}>
+      <div role="group" aria-label="Seção" className="inline-flex overflow-hidden rounded-xl border border-slate-300 dark:border-[#2b2b31]">
+        {(
+          [
+            ['lista', 'Lista'],
+            ['sim', 'Simular ganhos'],
+          ] as const
+        ).map(([id, label]) => (
+          <button
+            key={id}
+            type="button"
+            aria-pressed={sub === id}
+            onClick={() => onSub(id)}
+            className={cn(
+              'px-3 py-2 text-sm transition',
+              sub === id ? 'bg-slate-950 text-white dark:bg-white dark:text-slate-950' : 'bg-white text-slate-600 hover:bg-slate-50 dark:bg-[#0f0f10] dark:text-zinc-300 dark:hover:bg-[#18181b]',
+            )}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {sub === 'sim' ? (
+        <GainSimulator
+          from={from}
+          to={to}
+          hubRobots={hubRobots}
+          withoutGain={robots}
+          notify={notify}
+          onApplied={async () => {
+            await load();
+            onChanged();
+          }}
+        />
+      ) : null}
+
+      {sub === 'lista' ? (
+      <>
       <div className="space-y-1">
         <h2 className="text-lg font-semibold tracking-tight text-slate-950 dark:text-white">Robôs sem ganho</h2>
         <p className="max-w-3xl text-sm text-slate-500 dark:text-zinc-400">
@@ -374,6 +424,9 @@ export function RobotsWithoutGain({
           </p>
         </>
       )}
+
+      </>
+      ) : null}
 
       {editing ? (
         <ConfigureDialog

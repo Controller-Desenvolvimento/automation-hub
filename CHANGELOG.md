@@ -3,6 +3,24 @@
 Mudanças do Automation Hub por data. Este arquivo é **público**: descreve o que mudou no produto, no banco e na
 configuração, sem dados de infraestrutura. O desenho detalhado de cada funcionalidade está no `CLAUDE.md`.
 
+## 2026-11-19 — Tempo ganho: simulador de ganhos (etapa 3a de "Robôs sem ganho")
+
+### Adicionado (só administradores e Inovação; sem mudança no banco; a simulação não grava nada)
+- Na aba **"Robôs sem ganho"** há agora duas sub-abas: **Lista** e **Simular ganhos** (`aba=simular` na URL). O simulador projeta as
+  **execuções reais do período escolhido** para 1 mês, robô por robô, com o tempo que a pessoa chutar:
+  - **Quais robôs:** só os sem ganho, ou somando os que já têm ganho (mantêm o tempo atual ou aceitam um **novo tempo**).
+  - **Como informar:** o mesmo tempo para todos ou por robô (com o padrão para os em branco; dá para excluir robôs da conta);
+    **por execução** ou **por item** (usa a métrica que o robô mais informa; execução sem a quantidade usa a média do robô e é
+    contada como "estimada"); em segundos, minutos ou horas; jornada da pessoa (padrão 7 h × 21 dias úteis).
+  - **Resultado:** ganho a mais por mês e por ano, pessoas equivalentes, relatório hoje × simulado, **faixa**
+    conservador/provável/otimista (metade / 1 / 1,5 vez os tempos informados), tabela por robô e frases sobre o resultado
+    (período curto, robô sem tempo, tempo acima da jornada, quem mais pesa, o que o ganho equivale em pessoas...).
+  - Qualquer mudança depois de simular marca o resultado como desatualizado até clicar em **Simular** de novo.
+  - **"Usar estes tempos na configuração"** (com confirmação): grava o tempo nos robôs sem ganho da simulação, pela mesma rota
+    do "Configurar"; só vale daqui para frente.
+- API: `POST /api/reports/robots-without-gain/simulate` (só administradores).
+- Ainda não feitos (etapa 3b): gráfico de evolução mensal e cenários A–D para comparar lado a lado; recalcular o passado.
+
 ## 2026-11-19 — Tempo ganho: aba "Robôs sem ganho" (etapa 1)
 
 ### Adicionado (só administradores e Inovação; sem mudança no banco)
