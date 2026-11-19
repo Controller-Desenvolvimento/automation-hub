@@ -314,6 +314,7 @@ export class ReportsService {
       times,
       workdayHours,
       from: from ? dayStart(from).getTime() : null,
+      to: to ? dayStart(to).getTime() : null,
       now: now.getTime(),
       reportSavedSeconds: report.totals.savedSeconds,
     };

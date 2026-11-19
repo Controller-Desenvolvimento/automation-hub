@@ -37,7 +37,9 @@ export function toSeconds(raw: string, unit: TimeUnit): number | null {
   const value = Number(raw.trim().replace(',', '.'));
   if (!raw.trim() || !Number.isFinite(value) || value <= 0) return null;
   const factor = TIME_UNITS.find((u) => u.value === unit)?.factor ?? 1;
-  return Math.round(value * factor);
+  const seconds = Math.round(value * factor);
+  // menos de 1 segundo arredonda para 0: não é um tempo válido (o servidor também exige pelo menos 1 s)
+  return seconds >= 1 ? seconds : null;
 }
 
 /** Mesma regra de chave do servidor: minúsculas, só a-z, 0-9 e "_". */

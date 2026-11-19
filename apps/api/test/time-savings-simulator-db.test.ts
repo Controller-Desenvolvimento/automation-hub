@@ -103,7 +103,8 @@ test('simular por execução: só robôs sem tempo, projeção mensal, faixa e f
   assert.ok(r.monthly.months.every((m: any) => /^\d{4}-\d{2}$/.test(m.key) && typeof m.current === 'number' && typeof m.currentSim === 'number'));
   const total = r.monthly.months.reduce((acc: number, m: any) => acc + m.extra, 0);
   // meses anteriores ao 1º mês completo de dados não aparecem: o total fica entre o do mês corrente e o das 10 execuções (300 s cada)
-  assert.ok(total >= last.extra - 1e-6 && total <= 300 * 10 + 1e-6, String(total));
+  // (o banco de teste pode ter outros dados do relatório, que antecipam o 1º mês completo: vale até as 11 execuções do robô)
+  assert.ok(total >= last.extra - 1e-6 && total <= 300 * 11 + 1e-6, String(total));
 });
 
 test('simular por item: usa a métrica que o robô mais informa e estima as execuções sem ela pela média', { skip }, async () => {
@@ -144,4 +145,15 @@ test('simular não grava nada', { skip }, async () => {
   const after = await prisma.robot.findUnique({ where: { id: 'ss-a' } });
   assert.equal(after.manualSecondsPerUnit, before.manualSecondsPerUnit);
   assert.equal(after.updatedAt.getTime(), before.updatedAt.getTime());
+});
+
+test('período que termina no passado: os dias e a projeção usam o "Até", não hoje', { skip }, async () => {
+  const r = await reports.simulateGains(admin, { from: iso(day(29)), to: iso(day(10)), scope: 'sem', base: 'exec', times: { 'ss-a': 300 } });
+  const a = mine(r.rows).find((x: any) => x.robotId === 'ss-a');
+  assert.equal(r.days, 20, '29 a 10 dias atrás, contando os dois');
+  assert.equal(a.days, 20);
+  assert.equal(a.executions, 6, 'só as execuções até o "Até" (10, 12, 14, 16, 18 e 20 dias atrás)');
+  const expected = (300 * 6) / (20 / 30.4375);
+  assert.ok(Math.abs(a.simulatedMonth - expected) < 1e-6, `${a.simulatedMonth} vs ${expected}`);
+  assert.ok(Math.abs(r.months - 20 / 30.4375) < 1e-9);
 });

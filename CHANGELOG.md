@@ -3,6 +3,19 @@
 Mudanças do Automation Hub por data. Este arquivo é **público**: descreve o que mudou no produto, no banco e na
 configuração, sem dados de infraestrutura. O desenho detalhado de cada funcionalidade está no `CLAUDE.md`.
 
+## 2026-11-19 — Correções da auditoria das últimas entregas (simulador e Saúde dos robôs)
+
+### Corrigido
+- **Simulador de ganhos: o "Até" do período agora conta.** Os dias do período eram contados do "De" até **hoje**, ignorando o "Até":
+  um período que termina no passado (ex.: 01/10 a 31/10 consultado em 19/11, 50 dias em vez de 31) dividia o resultado por meses a
+  mais. Saíam **subestimados** o "simulado por mês", a diferença, o relatório hoje/simulado, as pessoas e a faixa. Períodos que
+  terminam hoje (últimos 30 dias, este mês) já estavam certos. Agora vale do "De" ao "Até" (nunca depois de hoje), e o dia segue o
+  fuso do relatório, não o do servidor.
+- **Simulador: resultado e cenários não somem mais** ao ir para a "Lista" e voltar (a tela do simulador ficava desmontada).
+- **Tempo menor que 1 segundo** (ex.: 0,4 s) agora é recusado na tela, no "Configurar" e no simulador (arredondava para 0).
+- **Saúde dos robôs:** a frase do robô sem nenhum sucesso repetia "nenhum sucesso no período"; a do servidor no limite dizia "e 9h (7
+  dias) e outros" (dois "e"); a dica do "i" ficava parada no lugar errado se a página rolasse com ela aberta (agora fecha).
+
 ## 2026-11-19 — Correção: digitar datas nos filtros de período
 
 ### Corrigido (só frontend; sem mudança na API nem no banco)

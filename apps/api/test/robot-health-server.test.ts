@@ -222,3 +222,22 @@ test('quadros da duração: sempre 4 quadros com escolha, repetido vira vazio e 
   assert.equal(dup.slots.length, 4);
   assert.deepEqual(dup.slots.map((x) => x.state), ['ok', 'empty', 'ok', 'ok']);
 });
+
+test('insights: texto do robô sem nenhum sucesso não se repete e o do limite do servidor não repete o "e"', () => {
+  const current = [
+    ...many(4, (i) => run(at(2 + i), 2, { robotId: 'r2', status: 'error', errorMessage: 'HTTP 503' })),
+    ...many(10, (i) => run(at(2 + i), 2, { robotId: 'r1' })),
+  ];
+  const ficha = buildInsights(base({ current })).find((i) => i.id === 'robo-r2')!;
+  const fact = ficha.facts!.find((f) => /Nenhum sucesso/.test(f.t))!.t;
+  assert.equal((fact.match(/nenhum sucesso|nenhuma execução concluída com sucesso/gi) ?? []).length, 2, fact);
+  assert.ok(!/nenhum sucesso no período.*nenhum sucesso no período/i.test(fact), fact);
+  // 8 horários no limite: lista os 6 primeiros com vírgulas e fecha com "e outros" (um só "e")
+  const list = Array.from({ length: 8 }, (_, h) => run(at(10, h, 0), 50, { robotId: `a${h}` }).robotId).length;
+  assert.equal(list, 8);
+  const execs = Array.from({ length: 8 }, (_, h) => [run(at(10, h, 0), 50, { robotId: `a${h}` }), run(at(10, h, 10), 30, { robotId: `b${h}` })]).flat();
+  const cap = capacityByHour(execs, at(10, 0), new Date(2026, 10, 10, 23, 59, 59), 2, new Date(2026, 10, 12));
+  const text = buildInsights(base({ current: [run(at(10), 5)], capacity: cap })).find((i) => i.id === 'cap-limite')!.text;
+  assert.match(text, /às 0h \(1 dia\), 1h \(1 dia\), 2h \(1 dia\), 3h \(1 dia\), 4h \(1 dia\), 5h \(1 dia\) e outros\./);
+  assert.ok(!/ e \d+h .* e outros/.test(text), text);
+});
