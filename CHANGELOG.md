@@ -3,6 +3,19 @@
 Mudanças do Automation Hub por data. Este arquivo é **público**: descreve o que mudou no produto, no banco e na
 configuração, sem dados de infraestrutura. O desenho detalhado de cada funcionalidade está no `CLAUDE.md`.
 
+## 2026-11-19 — Suporte: cartão "Situação" (encerrar, reabrir e histórico de quem fez o quê)
+
+### Mudado (só frontend: sem mudança na API nem no banco)
+- **Cartão "Situação" para a Inovação**, no lugar do seletor de status da lateral e do menu do botão Enviar (que saíram; o
+  Enviar voltou a ser simples). Em andamento mostra as opções (Em análise, Aguardando usuário, Resolvido, Não é problema);
+  **encerrar pede Cancelar / Confirmar**. Encerrado, as opções somem e fica o resumo **"Resolvido por [nome] em [data] ·
+  Urgência [grau]"** com o botão **Reabrir chamado**, que abre um painel (reabrir como Aberto, Em análise ou Aguardando
+  usuário, com mensagem opcional para quem abriu) com **Confirmar reabertura / Cancelar**.
+- **Histórico da situação** (cartão da Inovação e faixa de quem abriu): quem abriu, quem mudou cada status, **quem resolveu e
+  quem reabriu**, com nome e hora. As linhas de status da conversa também mostram o nome de quem mudou.
+- **Quem abriu o chamado** vê no encerrado "Resolvido por [nome da Inovação] em [data] · Urgência [grau]" e, ao reabrir, o botão é
+  "Confirmar reabertura" (com motivo obrigatório e Cancelar).
+
 ## 2026-11-19 — Suporte: botão Enviar com menu e reabrir chamado separado de responder
 
 ### Mudado (só frontend: sem mudança na API nem no banco)

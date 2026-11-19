@@ -492,3 +492,31 @@ test('e-mail para a Inovação: SUPPORT_ALERT_EMAILS=false desliga', { skip }, a
   }
 });
 
+test('administrador reabre um chamado encerrado: pelo status e pelo Enviar com status (com mensagem)', { skip }, async () => {
+  const { id } = await open(U.ana);
+  await support.update(id, U.ino, { status: 'resolved' });
+  assert.ok((await prisma.supportTicket.findUnique({ where: { id } })).closedAt);
+  // 1) só o status (cartão Situação sem mensagem)
+  await support.update(id, U.ino, { status: 'waiting' });
+  let t = await prisma.supportTicket.findUnique({ where: { id } });
+  assert.equal(t.status, 'waiting');
+  assert.equal(t.closedAt, null, 'reabrir limpa a data de encerramento');
+  // 2) status junto com a mensagem (cartão Situação com mensagem)
+  await support.update(id, U.ino, { status: 'not_issue' });
+  await support.addMessage(id, U.ino, { body: 'Reabri para ajustar um detalhe.', status: 'review' });
+  t = await prisma.supportTicket.findUnique({ where: { id } });
+  assert.equal(t.status, 'review');
+  assert.equal(t.closedAt, null);
+  const seenByAuthor = await support.get(id, U.ana);
+  assert.ok(seenByAuthor.messages.some((m: any) => m.body === 'Reabri para ajustar um detalhe.'));
+  // o histórico guarda quem encerrou e quem reabriu (linhas de status com o autor da mudança)
+  const status = seenByAuthor.messages.filter((m: any) => m.kind === 'system' && /^Status alterado para: /.test(m.body));
+  assert.deepEqual(status.map((m: any) => m.body), [
+    'Status alterado para: Resolvido.',
+    'Status alterado para: Aguardando resposta.',
+    'Status alterado para: Não é problema.',
+    'Status alterado para: Em análise.',
+  ]);
+  assert.ok(status.every((m: any) => m.author?.name === 'Davi'), 'cada linha traz quem mudou o status');
+});
+
