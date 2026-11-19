@@ -39,6 +39,21 @@ export type SimulationResult = {
   };
   rows: SimRow[];
   insights: Array<{ kind: 'warn' | 'info'; text: string }>;
+  monthly: { months: MonthlyPoint[]; cut: boolean };
+};
+
+/** Um mês da evolução mensal (últimos 12 meses, independente do período escolhido). */
+export type MonthlyPoint = {
+  /** AAAA-MM. */
+  key: string;
+  /** O mês corrente: ainda não terminou. */
+  partial: boolean;
+  /** Ganho do relatório no mês (todos os robôs e fontes), em segundos. */
+  current: number;
+  /** Ganho do relatório no mês só dos robôs da simulação. */
+  currentSim: number;
+  /** Extra simulado no mês. */
+  extra: number;
 };
 
 const MINUS = '−';
