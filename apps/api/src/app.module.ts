@@ -9,6 +9,7 @@ import { DepartmentsModule } from './departments/departments.module';
 import { ExecutionsModule } from './executions/executions.module';
 import { IntegrationsModule } from './integrations/integrations.module';
 import { MaintenanceModule } from './maintenance/maintenance.module';
+import { RobotHealthModule } from './robot-health/robot-health.module';
 import { SupportModule } from './support/support.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { PrismaModule } from './prisma/prisma.module';
@@ -24,7 +25,7 @@ import { SystemModule } from './system/system.module';
 import { UsersModule } from './users/users.module';
 
 @Module({
-  imports: [PrismaModule, AuthModule, RobotsModule, ExecutionsModule, UsersModule, ScheduledTasksModule, ReportsModule, NotificationsModule, MaintenanceModule, SitesModule, DepartmentsModule, SharedCredentialsModule, IntegrationsModule, AutomationRequestsModule, SystemModule, StorageModule, DashboardModule, ExternalMetricsModule, DevDocsModule, SiteChatModule, SupportModule],
+  imports: [PrismaModule, AuthModule, RobotsModule, ExecutionsModule, UsersModule, ScheduledTasksModule, ReportsModule, NotificationsModule, MaintenanceModule, SitesModule, DepartmentsModule, SharedCredentialsModule, IntegrationsModule, AutomationRequestsModule, SystemModule, StorageModule, DashboardModule, ExternalMetricsModule, DevDocsModule, SiteChatModule, SupportModule, RobotHealthModule],
   controllers: [AppController],
   providers: [SeedService],
 })
