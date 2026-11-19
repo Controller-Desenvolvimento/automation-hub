@@ -3,6 +3,16 @@
 Mudanças do Automation Hub por data. Este arquivo é **público**: descreve o que mudou no produto, no banco e na
 configuração, sem dados de infraestrutura. O desenho detalhado de cada funcionalidade está no `CLAUDE.md`.
 
+## 2026-11-19 — Saúde dos robôs: escolher o robô de cada quadro da duração
+
+### Mudado (só administradores; só leitura; sem mudança no banco)
+- No gráfico **"Duração por dia"**, cada um dos 4 quadros ganhou um seletor de robô. Por padrão continuam os 4 mais usados (o título
+  diz isso); ao trocar, o título passa a "robôs escolhidos" e aparece "Voltar aos 4 mais usados". A escolha fica na URL
+  (`duracao=`), então o F5 e o link mantêm os robôs. Robô usado em outro quadro fica desabilitado na lista.
+- Se um robô escolhido deixa de ter dados ao mudar o período ou o filtro, o quadro **fica vazio com aviso** (não volta sozinho ao
+  padrão): a pessoa escolhe outro. Quadro sem escolha também fica vazio.
+- API: `/api/robot-health?duracao=id1,id2,,id4` e, na resposta, `durationSlots`, `durationCustom` e `durationOptions`.
+
 ## 2026-11-19 — Saúde dos robôs, etapa 3: capacidade do servidor, ciclos agendados e Insights
 
 ### Adicionado (só administradores; só leitura; sem mudança no banco)

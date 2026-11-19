@@ -18,6 +18,7 @@ import {
   robotTrend,
   bucketKeys,
   previousPeriod,
+  resolveDurationSlots,
   resolvePeriod,
   summarize,
   topCauses,
@@ -87,13 +88,16 @@ export class RobotHealthService {
 
     const classify = createClassifier();
     const robotRows = byRobot(current, before, classify);
-    const robots = robotRows.length
-      ? await this.prisma.robot.findMany({ where: { id: { in: robotRows.map((r) => r.robotId) } }, select: { id: true, name: true, slug: true, isActive: true } })
+    // Duração: robôs com pelo menos 3 execuções COM SUCESSO, dos mais para os menos usados. Os 4 quadros mostram, por padrão,
+    // os 4 primeiros; a pessoa pode trocar o robô de cada quadro (`duracao=id1,id2,,id4`, ver resolveDurationSlots).
+    const durationOptions = [...robotRows].filter((r) => r.durationSamples >= 3).sort((x, y) => y.durationSamples - x.durationSamples || x.robotId.localeCompare(y.robotId));
+    const picked = resolveDurationSlots(query.duracao, durationOptions.map((r) => r.robotId));
+    const topRobots = picked.slots.filter((sl) => sl.state === 'ok').map((sl) => durationOptions.find((r) => r.robotId === sl.robotId)!);
+    const robotIds = [...new Set([...robotRows.map((r) => r.robotId), ...picked.slots.flatMap((sl) => (sl.robotId ? [sl.robotId] : []))])];
+    const robots = robotIds.length
+      ? await this.prisma.robot.findMany({ where: { id: { in: robotIds } }, select: { id: true, name: true, slug: true, isActive: true } })
       : [];
     const names = new Map(robots.map((r) => [r.id, r]));
-
-    // Duração: os 4 robôs com mais execuções COM SUCESSO (pelo menos 3), como no protótipo.
-    const topRobots = [...robotRows].filter((r) => r.durationSamples >= 3).sort((x, y) => y.durationSamples - x.durationSamples).slice(0, 4);
     const heat = heatmapGrid(current, period.from, period.to, heatGranularity(period.days), classify);
     const miniGran = miniGranularity(period.days);
     const miniKeys = bucketKeys(period.from, period.to, miniGran);
@@ -173,6 +177,10 @@ export class RobotHealthService {
         executions: topRobots.find((r) => r.robotId === d.robotId)?.durationSamples ?? 0,
         t2Minutes: t2.get(d.robotId) ?? null,
       })),
+      // Quadros da duração: um por posição (robô, vazio ou indisponível) e a lista para escolher o robô de cada um.
+      durationSlots: picked.slots.map((sl) => ({ ...sl, name: sl.robotId ? names.get(sl.robotId)?.name ?? 'Robô removido' : null })),
+      durationCustom: picked.custom,
+      durationOptions: durationOptions.map((r) => ({ robotId: r.robotId, name: names.get(r.robotId)?.name ?? 'Robô removido', executions: r.durationSamples })),
       heatmap: {
         granularity: heat.granularity,
         buckets: heat.buckets,

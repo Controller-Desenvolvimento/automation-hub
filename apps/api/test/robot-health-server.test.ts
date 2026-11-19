@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { buildInsights, type InsightInput } from '../src/robot-health/robot-health-insights';
 import { capacityByHour, cancelReasonOf, cyclesOf, quietHours, type CycleExecution } from '../src/robot-health/robot-health-server';
-import type { HealthExecution } from '../src/robot-health/robot-health-metrics';
+import { resolveDurationSlots, type HealthExecution } from '../src/robot-health/robot-health-metrics';
 
 const at = (day: number, hour = 10, min = 0) => new Date(2026, 10, day, hour, min, 0); // 2026-11-DD (fuso local)
 let seq = 0;
@@ -196,4 +196,29 @@ test('insights: espera na fila das execuções manuais', () => {
   assert.equal(fila!.sev, 'warn');
   const calm = buildInsights(base({ current: many(12, () => mk(1)) }));
   assert.equal(calm.find((i) => i.id === 'fila-manual'), undefined);
+});
+
+test('quadros da duração: sem escolha valem os 4 mais usados (menos, se houver menos robôs)', () => {
+  const r = resolveDurationSlots(undefined, ['a', 'b', 'c', 'd', 'e']);
+  assert.equal(r.custom, false);
+  assert.deepEqual(r.slots.map((x) => x.robotId), ['a', 'b', 'c', 'd']);
+  assert.equal(resolveDurationSlots('', ['a', 'b']).slots.length, 2);
+});
+
+test('quadros da duração: a escolha guarda a posição; vazio espera escolha; robô sem dados fica indisponível (não volta ao padrão)', () => {
+  const r = resolveDurationSlots('c,,zzz,a', ['a', 'b', 'c']);
+  assert.equal(r.custom, true);
+  assert.deepEqual(r.slots, [
+    { robotId: 'c', state: 'ok' },
+    { robotId: null, state: 'empty' },
+    { robotId: 'zzz', state: 'unavailable' },
+    { robotId: 'a', state: 'ok' },
+  ]);
+});
+
+test('quadros da duração: sempre 4 quadros com escolha, repetido vira vazio e o excesso é ignorado', () => {
+  assert.equal(resolveDurationSlots('a', ['a']).slots.length, 4);
+  const dup = resolveDurationSlots('a,a,b,c,d,e', ['a', 'b', 'c', 'd', 'e']);
+  assert.equal(dup.slots.length, 4);
+  assert.deepEqual(dup.slots.map((x) => x.state), ['ok', 'empty', 'ok', 'ok']);
 });

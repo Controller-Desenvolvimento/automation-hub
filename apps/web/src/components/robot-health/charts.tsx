@@ -12,6 +12,7 @@ import {
   type CategoryBucket,
   type CategoryInfo,
   type DurationSeries,
+  type DurationSlot,
   type EvolutionBucket,
   type Granularity,
 } from '../../lib/robot-health';
@@ -344,14 +345,26 @@ function DurationPlot({ series, gran, period, cw }: { series: DurationSeries; gr
   );
 }
 
-export function DurationCard({ durations, gran, onGran, period }: { durations: DurationSeries[]; gran: Granularity; onGran: (g: Granularity) => void; period: Period }) {
+export function DurationCard({
+  durations, slots, options, custom, onPick, onReset, gran, onGran, period,
+}: {
+  durations: DurationSeries[];
+  slots: DurationSlot[];
+  options: Array<{ robotId: string; name: string; executions: number }>;
+  custom: boolean;
+  onPick: (slot: number, robotId: string) => void;
+  onReset: () => void;
+  gran: Granularity;
+  onGran: (g: Granularity) => void;
+  period: Period;
+}) {
   const label = GRANULARITY_LABELS[gran];
-  const n = durations.length;
+  const used = new Set(slots.map((s) => s.robotId).filter((id): id is string => !!id));
   return (
     <HcCard
-      title={`Duração por ${label.one}${n <= 1 ? ' do robô mais usado' : ` dos ${n} robôs mais usados`}`}
+      title={`Duração por ${label.one} · ${custom ? 'robôs escolhidos' : 'por padrão, os 4 robôs mais usados'}`}
       gran={{ value: gran, onChange: (v) => onGran(v as Granularity) }}
-      info={`Por ${label.one}: tempo típico (mediana) e dos 5% mais lentos, só das execuções com sucesso dos robôs rodados pelo Hub. Cada gráfico tem a própria escala vertical (em minutos). ${label.many} com menos de 3 execuções com sucesso ficam sem ponto (o trecho tracejado liga os vizinhos). A linha do T2 vale para as execuções agendadas (o gráfico mostra todas); se o robô tem mais de um agendamento, mostra o menor T2. Períodos longos rolam para os lados em cada gráfico, começando pelo mais recente.`}
+      info={`Por ${label.one}: tempo típico (mediana) e dos 5% mais lentos, só das execuções com sucesso dos robôs rodados pelo Hub. Por padrão os quadros mostram os 4 robôs mais usados; em cada quadro dá para escolher outro robô (só aparecem os que têm ao menos 3 execuções com sucesso neste período e filtro). Se um robô escolhido deixar de ter dados ao mudar o período ou o filtro, o quadro fica vazio para você escolher outro. Cada gráfico tem a própria escala vertical (em minutos). ${label.many} com menos de 3 execuções com sucesso ficam sem ponto (o trecho tracejado liga os vizinhos). A linha do T2 vale para as execuções agendadas (o gráfico mostra todas); se o robô tem mais de um agendamento, mostra o menor T2. Períodos longos rolam para os lados em cada gráfico, começando pelo mais recente.`}
       legend={[
         { c: 'var(--s1)', shape: 'line', l: 'Típica (mediana)' },
         { c: 'var(--s2)', shape: 'line', l: '95% terminam em até (mais lentos)' },
@@ -366,20 +379,53 @@ export function DurationCard({ durations, gran, onGran, period }: { durations: D
       })}
     >
       {(w) =>
-        n === 0 ? (
+        options.length === 0 && !custom ? (
           <div className="hc-empty">Poucos dados: nenhum robô com ao menos 3 execuções com sucesso neste filtro.</div>
         ) : (
-          <div className="hc-grid2e" style={{ marginTop: 4 }}>
-            {durations.map((d) => (
-              <div key={d.robotId} style={{ minWidth: 0 }}>
-                <div style={{ fontWeight: 600 }}>{d.name}</div>
-                <div style={{ color: 'var(--hc-muted)', fontSize: 12, marginBottom: 2 }}>{pl(d.executions, 'execução', 'execuções')} com sucesso · minutos no eixo vertical</div>
-                <div style={{ maxWidth: Math.floor((w - 16) / (w > 700 ? 2 : 1)) - 34 + 38 }}>
-                  <DurationPlot series={d} gran={gran} period={period} cw={Math.floor((w - 16) / (w > 700 ? 2 : 1)) - 34} />
-                </div>
+          <>
+            {custom ? (
+              <div className="hc-more" style={{ marginTop: 0, marginBottom: 8 }}>
+                <button type="button" onClick={onReset}>Voltar aos 4 mais usados</button>
               </div>
-            ))}
-          </div>
+            ) : null}
+            <div className="hc-grid2e" style={{ marginTop: 4 }}>
+              {slots.map((slot, i) => {
+                const series = slot.state === 'ok' ? durations.find((d) => d.robotId === slot.robotId) : undefined;
+                const cw = Math.floor((w - 16) / (w > 700 ? 2 : 1)) - 34;
+                return (
+                  <div key={i} style={{ minWidth: 0 }}>
+                    <select
+                      className="hc-pick"
+                      aria-label={`Robô do quadro ${i + 1}`}
+                      value={slot.state === 'ok' ? slot.robotId ?? '' : ''}
+                      onChange={(e) => onPick(i, e.target.value)}
+                    >
+                      <option value="">Escolha um robô…</option>
+                      {options.map((o) => (
+                        <option key={o.robotId} value={o.robotId} disabled={used.has(o.robotId) && o.robotId !== slot.robotId}>
+                          {o.name} ({nf(o.executions)})
+                        </option>
+                      ))}
+                    </select>
+                    {series ? (
+                      <>
+                        <div style={{ color: 'var(--hc-muted)', fontSize: 12, margin: '4px 0 2px' }}>{pl(series.executions, 'execução', 'execuções')} com sucesso · minutos no eixo vertical</div>
+                        <div style={{ maxWidth: cw + 38 }}>
+                          <DurationPlot series={series} gran={gran} period={period} cw={cw} />
+                        </div>
+                      </>
+                    ) : (
+                      <div className="hc-slot-empty" role="status">
+                        {slot.state === 'unavailable'
+                          ? `${slot.name ?? 'O robô escolhido'} não tem 3 execuções com sucesso neste período e filtro. Escolha outro robô.`
+                          : 'Escolha um robô na lista acima.'}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </>
         )
       }
     </HcCard>
