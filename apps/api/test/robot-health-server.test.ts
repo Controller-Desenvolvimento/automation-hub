@@ -121,6 +121,28 @@ test('insights: 80% de erros sem motivo vira crítico e cita os robôs', () => {
   assert.ok(sem!.why.length > 50 && sem!.acts?.[0].go === 'erros');
 });
 
+test('insights: reinício do Hub aparece com poucos erros; sem reinício e com volume vira boa notícia mesmo havendo outros erros', () => {
+  const hubMsg = 'Execução interrompida: o servidor do Hub foi reiniciado enquanto rodava';
+  const comReinicio = [
+    ...many(40, (i) => run(at(2 + (i % 20)), 2)),
+    run(at(5), 2, { status: 'error', errorMessage: hubMsg }),
+    run(at(6), 2, { status: 'error', errorMessage: hubMsg }),
+  ];
+  const a = buildInsights(base({ current: comReinicio }));
+  const hub = a.find((i) => i.id === 'hub-reinicio');
+  assert.ok(hub, 'com 2 erros no total (menos de 10) o reinício do Hub aparece');
+  assert.match(hub!.title, /2 execuções interrompidas/);
+  assert.equal(a.find((i) => i.id === 'hub-ok'), undefined);
+
+  const semReinicio = [
+    ...many(40, (i) => run(at(2 + (i % 20)), 2)),
+    run(at(5), 2, { status: 'error', errorMessage: 'HTTP 503' }),
+  ];
+  const b = buildInsights(base({ current: semReinicio }));
+  assert.ok(b.find((i) => i.id === 'hub-ok'), 'um erro comum não esconde a boa notícia do Hub');
+  assert.equal(b.find((i) => i.id === 'hub-reinicio'), undefined);
+});
+
 test('insights: robô sem nenhum sucesso vira cartão crítico com ficha', () => {
   const current = [
     ...many(4, (i) => run(at(2 + i), 2, { robotId: 'r2', status: 'error', errorMessage: 'HTTP 503' })),

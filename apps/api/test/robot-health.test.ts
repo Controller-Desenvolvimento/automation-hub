@@ -166,6 +166,17 @@ test('período: padrão 30 dias, anterior do mesmo tamanho, datas inválidas e t
   assert.equal(resolvePeriod('2000-01-01', undefined, now).days, 1830, 'teto de ~5 anos');
 });
 
+test('período: um "De" no futuro não gera dias que ainda não existem', () => {
+  const now = new Date(2026, 10, 18, 15, 0, 0);
+  const p = resolvePeriod('2026-12-01', '2027-01-01', now);
+  assert.equal(dayKey(p.from), '2026-11-18');
+  assert.equal(dayKey(p.to), '2026-11-18');
+  assert.equal(p.days, 1);
+  const soDe = resolvePeriod('2026-12-01', undefined, now);
+  assert.equal(dayKey(soDe.to), '2026-11-18');
+  assert.equal(soDe.days, 1);
+});
+
 const mins = (n: number) => n * 60_000;
 
 test('evolução: um balde por dia, taxa e duração do balde, buraco vira "sem dados"', () => {

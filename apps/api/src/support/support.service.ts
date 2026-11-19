@@ -36,6 +36,7 @@ import {
   checkAttachment,
   cleanText,
   computeKpis,
+  departmentFallbackName,
   isClosed,
   isOneOf,
   parseListQuery,
@@ -490,13 +491,11 @@ export class SupportService {
             for (const child of ticket.linkedTickets) {
               await this.copyReplyToLinked(child.id, user, text, saved);
             }
-            await this.notifyUsers(
-              ticket.linkedTickets.map((l) => l.authorId).filter((a) => a !== user.id),
-              ticket.linkedTickets[0].id,
-              'support_reply',
-              `Chamado: nova resposta`,
-              'A Inovação respondeu ao seu chamado.',
-            );
+            // Cada pessoa é avisada no PRÓPRIO chamado (antes todos apontavam para o primeiro da lista e o sino levava a um chamado alheio).
+            for (const child of ticket.linkedTickets) {
+              if (child.authorId === user.id) continue;
+              await this.notifyUsers([child.authorId], child.id, 'support_reply', `Chamado #${child.number}: nova resposta`, 'A Inovação respondeu ao seu chamado.');
+            }
           }
           if (ticket.authorId !== user.id) {
             await this.notifyUsers([ticket.authorId], ticket.id, 'support_reply', `Chamado #${ticket.number}: nova resposta`, `A Inovação respondeu ao chamado "${ticket.title}".`);
@@ -766,22 +765,26 @@ export class SupportService {
     opts: { silent: boolean; needsAdmin: boolean; authorUnread: boolean },
   ) {
     const closedAt = isClosed(status) ? new Date() : null;
-    const data = {
-      status,
-      closedAt,
-      needsAdmin: opts.needsAdmin,
-      authorUnread: opts.authorUnread,
-      authorConfirmed: false,
-      updatedAt: new Date(),
-    };
     const current = await this.prisma.supportTicket.findUnique({
       where: { id },
       select: { status: true, closedAt: true, linkedTickets: { select: { id: true, authorId: true } } },
     });
     if (!current) return;
+    const changed = status !== current.status;
     await this.prisma.supportTicket.update({
       where: { id },
-      data: { ...data, closedAt: isClosed(status) ? (isClosed(current.status) ? current.closedAt ?? closedAt : closedAt) : null },
+      data: {
+        status,
+        closedAt: isClosed(status) ? (isClosed(current.status) ? current.closedAt ?? closedAt : closedAt) : null,
+        needsAdmin: opts.needsAdmin,
+        authorUnread: opts.authorUnread,
+        // A confirmação de quem abriu só cai quando a situação muda de verdade (uma resposta da Inovação num chamado já
+        // encerrado e confirmado não pede a confirmação de novo).
+        ...(changed ? { authorConfirmed: false } : {}),
+        // Reaberto: os anexos novos voltam a valer para a limpeza (a data de encerramento recomeça); os antigos já estão marcados como apagados.
+        ...(changed && !isClosed(status) ? { attachmentsCleanedAt: null } : {}),
+        updatedAt: new Date(),
+      },
       select: { id: true },
     });
     if (opts.silent || status === current.status) {
@@ -793,7 +796,7 @@ export class SupportService {
     for (const child of current.linkedTickets) {
       await this.prisma.supportTicket.update({
         where: { id: child.id },
-        data: { status, closedAt: isClosed(status) ? new Date() : null, authorUnread: true, authorConfirmed: false, needsAdmin: false },
+        data: { status, closedAt: isClosed(status) ? new Date() : null, authorUnread: true, authorConfirmed: false, needsAdmin: false, ...(isClosed(status) ? {} : { attachmentsCleanedAt: null }) },
         select: { id: true },
       });
       await this.prisma.supportMessage.create({
@@ -941,14 +944,20 @@ export class SupportService {
         : t.subject === 'dashboard' ? (t.dashboard ? `Painel: ${t.dashboard.name}` : 'Um painel ou BI')
         : t.subject === 'hub' ? (t.hubArea ? `Hub: ${t.hubArea}` : 'O Hub')
         : 'Outro assunto';
-      const department = t.author.departments[0] ?? null;
+      const slug = t.author.departments[0] ?? null;
+      let department: string | null = null;
+      if (slug) {
+        // O nome cadastrado do departamento ("Legalização", "Sucesso do Cliente"), não o código ("legalizacao").
+        const config = await this.prisma.departmentConfig.findUnique({ where: { slug }, select: { name: true } }).catch(() => null);
+        department = config?.name ?? departmentFallbackName(slug);
+      }
       await this.mail.sendSupportAlert({
         kind,
         ticketId: t.id,
         number: t.number,
         title: t.title,
         authorName: t.author.name,
-        authorDepartment: department ? department.charAt(0).toUpperCase() + department.slice(1) : null,
+        authorDepartment: department,
         typeLabel: TYPE_LABELS[t.type],
         subjectLabel,
         urgencyLabel: URGENCY_LABELS[t.urgency],

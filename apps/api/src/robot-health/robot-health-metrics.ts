@@ -473,7 +473,9 @@ export function resolvePeriod(fromRaw: unknown, toRaw: unknown, now = new Date()
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   let to = parseDay(toRaw) ?? today;
   let from = parseDay(fromRaw) ?? new Date(to.getFullYear(), to.getMonth(), to.getDate() - 29);
+  // Nada do futuro: nem o fim nem o começo (um "De" depois de hoje virava um período inteiro de dias que ainda não existem).
   if (to > today) to = today;
+  if (from > today) from = today;
   if (from > to) [from, to] = [to, from];
   const days = Math.round((to.getTime() - from.getTime()) / DAY_MS) + 1;
   if (days > 1830) from = new Date(to.getFullYear(), to.getMonth(), to.getDate() - 1829);

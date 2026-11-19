@@ -5,6 +5,7 @@ import {
   parseListQuery,
   cleanText,
   computeKpis,
+  departmentFallbackName,
   suggestMergeGroups,
   toBool,
   type KpiTicket,
@@ -121,3 +122,11 @@ test('lista: lê os filtros da URL e cai no padrão quando o valor é inválido'
   assert.equal(parseListQuery({ page: ['1'], q: 5 }).q, '', 'valores que não são texto são ignorados');
 });
 
+
+test('departmentFallbackName: nome com acento para os conhecidos e texto legível para os novos', () => {
+  assert.equal(departmentFallbackName('legalizacao'), 'Legalização');
+  assert.equal(departmentFallbackName('contabil'), 'Contábil');
+  assert.equal(departmentFallbackName('rh'), 'RH');
+  assert.equal(departmentFallbackName('sucesso_do_cliente'), 'Sucesso do cliente');
+  assert.equal(departmentFallbackName('novo-setor'), 'Novo setor');
+});

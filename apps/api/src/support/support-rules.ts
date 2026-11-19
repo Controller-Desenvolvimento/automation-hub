@@ -259,3 +259,23 @@ export function computeKpis(tickets: KpiTicket[], firstReplyAt: Map<string, Date
     topRobot: top,
   };
 }
+
+const DEPARTMENT_NAMES: Record<string, string> = {
+  pessoal: 'Pessoal',
+  fiscal: 'Fiscal',
+  contabil: 'Contábil',
+  tecnologia: 'Tecnologia',
+  inovacao: 'Inovação',
+  legalizacao: 'Legalização',
+  certificacao: 'Certificação',
+  auditoria: 'Auditoria',
+  rh: 'RH',
+};
+
+/** Nome para mostrar de um departamento quando o cadastro (DepartmentConfig) não o tem: "legalizacao" → "Legalização", "sucesso_do_cliente" → "Sucesso do cliente". */
+export function departmentFallbackName(slug: string): string {
+  const known = DEPARTMENT_NAMES[slug];
+  if (known) return known;
+  const text = slug.replace(/[_-]+/g, ' ').trim();
+  return text ? text.charAt(0).toUpperCase() + text.slice(1) : slug;
+}

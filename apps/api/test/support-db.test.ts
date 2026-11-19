@@ -532,3 +532,66 @@ test('confirmar o encerramento registra "Sim, obrigado(a)." (resolvido) ou "Sim,
   assert.equal(await last(b.id, U.bia), 'Sim, concordo.');
 });
 
+
+test('juntar: a notificação da resposta vai para o PRÓPRIO chamado de cada pessoa ligada', { skip }, async () => {
+  const a = await open(U.ana, { title: 'Gestta A' });
+  const b = await open(U.bia, { title: 'Gestta B' });
+  const c = await open(U.caio, { title: 'Gestta C' });
+  await support.merge(U.ino, { mainId: a.id, ticketIds: [b.id, c.id] });
+  await prisma.notification.deleteMany({ where: { supportTicketId: { not: null } } });
+  await support.addMessage(a.id, U.ino, { body: 'Corrigido', alsoLinked: 'true' });
+  const bia = await prisma.notification.findMany({ where: { userId: 's-bia', type: 'support_reply' } });
+  const caio = await prisma.notification.findMany({ where: { userId: 's-caio', type: 'support_reply' } });
+  assert.equal(bia.length, 1);
+  assert.equal(caio.length, 1);
+  assert.equal(bia[0].supportTicketId, b.id, 'a Bia é levada ao chamado dela');
+  assert.equal(caio[0].supportTicketId, c.id, 'o Caio é levado ao chamado dele (antes: o da Bia)');
+  assert.match(bia[0].title, new RegExp(`#${b.number}`));
+});
+
+test('confirmação: resposta da Inovação num chamado já encerrado e confirmado não pede a confirmação de novo', { skip }, async () => {
+  const { id } = await open(U.ana);
+  await support.update(id, U.ino, { status: 'resolved' });
+  await support.confirm(id, U.ana);
+  await support.addMessage(id, U.ino, { body: 'Só registrando: o ajuste foi publicado' });
+  const t = await prisma.supportTicket.findUnique({ where: { id } });
+  assert.equal(t.status, 'resolved');
+  assert.equal(t.authorConfirmed, true, 'a confirmação continua');
+  await support.update(id, U.ino, { status: 'review' });
+  assert.equal((await prisma.supportTicket.findUnique({ where: { id } })).authorConfirmed, false, 'mudar a situação de verdade zera a confirmação');
+});
+
+test('limpeza: chamado reaberto e encerrado de novo volta a ter os anexos novos limpos', { skip }, async () => {
+  const { id } = await open(U.ana, {}, [upload('print.png')]);
+  await support.update(id, U.ino, { status: 'resolved' });
+  await prisma.supportTicket.update({ where: { id }, data: { closedAt: new Date(Date.now() - 91 * 86400_000) } });
+  assert.equal(await support.cleanOldAttachments(90), 1);
+  await support.reopen(id, U.ana);
+  assert.equal((await prisma.supportTicket.findUnique({ where: { id } })).attachmentsCleanedAt, null, 'reaberto: a limpeza recomeça');
+  await support.addMessage(id, U.ana, { body: 'Agora com outro print' }, [upload('novo.png')]);
+  await support.update(id, U.ino, { status: 'resolved' });
+  await prisma.supportTicket.update({ where: { id }, data: { closedAt: new Date(Date.now() - 91 * 86400_000) } });
+  assert.equal(await support.cleanOldAttachments(90), 1, 'o anexo novo também é apagado depois do prazo');
+  const t = await support.get(id, U.ana);
+  const all = t.messages.flatMap((m: any) => m.attachments);
+  assert.equal(all.length, 2);
+  assert.ok(all.every((x: any) => x.removed));
+});
+
+test('e-mail para a Inovação: departamento com o nome certo (acento), não o código', { skip }, async () => {
+  const leg = await prisma.user.upsert({
+    where: { id: 's-leg' },
+    update: { departments: ['legalizacao'], isActive: true },
+    create: { id: 's-leg', name: 'Lia', email: 's-leg@example.invalid', passwordHash: 'x', role: 'employee', departments: ['legalizacao'] },
+  });
+  await open(leg);
+  assert.equal(emails[0].authorDepartment, 'Legalização');
+  emails.length = 0;
+  await prisma.departmentConfig.upsert({ where: { slug: 'legalizacao' }, update: { name: 'Legalização e Registro' }, create: { slug: 'legalizacao', name: 'Legalização e Registro' } });
+  try {
+    await open(leg);
+    assert.equal(emails[0].authorDepartment, 'Legalização e Registro', 'o nome cadastrado do departamento vale mais que o padrão');
+  } finally {
+    await prisma.departmentConfig.deleteMany({ where: { slug: 'legalizacao' } });
+  }
+});

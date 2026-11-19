@@ -162,13 +162,11 @@ export function buildInsights(input: InsightInput): Insight[] {
   if (cur.errorsAll >= 10) {
     const byCat = new Map<ErrorCategory, number>();
     const byCause = new Map<string, number>();
-    const hubDays = new Set<string>();
     for (const e of input.current) {
       if (e.status !== 'error') continue;
       const c = classify(e.errorMessage);
       byCat.set(c.category, (byCat.get(c.category) ?? 0) + 1);
       byCause.set(`${c.category}|${c.cause}`, (byCause.get(`${c.category}|${c.cause}`) ?? 0) + 1);
-      if (c.category === 'hub') hubDays.add(e.createdAt.toDateString());
     }
     const topCause = (k: ErrorCategory) => [...byCause.entries()].filter(([key]) => key.startsWith(`${k}|`)).sort((a, b) => b[1] - a[1])[0] ?? null;
     const catRule = (k: ErrorCategory, sev: InsightSeverity, title: string, lead: string) => {
@@ -186,13 +184,17 @@ export function buildInsights(input: InsightInput): Insight[] {
     catRule('externo', 'info', 'Sistemas externos: ', 'Portal fora do ar, sessão presa ou erro HTTP. Não é defeito do robô, mas pode pedir nova tentativa ou outro horário.');
     catRule('entrada', 'info', 'Dados de entrada: ', 'Planilha, certificado ou senha com problema: a pessoa que roda precisa corrigir. Vale orientar ou validar antes.');
     catRule('config', 'warn', 'Cadastro do robô no Hub: ', 'Comando ou pasta de execução errada no cadastro: quem corrige é o administrador do Hub.');
-    const hub = byCat.get('hub') ?? 0;
-    if (hub > 0) {
-      add({ id: 'hub-reinicio', sev: 'info', pri: hub, title: `${pl(hub, 'execução interrompida', 'execuções interrompidas')} por reinício do Hub`, text: `O Hub reiniciou em ${pl(hubDays.size, 'dia', 'dias')} do período e derrubou o que estava rodando.`, why: `Erros da categoria "Hub" (reinício do servidor). Os dias com reinício aparecem como um losango no gráfico "Execuções por dia".${FILT}`, acts: [{ l: 'Ver execuções por dia', go: 'visao' }] });
-    } else if (cur.executions >= 30) {
-      add({ id: 'hub-ok', sev: 'good', pri: 1, title: 'Nenhuma execução interrompida pelo Hub', text: 'O Hub não reiniciou nem derrubou execuções neste período.', why: `Nenhum erro da categoria "Hub" em ${pl(cur.executions, 'execução', 'execuções')}.${FILT}` });
+  }
+
+  // 4b. reinício do Hub: vale com qualquer quantidade de erros (antes só aparecia com 10 erros ou mais, e a "boa notícia" só sem nenhum erro)
+  if (cur.hubErrors > 0) {
+    const hubDays = new Set<string>();
+    for (const e of input.current) {
+      if (e.status === 'error' && classify(e.errorMessage).category === 'hub') hubDays.add(e.createdAt.toDateString());
     }
-  } else if (cur.errorsAll === 0 && cur.executions >= 30) {
+    const hub = cur.hubErrors;
+    add({ id: 'hub-reinicio', sev: 'info', pri: hub, title: `${pl(hub, 'execução interrompida', 'execuções interrompidas')} por reinício do Hub`, text: `O Hub reiniciou em ${pl(hubDays.size, 'dia', 'dias')} do período e derrubou o que estava rodando.`, why: `Erros da categoria "Hub" (reinício do servidor). Os dias com reinício aparecem como um losango no gráfico "Execuções por dia".${FILT}`, acts: [{ l: 'Ver execuções por dia', go: 'visao' }] });
+  } else if (cur.executions >= 30) {
     add({ id: 'hub-ok', sev: 'good', pri: 1, title: 'Nenhuma execução interrompida pelo Hub', text: 'O Hub não reiniciou nem derrubou execuções neste período.', why: `Nenhum erro da categoria "Hub" em ${pl(cur.executions, 'execução', 'execuções')}.${FILT}` });
   }
 
