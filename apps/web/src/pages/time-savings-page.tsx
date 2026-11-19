@@ -7,19 +7,24 @@ import { ExecutionsTable } from '../components/time-savings/executions-table';
 import { FiltersBar, type TimeSavingsFilters } from '../components/time-savings/filters-bar';
 import { InfoTip } from '../components/time-savings/info-tip';
 import { InsightsCard } from '../components/time-savings/insights-card';
+import { RobotsWithoutGain } from '../components/time-savings/robots-without-gain';
 import { KpiRow } from '../components/time-savings/kpi-row';
+import { useAuth } from '../contexts/auth-context';
 import { useHub } from '../contexts/hub-context';
 import { api } from '../lib/api';
 import { buildInsights, buildSummaryCsv, presetRange } from '../lib/time-savings-metrics';
 import type { TimeSavingsGranularity, TimeSavingsReport } from '../lib/types';
 import { cn, departmentLabel as labelForDepartment } from '../lib/utils';
 
-type View = 'overview' | 'executions';
+type View = 'overview' | 'executions' | 'no-gain';
 
 const GRANULARITIES: TimeSavingsGranularity[] = ['day', 'week', 'month'];
 
 export function TimeSavingsPage() {
-  const { hub, departments, notify } = useHub();
+  const { hub, departments, notify, refreshHub } = useHub();
+  const { user } = useAuth();
+  // Configurar o tempo manual dos robôs: só administradores (e Inovação), como o cadastro de robôs.
+  const canConfigure = user?.role === 'admin' || user?.departments.includes('inovacao') === true;
   const [searchParams, setSearchParams] = useSearchParams();
 
   // Todos os filtros vivem na URL: o link da tela é compartilhável. Sem
@@ -36,7 +41,8 @@ export function TimeSavingsPage() {
       ? (searchParams.get('origin') as 'hub' | 'external')
       : '',
   };
-  const view: View = searchParams.get('view') === 'executions' ? 'executions' : 'overview';
+  const viewParam = searchParams.get('view');
+  const view: View = viewParam === 'executions' ? 'executions' : viewParam === 'sem-ganho' && canConfigure ? 'no-gain' : 'overview';
   const granularityParam = searchParams.get('gran');
   const granularityOverride = GRANULARITIES.includes(granularityParam as TimeSavingsGranularity)
     ? (granularityParam as TimeSavingsGranularity)
@@ -50,6 +56,8 @@ export function TimeSavingsPage() {
   const [compare, setCompare] = useState(true);
   const [userOptions, setUserOptions] = useState<Array<{ userId: string; userName: string }>>([]);
   const requestSeq = useRef(0);
+  // Depois de salvar um tempo manual a visão geral é recalculada (o robô deixa de contar como "sem tempo" daqui pra frente).
+  const [reloadKey, setReloadKey] = useState(0);
 
   const updateParams = useCallback(
     (mutate: (next: URLSearchParams) => void) => {
@@ -109,6 +117,7 @@ export function TimeSavingsPage() {
   function setView(nextView: View) {
     updateParams((next) => {
       if (nextView === 'executions') next.set('view', 'executions');
+      else if (nextView === 'no-gain') next.set('view', 'sem-ganho');
       else next.delete('view');
     });
   }
@@ -183,7 +192,7 @@ export function TimeSavingsPage() {
       });
     // `notify` e `mergeUserOptions` são estáveis; reportQuery cobre todos os filtros.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [reportQuery]);
+  }, [reportQuery, reloadKey]);
 
   const departmentLabel = useCallback(
     (slug: string) => labelForDepartment(slug, departments),
@@ -220,9 +229,11 @@ export function TimeSavingsPage() {
     URL.revokeObjectURL(url);
   }
 
-  const tabs: Array<{ id: View; label: string }> = [
+  const withoutRateCount = report?.quality.automationsWithoutRate.count ?? 0;
+  const tabs: Array<{ id: View; label: string; badge?: number }> = [
     { id: 'overview', label: 'Visão geral' },
     { id: 'executions', label: 'Execuções' },
+    ...(canConfigure ? [{ id: 'no-gain' as const, label: 'Robôs sem ganho', badge: withoutRateCount }] : []),
   ];
 
   return (
@@ -269,11 +280,27 @@ export function TimeSavingsPage() {
             )}
           >
             {tab.label}
+            {tab.badge ? (
+              <span className="ml-2 inline-flex min-w-[1.25rem] items-center justify-center rounded-full bg-amber-100 px-1.5 text-[11px] font-semibold leading-5 text-amber-800 dark:bg-amber-950 dark:text-amber-200" aria-label={`${tab.badge} sem tempo configurado`}>
+                {tab.badge}
+              </span>
+            ) : null}
           </button>
         ))}
       </div>
 
-      {view === 'executions' ? (
+      {view === 'no-gain' ? (
+        <RobotsWithoutGain
+          from={filters.from}
+          to={filters.to}
+          departmentLabel={departmentLabel}
+          notify={notify}
+          onChanged={() => {
+            setReloadKey((k) => k + 1);
+            void refreshHub();
+          }}
+        />
+      ) : view === 'executions' ? (
         <ExecutionsTable
           baseQuery={baseQuery}
           exportFileSuffix={report?.range ? `${report.range.from}_a_${report.range.to}` : 'historico'}
@@ -312,7 +339,7 @@ export function TimeSavingsPage() {
             <InsightsCard insights={insights} />
           </div>
 
-          <DataQuality report={report} />
+          <DataQuality report={report} onConfigure={canConfigure ? () => setView('no-gain') : undefined} />
         </div>
       )}
     </div>

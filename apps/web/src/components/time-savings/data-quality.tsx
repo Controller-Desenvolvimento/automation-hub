@@ -53,7 +53,7 @@ function attentionSummary(report: TimeSavingsReport) {
   return flags.length > 0 ? flags.join(' · ') : 'Nenhum ponto de atenção';
 }
 
-export function DataQuality({ report }: { report: TimeSavingsReport }) {
+export function DataQuality({ report, onConfigure }: { report: TimeSavingsReport; onConfigure?: () => void }) {
   // Recolhida por padrão: é conferência, não leitura principal.
   const [open, setOpen] = useState(false);
   const [technicalOpen, setTechnicalOpen] = useState(false);
@@ -179,6 +179,11 @@ export function DataQuality({ report }: { report: TimeSavingsReport }) {
                         {shownNames.join(', ')}
                         {hiddenNames > 0 ? ` e mais ${hiddenNames}` : ''}
                       </p>
+                      {onConfigure ? (
+                        <button type="button" onClick={onConfigure} className="mt-1 text-xs font-medium text-sky-600 hover:underline dark:text-sky-400">
+                          Configurar o tempo desses robôs →
+                        </button>
+                      ) : null}
                     </li>
                   ) : null}
                 </ul>
