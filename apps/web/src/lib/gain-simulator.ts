@@ -1,4 +1,5 @@
-// Simulador de ganhos (aba "Robôs sem ganho"): tipos da resposta da API e formatação.
+// Simulador de ganhos (aba "Robôs sem ganho"): tipos da resposta da API, leitura de números digitados e formatação (as mesmas
+// regras do protótipo aprovado).
 
 export type SimSource = 'atual' | 'novo' | 'informado' | 'nenhum';
 
@@ -15,7 +16,16 @@ export type SimRow = {
   avgItems: number | null;
   estimated: number;
   days: number;
+  monthsCovered: number;
+  executionsMonth: number;
+  metricKey: string | null;
+  metricAvg: number | null;
 };
+
+/** Só as linhas por robô (para montar a tabela do formulário antes de simular). */
+export type SimPreview = { rows: SimRow[]; days: number; months: number };
+
+export type SimInsightItem = { kind: 'warn' | 'info'; icon: string; text: string };
 
 export type SimulationResult = {
   scope: 'sem' | 'todos';
@@ -38,7 +48,7 @@ export type SimulationResult = {
     high: { extraMonth: number; people: number };
   };
   rows: SimRow[];
-  insights: Array<{ kind: 'warn' | 'info'; text: string }>;
+  insights: SimInsightItem[];
   monthly: { months: MonthlyPoint[]; cut: boolean };
 };
 
@@ -56,36 +66,79 @@ export type MonthlyPoint = {
   extra: number;
 };
 
-const MINUS = '−';
+export const MINUS = '−';
+export const BUSINESS_DAYS = 21;
 export const nf = (v: number, d = 0) => v.toLocaleString('pt-BR', { minimumFractionDigits: d, maximumFractionDigits: d });
+export const nfx = (v: number) => Number(v).toLocaleString('pt-BR', { maximumFractionDigits: 2 });
+export const pl = (n: number, one: string, many: string) => `${nf(n)} ${n === 1 ? one : many}`;
 
 /** "0 h", "45 min", "7,5 h", "120 h": o mesmo jeito de falar do relatório. */
 export function dur(seconds: number): string {
-  const s = Math.round(Math.abs(seconds) || 0);
+  const s = Math.round(seconds || 0);
   if (s <= 0) return '0 h';
   if (s < 3600) return `${nf(Math.max(1, Math.round(s / 60)))} min`;
   const h = s / 3600;
   return `${nf(h, h < 10 ? 1 : 0)} h`;
 }
 
-/** Com sinal só quando o número que aparece não é zero ("+0 h" não existe). */
-export function signedDur(seconds: number): string {
-  const text = dur(seconds);
-  if (text === '0 h' || !seconds) return text;
-  return `${seconds > 0 ? '+' : MINUS}${text}`;
+/** Sinal só quando o número que aparece não é zero ("+0 h" e "−0%" não existem). */
+export function signed(value: number, fmt: (v: number) => string): string {
+  const text = fmt(Math.abs(value));
+  if (/^0([,.]0+)?(\s|%|$)/.test(text) || !value) return text;
+  return `${value > 0 ? '+' : MINUS}${text}`;
+}
+export const signedDur = (seconds: number) => signed(seconds, dur);
+export const hrs = (seconds: number) => nf(seconds / 3600, Math.abs(seconds) < 36000 ? 1 : 0);
+
+// pessoas = horas por mês ÷ (jornada × 21 dias úteis); aceita negativo (simulação que reduz o ganho)
+export const peopleOf = (secondsPerMonth: number, workdayHours: number) => secondsPerMonth / 3600 / (workdayHours * BUSINESS_DAYS);
+export function peopleNum(secondsPerMonth: number, workdayHours: number): string {
+  const p = peopleOf(secondsPerMonth, workdayHours);
+  const a = Math.abs(p);
+  const t = nf(a, a < 10 ? 1 : 0);
+  return `${p < 0 && Number(t.replace(',', '.')) !== 0 ? MINUS : ''}${t}`;
+}
+export function peopleWord(secondsPerMonth: number, workdayHours: number): string {
+  const a = Math.abs(peopleOf(secondsPerMonth, workdayHours));
+  const r = a < 10 ? Math.round(a * 10) / 10 : Math.round(a);
+  return r === 0 || r >= 2 ? 'pessoas' : 'pessoa';
+}
+export const peopleTxt = (secondsPerMonth: number, workdayHours: number) => `${peopleNum(secondsPerMonth, workdayHours)} ${peopleWord(secondsPerMonth, workdayHours)}`;
+export const jornadaTxt = (jh: number) => `jornada de ${nfx(jh)} h por dia, ${BUSINESS_DAYS} dias úteis`;
+
+/** "5 min por empresa", "2 h por execução". */
+export function perUnitTxt(seconds: number, unit: string): string {
+  if (seconds % 3600 === 0 && seconds >= 3600) return `${nf(seconds / 3600)} h por ${unit}`;
+  if (seconds % 60 === 0 && seconds >= 60) return `${nf(seconds / 60)} min por ${unit}`;
+  return seconds >= 60 ? `${nf(seconds / 60, 1)} min por ${unit}` : `${nf(seconds)} s por ${unit}`;
 }
 
-export function peopleText(value: number): string {
-  const a = Math.abs(value);
-  const shown = nf(a, a < 10 ? 1 : 0);
-  const rounded = a < 10 ? Math.round(a * 10) / 10 : Math.round(a);
-  const word = rounded === 0 || rounded >= 2 ? 'pessoas' : 'pessoa';
-  return `${value < 0 && Number(shown.replace(',', '.')) !== 0 ? MINUS : ''}${shown} ${word}`;
+// ---------- tempos digitados ----------
+
+export type SimUnit = 'seconds' | 'minutes' | 'hours';
+export const UNIT_SECONDS: Record<SimUnit, number> = { seconds: 1, minutes: 60, hours: 3600 };
+export const UNIT_AB: Record<SimUnit, string> = { seconds: 's', minutes: 'min', hours: 'h' };
+export const UNIT_NAME: Record<SimUnit, string> = { seconds: 'segundos', minutes: 'minutos', hours: 'horas' };
+export const MAX_SECONDS = 86_400; // o mesmo teto do tempo manual configurado
+
+/**
+ * Lê um número digitado. Vazio = sem valor. Aceita vírgula (ou ponto) decimal; recusa milhar ("1.000"), zero, negativo e texto.
+ */
+export function parseNum(raw: string | undefined, max?: number): { empty: true; value: 0 } | { error: string } | { value: number; empty?: false } {
+  const t = String(raw ?? '').trim();
+  if (!t) return { empty: true, value: 0 };
+  if (/^\d{1,3}(\.\d{3})+$/.test(t)) return { error: 'Use vírgula para decimais (ex.: 1,5). Ponto de milhar não vale.' };
+  if (/^-/.test(t)) return { error: 'Use um número maior que zero.' };
+  if (!/^\d+([.,]\d+)?$/.test(t)) return { error: 'Digite só números (ex.: 5 ou 1,5).' };
+  const x = Number(t.replace(',', '.'));
+  if (!(x > 0)) return { error: 'Use um número maior que zero.' };
+  if (max !== undefined && x > max) return { error: `Valor alto demais (no máximo ${nfx(max)}).` };
+  return { value: x };
 }
 
-export const SOURCE_LABEL: Record<SimSource, string> = {
-  atual: 'tempo atual',
-  novo: 'novo tempo',
-  informado: 'tempo informado',
-  nenhum: 'sem tempo',
-};
+/** Trocar a unidade converte o que já foi digitado: 5 min vira 0,08 h, não 5 h. */
+export function convertUnit(raw: string, from: SimUnit, to: SimUnit): string {
+  const p = parseNum(raw);
+  if ('error' in p || p.empty) return raw;
+  return nfx(Math.round(((p.value * UNIT_SECONDS[from]) / UNIT_SECONDS[to]) * 100) / 100);
+}

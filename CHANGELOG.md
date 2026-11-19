@@ -3,6 +3,29 @@
 Mudanças do Automation Hub por data. Este arquivo é **público**: descreve o que mudou no produto, no banco e na
 configuração, sem dados de infraestrutura. O desenho detalhado de cada funcionalidade está no `CLAUDE.md`.
 
+## 2026-11-19 — "Robôs sem ganho" e simulador: visual igual ao do protótipo HTML aprovado
+
+### Mudado (só administradores e Inovação; sem mudança no banco; a simulação continua não gravando nada)
+- **Visual refeito a partir do HTML aprovado** (cores, cartões, indicadores, chips, barras, faixa, ranking, frases e tabelas, em claro e
+  escuro): o que estava diferente ou faltando passou a existir.
+  - **Lista de robôs:** 3 indicadores no topo (robôs sem tempo manual de N ativos, execuções deles, tempo ganho do relatório),
+    botões "Robôs sem tempo manual" / "Simular ganhos", linhas com chips ("sem tempo manual", a métrica que o robô informa e a média,
+    ou "não informa itens: conta 1 por execução"), departamentos, última execução e "todas agendadas", alternância **Sem tempo manual /
+    Todos** (quem já tem tempo também pode ser reconfigurado) e o bloco **"Outras N execuções sem ganho de robôs que já têm tempo
+    manual"** (0 itens, esperado, ou gravadas antes de o robô ter tempo).
+  - **Simulador, formulário:** linhas do protótipo com "i" explicativos, tabela com **execuções por mês** e **ganho hoje por mês** de cada
+    robô, o que o robô informa (no "por item"), campos com erro em vermelho e conversão dos números ao trocar a unidade.
+  - **Simulador, resultado:** "Resultado da simulação" com 4 indicadores (ganho a mais por mês e por ano, pessoas a mais e no total),
+    **evolução mensal** como no HTML (faixa da variação, barras com o total em cima, mês em andamento mais claro, retângulo por mês para
+    mouse/toque/Tab, **dica que acompanha o mouse**, legenda e tabela), **"Tempo ganho do relatório, por mês"** (hoje × com a simulação),
+    **faixa** conservador/provável/otimista, **ranking "Quanto cada robô soma por mês"**, **Insights com ícones**, guardar cenário,
+    confirmação do "Usar estes tempos" (com "antes → depois") e **cenários guardados** em tabela com a faixa em barra.
+- **Frases novas** no simulador que estavam no HTML: sensibilidade ("cada 1 min a mais em X soma ~Y por mês"), peso dos robôs sem tempo no total
+  simulado (escopo "somando os que já têm ganho") e "N robôs usaram o tempo padrão".
+- API: `GET /api/reports/robots-without-gain?all=true` (inclui quem já tem tempo; devolve `others` e `scheduledExecutions`) e
+  `POST .../simulate` com `light: true` (só as linhas por robô, para o formulário), `unit` e `defaultIds`; cada linha traz
+  `executionsMonth`, `monthsCovered`, `metricKey` e `metricAvg`; cada frase traz `icon`.
+
 ## 2026-11-19 — Simulador: "por mês" passa a usar meses do calendário
 
 ### Corrigido

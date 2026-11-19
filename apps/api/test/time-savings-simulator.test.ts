@@ -201,3 +201,26 @@ test('meses do calendário: mês inteiro vale 1 (31, 30 ou 28 dias); pedaço de 
   assert.ok(Math.abs(monthsBetween(d(2026, 10, 21), d(2026, 11, 19)) - (11 / 31 + 19 / 30)) < 1e-12, 'um pedaço de cada mês');
   assert.ok(Math.abs(monthsBetween(d(2026, 11, 10), d(2026, 11, 10)) - 1 / 30) < 1e-12, 'um dia só');
 });
+
+// ---------- frases do protótipo: ícones, sensibilidade (±), % e tempo padrão (=) ----------
+
+test('insights: todos trazem ícone; sensibilidade usa a unidade escolhida; "%" só somando os que já têm ganho; "=" só com tempo padrão', () => {
+  const robots = [robot('a', 40), robot('b', 10), robot('c', 20, { hasTime: true }, { storedGain: 600, units: 2 })];
+  const inp = input(robots, { times: { a: 300, b: 300 } });
+  const res = simulate(inp);
+  const base = simInsights(res, { base: 'exec', workdayHours: 7, unit: 'minutes', scope: 'sem' });
+  assert.ok(base.every((i) => i.icon && i.icon.length > 0), 'todos com ícone');
+  const sens = base.find((i) => i.icon === '±')!;
+  assert.ok(sens, 'sensibilidade');
+  assert.match(sens.text, /Cada 1 min a mais em Robô a soma ~.* por mês/);
+  const hours = simInsights(res, { base: 'exec', workdayHours: 7, unit: 'hours' }).find((i) => i.icon === '±')!;
+  assert.match(hours.text, /Cada 1 h a mais em Robô a/);
+  assert.equal(base.find((i) => i.icon === '%'), undefined, '"%" só no escopo "todos"');
+  assert.equal(base.find((i) => i.icon === '='), undefined, '"=" só quando há robôs no tempo padrão');
+  const todos = simInsights(res, { base: 'exec', workdayHours: 7, scope: 'todos', defaultIds: ['b'] });
+  assert.match(todos.find((i) => i.icon === '%')!.text, /representariam \d+% do total simulado/);
+  assert.match(todos.find((i) => i.icon === '=')!.text, /1 robô usou o tempo padrão/);
+  // os avisos continuam com "!"
+  const warn = simInsights(simulate(input([robot('a', 5)], { from: day(4), times: { a: 8 * 3600 } })), { base: 'exec', workdayHours: 7 }).filter((i) => i.kind === 'warn');
+  assert.ok(warn.length && warn.every((i) => i.icon === '!'));
+});

@@ -144,7 +144,7 @@ export class ReportsService {
    * apaga depois de EXECUTION_RETENTION_DAYS). Só administradores (a rota confere). Robôs externos ficam de fora: o sistema deles
    * informa o tempo de cada execução.
    */
-  async listRobotsWithoutGain(query: { from?: string; to?: string }) {
+  async listRobotsWithoutGain(query: { from?: string; to?: string; all?: boolean }) {
     const from = query.from && isDayString(query.from) ? query.from : null;
     const to = query.to && isDayString(query.to) ? query.to : null;
     const finishedAt: Prisma.DateTimeFilter = {};
@@ -153,16 +153,17 @@ export class ReportsService {
     const inPeriod: Prisma.ExecutionWhereInput = Object.keys(finishedAt).length ? { finishedAt } : { finishedAt: { not: null } };
 
     const robots = await this.prisma.robot.findMany({
-      where: { isActive: true, isExternal: false, manualSecondsPerUnit: 0 },
-      select: { id: true, name: true, slug: true, category: true, allowedDepartments: true, unitLabel: true, unitMetricKey: true },
+      where: { isActive: true, isExternal: false, ...(query.all ? {} : { manualSecondsPerUnit: 0 }) },
+      select: { id: true, name: true, slug: true, category: true, allowedDepartments: true, unitLabel: true, unitMetricKey: true, manualSecondsPerUnit: true },
       orderBy: { name: 'asc' },
     });
     const ids = robots.map((r) => r.id);
-    if (ids.length === 0) return { range: from || to ? { from, to } : null, robots: [] };
+    if (ids.length === 0) return { range: from || to ? { from, to } : null, robots: [], others: [] };
 
     const success: Prisma.ExecutionWhereInput = { robotId: { in: ids }, status: ExecutionStatus.success, ...inPeriod };
-    const [counts, withUnits, lastRuns, logs] = await Promise.all([
+    const [counts, scheduledCounts, withUnits, lastRuns, logs] = await Promise.all([
       this.prisma.execution.groupBy({ by: ['robotId'], where: success, _count: { _all: true } }),
+      this.prisma.execution.groupBy({ by: ['robotId'], where: { ...success, scheduledTaskId: { not: null } }, _count: { _all: true } }),
       this.prisma.execution.groupBy({ by: ['robotId'], where: { ...success, unitsProcessed: { not: null } }, _count: { _all: true }, _sum: { unitsProcessed: true } }),
       this.prisma.execution.groupBy({ by: ['robotId'], where: { robotId: { in: ids } }, _max: { createdAt: true } }),
       this.prisma.executionLog.findMany({
@@ -172,6 +173,7 @@ export class ReportsService {
       }),
     ]);
     const countBy = new Map(counts.map((c) => [c.robotId, c._count._all]));
+    const scheduledBy = new Map(scheduledCounts.map((c) => [c.robotId, c._count._all]));
     const unitsBy = new Map(withUnits.map((c) => [c.robotId, { executions: c._count._all, total: c._sum.unitsProcessed ?? 0 }]));
     const lastBy = new Map(lastRuns.map((c) => [c.robotId, c._max.createdAt]));
     const logsBy = new Map<string, Array<{ executionId: string; message: string }>>();
@@ -181,8 +183,27 @@ export class ReportsService {
       logsBy.set(row.execution.robotId, list);
     }
 
+    // Execuções do período com ganho 0 de robôs que JÁ têm tempo manual: ou o robô informou 0 itens (esperado) ou a execução foi
+    // gravada antes de o robô ter tempo.
+    const withTimeIds = (await this.prisma.robot.findMany({ where: { isActive: true, isExternal: false, manualSecondsPerUnit: { gt: 0 } }, select: { id: true, name: true } }));
+    const zeroGain: Prisma.ExecutionWhereInput = { robotId: { in: withTimeIds.map((r) => r.id) }, status: ExecutionStatus.success, ...inPeriod, manualEstimatedSeconds: 0 };
+    const [zeroAll, zeroItems] = withTimeIds.length
+      ? await Promise.all([
+          this.prisma.execution.groupBy({ by: ['robotId'], where: zeroGain, _count: { _all: true } }),
+          this.prisma.execution.groupBy({ by: ['robotId'], where: { ...zeroGain, unitsProcessed: 0 }, _count: { _all: true } }),
+        ])
+      : [[], []];
+    const zeroItemsBy = new Map(zeroItems.map((c) => [c.robotId, c._count._all]));
+    const others = zeroAll
+      .map((c) => {
+        const zero = zeroItemsBy.get(c.robotId) ?? 0;
+        return { robotId: c.robotId, name: withTimeIds.find((r) => r.id === c.robotId)?.name ?? 'Robô', zeroItems: zero, beforeTime: c._count._all - zero };
+      })
+      .sort((a, b) => b.zeroItems + b.beforeTime - (a.zeroItems + a.beforeTime));
+
     return {
       range: from || to ? { from, to } : null,
+      others,
       robots: robots
         .map((robot) => ({
           robotId: robot.id,
@@ -194,6 +215,9 @@ export class ReportsService {
           unitMetricKey: robot.unitMetricKey || 'itens_processados',
           /** Execuções com sucesso no período (todas entram no relatório com 0 h). */
           executions: countBy.get(robot.id) ?? 0,
+          /** Dessas, quantas foram agendadas (o robô rodou sozinho). */
+          scheduledExecutions: scheduledBy.get(robot.id) ?? 0,
+          manualSecondsPerUnit: robot.manualSecondsPerUnit,
           lastExecutionAt: lastBy.get(robot.id) ?? null,
           /** Itens gravados nas execuções do período, quando o robô informou a métrica da chave atual. */
           recordedUnits: unitsBy.get(robot.id) ?? { executions: 0, total: 0 },
@@ -210,7 +234,19 @@ export class ReportsService {
    */
   async simulateGains(
     user: User,
-    input: { from?: string; to?: string; scope?: string; base?: string; times?: Record<string, unknown>; excluded?: unknown; workdayHours?: unknown },
+    input: {
+      from?: string;
+      to?: string;
+      scope?: string;
+      base?: string;
+      times?: Record<string, unknown>;
+      excluded?: unknown;
+      workdayHours?: unknown;
+      /** Só as linhas por robô (para montar a tabela do formulário), sem relatório, evolução mensal nem frases. */
+      light?: boolean;
+      unit?: string;
+      defaultIds?: unknown;
+    },
   ) {
     const from = input.from && isDayString(input.from) ? input.from : null;
     const to = input.to && isDayString(input.to) ? input.to : null;
@@ -267,8 +303,9 @@ export class ReportsService {
             take: 300_000,
           })
         : [];
-    const report = await this.getTimeSavingsReport(user, { from: from ?? undefined, to: to ?? undefined });
-    const monthlyReport = await this.getTimeSavingsReport(user, { from: windowStartDay, granularity: 'month' });
+    const light = input.light === true;
+    const report = light ? null : await this.getTimeSavingsReport(user, { from: from ?? undefined, to: to ?? undefined });
+    const monthlyReport = light ? null : await this.getTimeSavingsReport(user, { from: windowStartDay, granularity: 'month' });
 
     const firstBy = new Map(firsts.map((f) => [f.robotId, f._min.finishedAt?.getTime() ?? null]));
     const logsBy = new Map<string, Array<{ executionId: string; message: string }>>();
@@ -287,12 +324,17 @@ export class ReportsService {
         // Sem tempo configurado, "item" = a métrica que o robô mais informa (a mesma que a janela Configurar sugere).
         const key = hasTime ? null : summarizeMetricLogs(rows)[0]?.key ?? null;
         const perExecution = hasTime || !key ? null : metricsByExecution(rows);
+        // média por execução da métrica nas execuções do período que a informaram (para a tela)
+        const inPeriod = (execBy.get(robot.id) ?? []).filter((e) => keep(e.finishedAt!.getTime()));
+        const known = key && perExecution ? inPeriod.map((e) => perExecution.get(e.id)?.get(key)).filter((v): v is number => typeof v === 'number') : [];
         return {
           robotId: robot.id,
           name: robot.name,
           hasTime,
           firstAt: firstBy.get(robot.id) ?? null,
           fallbackAvgItems: null,
+          metricKey: key,
+          metricAvg: known.length ? known.reduce((a, v) => a + v, 0) / known.length : null,
           executions: (execBy.get(robot.id) ?? [])
             .filter((e) => keep(e.finishedAt!.getTime()))
             .map(
@@ -316,9 +358,10 @@ export class ReportsService {
       from: from ? dayStart(from).getTime() : null,
       to: to ? dayStart(to).getTime() : null,
       now: now.getTime(),
-      reportSavedSeconds: report.totals.savedSeconds,
+      reportSavedSeconds: report?.totals.savedSeconds ?? 0,
     };
     const main = simulate(simInput, 1);
+    if (light) return { rows: main.rows, days: main.days, months: main.months };
     const low = simulate(simInput, 0.5);
     const high = simulate(simInput, 1.5);
     const people = (seconds: number) => peopleOf(seconds, workdayHours);
@@ -326,7 +369,7 @@ export class ReportsService {
     // Evolução mensal: ganho do relatório (todos os robôs e fontes) + extra simulado, nos últimos 12 meses.
     const currentByMonth: Record<string, number> = {};
     let firstReportMonthAt: number | null = null;
-    for (const bucket of monthlyReport.series) {
+    for (const bucket of monthlyReport?.series ?? []) {
       currentByMonth[bucket.key] = bucket.savedSeconds;
       if (bucket.savedSeconds > 0 && firstReportMonthAt === null) firstReportMonthAt = dayStart(bucket.from).getTime();
     }
@@ -363,7 +406,13 @@ export class ReportsService {
         high: { extraMonth: high.extra, people: people(high.extra) },
       },
       rows: main.rows.sort((a, b) => b.simulatedMonth - b.currentMonth - (a.simulatedMonth - a.currentMonth) || a.name.localeCompare(b.name, 'pt-BR')),
-      insights: simInsights(main, { base, workdayHours }),
+      insights: simInsights(main, {
+        base,
+        workdayHours,
+        scope,
+        unit: input.unit === 'seconds' || input.unit === 'hours' ? input.unit : 'minutes',
+        defaultIds: Array.isArray(input.defaultIds) ? input.defaultIds.filter((x): x is string => typeof x === 'string') : [],
+      }),
     };
   }
 

@@ -12,6 +12,10 @@ export type RobotWithoutGain = {
   unitMetricKey: string;
   /** Execuções com sucesso no período: todas entram no relatório com 0 h. */
   executions: number;
+  /** Dessas, quantas foram agendadas (o robô rodou sozinho). */
+  scheduledExecutions: number;
+  /** Tempo manual atual em segundos (0 = sem tempo). */
+  manualSecondsPerUnit: number;
   lastExecutionAt: string | null;
   /** Itens gravados nas execuções do período (métrica da chave atual). */
   recordedUnits: { executions: number; total: number };
@@ -21,6 +25,8 @@ export type RobotWithoutGain = {
 export type RobotsWithoutGainResponse = {
   range: { from: string | null; to: string | null } | null;
   robots: RobotWithoutGain[];
+  /** Execuções com ganho 0 de robôs que JÁ têm tempo manual (0 itens, ou gravadas antes de o robô ter tempo). */
+  others: Array<{ robotId: string; name: string; zeroItems: number; beforeTime: number }>;
 };
 
 export const DEFAULT_METRIC_KEY = 'itens_processados';

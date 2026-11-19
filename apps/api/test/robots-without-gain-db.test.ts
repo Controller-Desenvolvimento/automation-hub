@@ -121,3 +121,19 @@ test('salvar: recusa robô externo, robô que não existe e valores inválidos',
   const off = await prisma.robot.findUnique({ where: { id: 'sg-off' } });
   assert.equal(off.manualSecondsPerUnit, 0, 'nada foi gravado');
 });
+
+test('lista com "todos": traz quem já tem tempo, execuções agendadas e as execuções com ganho 0 de robôs que já têm tempo', { skip }, async () => {
+  // sg-b tem 30 s por item: uma execução recente com ganho 0 (0 itens) e outra gravada com 0 h antes de ter tempo
+  await prisma.execution.create({ data: { id: 'sg-ex-zero1', robotId: 'sg-b', userId: 'sg-user', status: 'success', createdAt: day(1), startedAt: day(1), finishedAt: new Date(day(1).getTime() + 60_000), manualEstimatedSeconds: 0, unitsProcessed: 0 } });
+  await prisma.execution.create({ data: { id: 'sg-ex-zero2', robotId: 'sg-b', userId: 'sg-user', status: 'success', createdAt: day(2), startedAt: day(2), finishedAt: new Date(day(2).getTime() + 60_000), manualEstimatedSeconds: 0 } });
+  const range = { from: iso(day(30)), to: iso(new Date()) };
+  const sem = await reports.listRobotsWithoutGain(range);
+  assert.equal(sem.robots.some((x: any) => x.robotId === 'sg-b'), false, 'sem o "todos", só quem não tem tempo');
+  const all = await reports.listRobotsWithoutGain({ ...range, all: true });
+  const b = all.robots.find((x: any) => x.robotId === 'sg-b');
+  assert.equal(b.manualSecondsPerUnit, 30);
+  assert.equal(b.scheduledExecutions, 0);
+  const other = sem.others.find((x: any) => x.robotId === 'sg-b');
+  // (a execução que o próprio preparo do teste criou para o sg-b também tem ganho 0 e conta como "antes de ter tempo")
+  assert.deepEqual([other.zeroItems, other.beforeTime], [1, 2], 'uma com 0 itens (esperado) e duas gravadas antes de o robô ter tempo');
+});
