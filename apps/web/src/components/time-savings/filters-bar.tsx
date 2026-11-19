@@ -1,5 +1,5 @@
 import { CalendarDays, ChevronDown, Download, Search, SlidersHorizontal } from 'lucide-react';
-import { useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import {
   PERIOD_PRESETS,
   formatDay,
@@ -7,7 +7,7 @@ import {
   presetRange,
 } from '../../lib/time-savings-metrics';
 import type { TimeSavingsOriginFilter } from '../../lib/types';
-import { cn } from '../../lib/utils';
+import { cn, isCompleteDay } from '../../lib/utils';
 import { Button } from '../ui/button';
 import { Popover } from './popover';
 
@@ -48,6 +48,47 @@ function SelectControl({
     >
       {children}
     </select>
+  );
+}
+
+/**
+ * "De" e "Até" do intervalo personalizado. Cada campo guarda o que está sendo digitado (rascunho) e só vira filtro quando a data
+ * está completa. Antes cada tecla virava filtro: o "Até" pela metade (ex.: ano 0002) era menor que o "De", e a tela apagava o
+ * "De" para acompanhá-lo.
+ */
+function CustomRange({ from, to, onChange }: { from: string; to: string; onChange: (patch: Partial<TimeSavingsFilters>) => void }) {
+  const [draftFrom, setDraftFrom] = useState(from);
+  const [draftTo, setDraftTo] = useState(to);
+  // um filtro que mudou por fora (atalho de período, limpar) substitui o rascunho do próprio campo
+  useEffect(() => setDraftFrom(from), [from]);
+  useEffect(() => setDraftTo(to), [to]);
+  return (
+    <div className="grid grid-cols-2 gap-2">
+      <label className="grid gap-1 text-xs text-slate-500 dark:text-zinc-400">
+        De
+        <input
+          type="date"
+          className={DATE_INPUT_CLASS}
+          value={draftFrom}
+          onChange={(event) => {
+            setDraftFrom(event.target.value);
+            if (isCompleteDay(event.target.value)) onChange({ from: event.target.value });
+          }}
+        />
+      </label>
+      <label className="grid gap-1 text-xs text-slate-500 dark:text-zinc-400">
+        Até
+        <input
+          type="date"
+          className={DATE_INPUT_CLASS}
+          value={draftTo}
+          onChange={(event) => {
+            setDraftTo(event.target.value);
+            if (isCompleteDay(event.target.value)) onChange({ to: event.target.value });
+          }}
+        />
+      </label>
+    </div>
   );
 }
 
@@ -128,28 +169,7 @@ export function FiltersBar({
             </div>
             <div className="border-t border-slate-100 pt-3 dark:border-[#27272a]">
               <p className="mb-2 text-xs font-medium text-slate-500 dark:text-zinc-400">Intervalo personalizado</p>
-              <div className="grid grid-cols-2 gap-2">
-                <label className="grid gap-1 text-xs text-slate-500 dark:text-zinc-400">
-                  De
-                  <input
-                    type="date"
-                    className={DATE_INPUT_CLASS}
-                    value={filters.from}
-                    max={filters.to || undefined}
-                    onChange={(event) => onChange({ from: event.target.value })}
-                  />
-                </label>
-                <label className="grid gap-1 text-xs text-slate-500 dark:text-zinc-400">
-                  Até
-                  <input
-                    type="date"
-                    className={DATE_INPUT_CLASS}
-                    value={filters.to}
-                    min={filters.from || undefined}
-                    onChange={(event) => onChange({ to: event.target.value })}
-                  />
-                </label>
-              </div>
+              <CustomRange from={filters.from} to={filters.to} onChange={onChange} />
               <button
                 type="button"
                 onClick={() => {

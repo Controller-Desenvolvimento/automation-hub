@@ -23,7 +23,7 @@ import {
   type PeriodPreset,
   type Scope,
 } from '../lib/robot-health';
-import { cn } from '../lib/utils';
+import { cn, isCompleteDay } from '../lib/utils';
 
 const selectClass =
   'h-10 rounded-xl border border-slate-300 bg-white px-3 text-sm text-slate-900 outline-none transition focus:border-sky-500 focus:ring-4 focus:ring-sky-500/15 dark:border-[#2b2b31] dark:bg-[#0f0f10] dark:text-zinc-100';
@@ -57,6 +57,27 @@ function CategoryGuide({ info }: { info: CategoryInfo[] }) {
       })}
       <div style={{ color: 'var(--hc-ink2)' }}>Uma barra por período. O que está em "Hub" não pesa na taxa de sucesso do robô.</div>
     </div>
+  );
+}
+
+/** Campo de data que só vira filtro quando a data está completa (digitando, o campo passa por valores pela metade ou vazios). */
+function DraftDate({ label, aria, value, onCommit }: { label: string; aria: string; value: string; onCommit: (value: string) => void }) {
+  const [draft, setDraft] = useState(value);
+  useEffect(() => setDraft(value), [value]);
+  return (
+    <label className="flex items-center gap-2 text-sm text-slate-600 dark:text-zinc-300">
+      {label}{' '}
+      <Input
+        type="date"
+        aria-label={aria}
+        className="w-auto"
+        value={draft}
+        onChange={(e) => {
+          setDraft(e.target.value);
+          if (isCompleteDay(e.target.value)) onCommit(e.target.value);
+        }}
+      />
+    </label>
   );
 }
 
@@ -149,12 +170,8 @@ export function RobotHealthPage() {
         </select>
         {preset === 'custom' ? (
           <>
-            <label className="flex items-center gap-2 text-sm text-slate-600 dark:text-zinc-300">
-              De <Input type="date" aria-label="Data inicial" className="w-auto" value={from} max={to || undefined} onChange={(e) => setParam({ de: e.target.value })} />
-            </label>
-            <label className="flex items-center gap-2 text-sm text-slate-600 dark:text-zinc-300">
-              Até <Input type="date" aria-label="Data final" className="w-auto" value={to} min={from || undefined} onChange={(e) => setParam({ ate: e.target.value })} />
-            </label>
+            <DraftDate label="De" aria="Data inicial" value={from} onCommit={(v) => setParam({ de: v })} />
+            <DraftDate label="Até" aria="Data final" value={to} onCommit={(v) => setParam({ ate: v })} />
           </>
         ) : null}
         <div role="group" aria-label="Origem das execuções" className="inline-flex overflow-hidden rounded-xl border border-slate-300 dark:border-[#2b2b31]">
