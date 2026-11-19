@@ -198,3 +198,17 @@ test('etapa 3: capacidade do servidor, ciclos dos agendamentos e insights na res
   assert.deepEqual(manual.capacity.hours.map((h: any) => h.peak), r.capacity.hours.map((h: any) => h.peak));
   assert.ok(manual.cycles.find((x: any) => x.taskId === 'h-task1'));
 });
+
+test('duração: escolher o robô de cada quadro (duracao=) e quadro vazio quando o robô não tem dados', { skip }, async () => {
+  const padrao = await health.overview(U.adm, {});
+  assert.equal(padrao.durationCustom, false);
+  assert.ok(padrao.durationOptions.length >= 1 && padrao.durationOptions.every((o: any) => o.name && o.executions >= 3));
+  assert.deepEqual(padrao.durationSlots.map((s: any) => s.robotId), padrao.durations.map((d: any) => d.robotId));
+
+  const escolhido = padrao.durationOptions[padrao.durationOptions.length - 1].robotId;
+  const r = await health.overview(U.adm, { duracao: `,${escolhido},h-ext,` });
+  assert.equal(r.durationCustom, true);
+  assert.deepEqual(r.durationSlots.map((s: any) => s.state), ['empty', 'ok', 'unavailable', 'empty']);
+  assert.deepEqual(r.durations.map((d: any) => d.robotId), [escolhido], 'só o robô escolhido tem gráfico');
+  assert.equal(r.durationSlots[2].name, 'Robô Externo', 'o quadro indisponível diz de quem era');
+});

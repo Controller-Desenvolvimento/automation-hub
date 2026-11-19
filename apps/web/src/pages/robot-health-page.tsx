@@ -69,6 +69,7 @@ export function RobotHealthPage() {
   const from = params.get('de') ?? '';
   const to = params.get('ate') ?? '';
   const granParam = params.get('agrupar');
+  const duracao = params.get('duracao') ?? '';
   const view: 'graficos' | 'insights' = params.get('exibir') === 'insights' ? 'insights' : 'graficos';
   const gran: Granularity | null = granParam === 'day' || granParam === 'week' || granParam === 'month' ? granParam : null;
 
@@ -99,8 +100,9 @@ export function RobotHealthPage() {
       q.set('to', range.to);
     }
     if (gran) q.set('granularity', gran);
+    if (duracao) q.set('duracao', duracao);
     return q.toString();
-  }, [preset, range, scope, gran]);
+  }, [preset, range, scope, gran, duracao]);
 
   useEffect(() => {
     const id = ++requestId.current;
@@ -219,7 +221,22 @@ export function RobotHealthPage() {
           <CatsCard buckets={data.categories.buckets} gran={granularity} onGran={setGran} period={data.period} info={data.categoryInfo} guide={<CategoryGuide info={data.categoryInfo} />} />
 
           <div className="hc-sec" id="hc-duracao">Duração</div>
-          <DurationCard durations={data.durations} gran={granularity} onGran={setGran} period={data.period} />
+          <DurationCard
+            durations={data.durations}
+            slots={data.durationSlots}
+            options={data.durationOptions}
+            custom={data.durationCustom}
+            onPick={(slot, robotId) => {
+              const ids = data.durationSlots.map((sl) => sl.robotId ?? '');
+              while (ids.length < 4) ids.push('');
+              ids[slot] = robotId;
+              setParam({ duracao: ids.join(',') });
+            }}
+            onReset={() => setParam({ duracao: null })}
+            gran={granularity}
+            onGran={setGran}
+            period={data.period}
+          />
 
           <div className="hc-sec" id="hc-servidor">Capacidade do servidor</div>
           <CapacityCard cap={data.capacity} />

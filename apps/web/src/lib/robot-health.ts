@@ -118,7 +118,13 @@ export type HealthOverview = {
   capacity: Capacity;
   cycles: CycleRow[];
   insights: Insight[];
+  durationSlots: DurationSlot[];
+  durationCustom: boolean;
+  durationOptions: Array<{ robotId: string; name: string; executions: number }>;
 };
+
+/** Um dos 4 quadros da duração: um robô, vazio (espera escolha) ou indisponível (o robô escolhido não tem dados neste período/filtro). */
+export type DurationSlot = { robotId: string | null; state: 'ok' | 'empty' | 'unavailable'; name: string | null };
 
 // ---------- etapa 3: capacidade do servidor, ciclos agendados e insights ----------
 

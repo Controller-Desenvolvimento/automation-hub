@@ -304,6 +304,32 @@ export function durationSeries(
   });
 }
 
+// ---------- quadros da duração: quem aparece em cada um ----------
+
+export const DURATION_SLOTS = 4;
+export type DurationSlot = { robotId: string | null; state: 'ok' | 'empty' | 'unavailable' };
+
+/**
+ * Cada quadro do gráfico de duração mostra um robô. Sem escolha (`duracao` ausente) valem os mais usados, na ordem de `options`
+ * (robôs com 3 sucessos ou mais no período e filtro atuais). Com escolha, `duracao=a,,c` guarda a posição de cada quadro:
+ * vazio = o quadro espera uma escolha; robô que deixou de ter dados no período/filtro = "indisponível" (o quadro fica vazio
+ * com aviso, de propósito: a pessoa escolhe outro, o gráfico não volta sozinho ao padrão); robô repetido conta como vazio.
+ */
+export function resolveDurationSlots(param: unknown, options: string[]): { custom: boolean; slots: DurationSlot[] } {
+  const raw = typeof param === 'string' ? param.trim() : '';
+  if (!raw) return { custom: false, slots: options.slice(0, DURATION_SLOTS).map((id) => ({ robotId: id, state: 'ok' as const })) };
+  const parts = raw.split(',').slice(0, DURATION_SLOTS).map((x) => x.trim().slice(0, 64));
+  while (parts.length < DURATION_SLOTS) parts.push('');
+  const valid = new Set(options);
+  const seen = new Set<string>();
+  const slots = parts.map((id): DurationSlot => {
+    if (!id || seen.has(id)) return { robotId: null, state: 'empty' };
+    seen.add(id);
+    return { robotId: id, state: valid.has(id) ? 'ok' : 'unavailable' };
+  });
+  return { custom: true, slots };
+}
+
 // ---------- minigráficos (cartões e tendência por robô) ----------
 
 /** Minigráficos: por dia até 14 dias, por semana até ~3 meses, por mês acima disso (nunca 1 ou 2 pontos, nem centenas). */
