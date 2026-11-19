@@ -585,13 +585,52 @@ test('e-mail para a Inovação: departamento com o nome certo (acento), não o c
     create: { id: 's-leg', name: 'Lia', email: 's-leg@example.invalid', passwordHash: 'x', role: 'employee', departments: ['legalizacao'] },
   });
   await open(leg);
+  await tick(); // o e-mail sai em segundo plano
   assert.equal(emails[0].authorDepartment, 'Legalização');
   emails.length = 0;
   await prisma.departmentConfig.upsert({ where: { slug: 'legalizacao' }, update: { name: 'Legalização e Registro' }, create: { slug: 'legalizacao', name: 'Legalização e Registro' } });
   try {
     await open(leg);
+    await tick();
     assert.equal(emails[0].authorDepartment, 'Legalização e Registro', 'o nome cadastrado do departamento vale mais que o padrão');
   } finally {
     await prisma.departmentConfig.deleteMany({ where: { slug: 'legalizacao' } });
   }
+});
+
+test('sino: mudar a situação do principal avisa quem abriu cada chamado ligado, no próprio chamado (sem duplicar com a resposta)', { skip }, async () => {
+  const a = await open(U.ana, { title: 'Gestta A' });
+  const b = await open(U.bia, { title: 'Gestta B' });
+  const c = await open(U.caio, { title: 'Gestta C' });
+  await support.merge(U.ino, { mainId: a.id, ticketIds: [b.id, c.id] });
+  await prisma.notification.deleteMany({ where: { supportTicketId: { not: null } } });
+
+  await support.update(a.id, U.ino, { status: 'resolved' });
+  const bia = await prisma.notification.findMany({ where: { userId: 's-bia', type: 'support_reply' } });
+  const caio = await prisma.notification.findMany({ where: { userId: 's-caio', type: 'support_reply' } });
+  assert.equal(bia.length, 1);
+  assert.equal(caio.length, 1);
+  assert.equal(bia[0].supportTicketId, b.id, 'o sino da Bia leva ao chamado dela');
+  assert.equal(caio[0].supportTicketId, c.id, 'o do Caio, ao dele');
+  assert.match(bia[0].title, new RegExp(`#${b.number}: Resolvido`));
+  assert.equal((await prisma.notification.count({ where: { userId: 's-ino' } })), 0, 'quem mudou a situação não é avisado');
+  assert.equal(await prisma.notification.count({ where: { userId: 's-ana', supportTicketId: a.id } }), 1, 'quem abriu o principal continua sendo avisado');
+
+  // Abrir o chamado apaga o aviso dele (e só o dele)
+  await support.get(b.id, U.bia);
+  assert.equal((await prisma.notification.findMany({ where: { userId: 's-bia', type: 'support_reply' } }))[0].isRead, true);
+  assert.equal((await prisma.notification.findMany({ where: { userId: 's-caio', type: 'support_reply' } }))[0].isRead, false);
+
+  // Responder com a situação e "enviar também para os ligados": um aviso só por pessoa (o da resposta)
+  await prisma.notification.deleteMany({ where: { supportTicketId: { not: null } } });
+  await support.addMessage(a.id, U.ino, { body: 'Voltei a olhar', status: 'review', alsoLinked: 'true' });
+  assert.equal(await prisma.notification.count({ where: { userId: 's-bia', type: 'support_reply' } }), 1);
+  assert.equal(await prisma.notification.count({ where: { userId: 's-caio', type: 'support_reply' } }), 1);
+
+  // Responder com a situação SEM enviar para os ligados: eles recebem o aviso da situação
+  await prisma.notification.deleteMany({ where: { supportTicketId: { not: null } } });
+  await support.addMessage(a.id, U.ino, { body: 'Só no principal', status: 'waiting', alsoLinked: 'false' });
+  const so = await prisma.notification.findMany({ where: { userId: 's-bia', type: 'support_reply' } });
+  assert.equal(so.length, 1);
+  assert.match(so[0].title, /Aguardando resposta/);
 });
