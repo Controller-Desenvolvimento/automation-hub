@@ -3,6 +3,13 @@
 Mudanças do Automation Hub por data. Este arquivo é **público**: descreve o que mudou no produto, no banco e na
 configuração, sem dados de infraestrutura. O desenho detalhado de cada funcionalidade está no `CLAUDE.md`.
 
+## 2026-11-19 — Suporte: o sino também avisa quem tem chamado ligado
+
+### Alterado
+- Quando a situação do chamado **principal** muda (resolvido, aguardando, reaberto...), quem abriu cada chamado **ligado** a ele agora
+  recebe o aviso também no sino, no próprio chamado (antes só ganhava o número no menu e a bolinha na lista). Se a resposta da
+  Inovação já foi enviada "também para os ligados", só o aviso da resposta chega (sem duplicar). Quem mudou a situação não é avisado.
+
 ## 2026-11-19 — Simulador de ganhos: robôs externos como opção
 
 ### Adicionado
