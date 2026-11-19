@@ -3,6 +3,15 @@
 Mudanças do Automation Hub por data. Este arquivo é **público**: descreve o que mudou no produto, no banco e na
 configuração, sem dados de infraestrutura. O desenho detalhado de cada funcionalidade está no `CLAUDE.md`.
 
+## 2026-11-19 — Simulador: "por mês" passa a usar meses do calendário
+
+### Corrigido
+- Ao levar o período para "1 mês", o simulador dividia os dias do período por um mês médio de 30,4375 dias. Com **outubro inteiro**
+  (31 dias) isso dava 9,7 h para 119 execuções de 5 min, quando o esperado é 9,9 h. Agora a conta é **pelo calendário**: um mês
+  inteiro vale exatamente 1 (outubro, novembro e fevereiro), um pedaço de mês vale a fração dos dias dele (19 dias de novembro =
+  19/30) e vários meses somam (01/10 a 30/11 = 2). Vale para cada robô (um robô novo conta desde o 1º dia dele), para o relatório
+  hoje/simulado, as pessoas e a faixa. O gráfico de evolução mensal não mudou (já era mês a mês).
+
 ## 2026-11-19 — Correções da auditoria das últimas entregas (simulador e Saúde dos robôs)
 
 ### Corrigido

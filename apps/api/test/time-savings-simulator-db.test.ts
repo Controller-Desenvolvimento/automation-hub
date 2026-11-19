@@ -19,6 +19,21 @@ let reports: any;
 let admin: any;
 const ROBOTS = ['ss-a', 'ss-b', 'ss-ext', 'ss-off'];
 const day = (n: number) => new Date(Date.now() - n * 86400_000);
+// meses do calendário entre dois dias (AAAA-MM-DD), calculados à parte do código do simulador
+function calendarMonths(from: string, to: string): number {
+  let [y, m] = from.split('-').map(Number);
+  const [ly, lm] = to.split('-').map(Number);
+  let total = 0;
+  while (y < ly || (y === ly && m <= lm)) {
+    const inMonth = new Date(Date.UTC(y, m, 0)).getUTCDate();
+    const a = y === Number(from.slice(0, 4)) && m === Number(from.slice(5, 7)) ? Number(from.slice(8, 10)) : 1;
+    const b = y === ly && m === lm ? Number(to.slice(8, 10)) : inMonth;
+    total += (b - a + 1) / inMonth;
+    m += 1;
+    if (m > 12) { m = 1; y += 1; }
+  }
+  return total;
+}
 const iso = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 
 async function wipe() {
@@ -88,7 +103,7 @@ test('simular por execução: só robôs sem tempo, projeção mensal, faixa e f
   assert.equal(a.source, 'informado');
   assert.equal(a.executions, 10, 'a execução de 40 dias atrás fica fora do período');
   assert.equal(a.perExecution, 300);
-  const expected = (300 * 10) / (a.days / 30.4375);
+  const expected = (300 * 10) / calendarMonths(range().from, range().to);
   assert.ok(Math.abs(a.simulatedMonth - expected) < 1e-6, `${a.simulatedMonth} vs ${expected}`);
   assert.ok(r.extraMonth >= a.simulatedMonth - 1e-6);
   assert.ok(Math.abs(r.extraYear - r.extraMonth * 12) < 1e-6);
@@ -113,7 +128,7 @@ test('simular por item: usa a métrica que o robô mais informa e estima as exec
   // 3 execuções informaram (10 + 20 + 30 = 60 itens); as outras 7 usam a média (20): 140 itens → 200 itens no total
   assert.equal(a.estimated, 7);
   assert.equal(a.avgItems, 20);
-  const expected = (60 * 200) / (a.days / 30.4375);
+  const expected = (60 * 200) / calendarMonths(range().from, range().to);
   assert.ok(Math.abs(a.simulatedMonth - expected) < 1e-6, `${a.simulatedMonth} vs ${expected}`);
 });
 
@@ -153,7 +168,7 @@ test('período que termina no passado: os dias e a projeção usam o "Até", nã
   assert.equal(r.days, 20, '29 a 10 dias atrás, contando os dois');
   assert.equal(a.days, 20);
   assert.equal(a.executions, 6, 'só as execuções até o "Até" (10, 12, 14, 16, 18 e 20 dias atrás)');
-  const expected = (300 * 6) / (20 / 30.4375);
+  const expected = (300 * 6) / calendarMonths(iso(day(29)), iso(day(10)));
   assert.ok(Math.abs(a.simulatedMonth - expected) < 1e-6, `${a.simulatedMonth} vs ${expected}`);
-  assert.ok(Math.abs(r.months - 20 / 30.4375) < 1e-9);
+  assert.ok(Math.abs(r.months - calendarMonths(iso(day(29)), iso(day(10)))) < 1e-9);
 });
