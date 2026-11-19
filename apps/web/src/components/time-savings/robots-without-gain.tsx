@@ -5,6 +5,7 @@ import { api } from '../../lib/api';
 import {
   DEFAULT_METRIC_KEY,
   TIME_UNITS,
+  executionModeKey,
   normalizeMetricKey,
   previewGain,
   toSeconds,
@@ -28,11 +29,17 @@ const nf0 = (n: number) => n.toLocaleString('pt-BR', { maximumFractionDigits: 0 
 function ConfigureDialog({ robot, onClose, onSaved }: { robot: RobotWithoutGain; onClose: () => void; onSaved: (message: string) => void | Promise<void> }) {
   const hasMetrics = robot.metrics.length > 0;
   const hasTime = robot.manualSecondsPerUnit > 0;
-  const [time, setTime] = useState(hasTime ? String(Math.round((robot.manualSecondsPerUnit / 60) * 100) / 100).replace('.', ',') : '');
-  const [unit, setUnit] = useState<TimeUnit>('minutes');
+  // quem já tem tempo abre com ele na unidade que não perde precisão (horas, minutos ou segundos)
+  const seg = robot.manualSecondsPerUnit;
+  const initialUnit: TimeUnit = hasTime && seg % 3600 === 0 ? 'hours' : hasTime && seg % 60 === 0 ? 'minutes' : hasTime ? 'seconds' : 'minutes';
+  const initialFactor = TIME_UNITS.find((u) => u.value === initialUnit)?.factor ?? 60;
+  const [time, setTime] = useState(hasTime ? String(seg / initialFactor).replace('.', ',') : '');
+  const [unit, setUnit] = useState<TimeUnit>(initialUnit);
   const [label, setLabel] = useState(hasTime || (robot.unitLabel && robot.unitLabel !== 'item') ? robot.unitLabel : '');
-  const [mode, setMode] = useState<'execution' | 'metric'>(hasMetrics ? 'metric' : 'execution');
-  const [metricKey, setMetricKey] = useState(hasMetrics ? robot.metrics[0].key : '');
+  // quem já tem tempo mantém a forma de contar que tem hoje (a métrica configurada), em vez de trocar pela mais informada
+  const keepCurrentMetric = hasTime && (robot.unitMetricKey !== DEFAULT_METRIC_KEY || robot.metrics.some((m) => m.key === robot.unitMetricKey));
+  const [mode, setMode] = useState<'execution' | 'metric'>(keepCurrentMetric || (!hasTime && hasMetrics) ? 'metric' : 'execution');
+  const [metricKey, setMetricKey] = useState(keepCurrentMetric ? robot.unitMetricKey : hasMetrics ? robot.metrics[0].key : '');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const firstField = useRef<HTMLInputElement>(null);
@@ -48,7 +55,7 @@ function ConfigureDialog({ robot, onClose, onSaved }: { robot: RobotWithoutGain;
 
   const seconds = toSeconds(time, unit);
   const timeInvalid = time.trim() !== '' && seconds === null;
-  const keyToSave = mode === 'execution' ? DEFAULT_METRIC_KEY : normalizeMetricKey(metricKey) || DEFAULT_METRIC_KEY;
+  const keyToSave = mode === 'execution' ? executionModeKey(robot) : normalizeMetricKey(metricKey) || DEFAULT_METRIC_KEY;
   const itemLabel = label.trim() || (mode === 'metric' ? 'item' : 'execução');
   const preview = useMemo(() => (seconds ? previewGain(robot, seconds, mode, keyToSave) : null), [robot, seconds, mode, keyToSave]);
   const canSave = seconds !== null && label.trim().length > 0 && label.trim().length <= 40 && !busy;
@@ -239,6 +246,7 @@ export function RobotsWithoutGain({
   onSub,
   isAdmin,
   reportSavedSeconds,
+  reportFiltered,
 }: {
   from: string;
   to: string;
@@ -252,6 +260,8 @@ export function RobotsWithoutGain({
   isAdmin: boolean;
   /** Tempo ganho do relatório no período (para o terceiro indicador). */
   reportSavedSeconds: number | null;
+  /** O relatório da página está com filtros de automação, departamento, pessoas ou origem (o total não é o do Hub inteiro). */
+  reportFiltered: boolean;
 }) {
   const { hub } = useHub();
   const [data, setData] = useState<RobotsWithoutGainResponse | null>(null);
@@ -345,7 +355,7 @@ export function RobotsWithoutGain({
             {reportSavedSeconds === null ? '—' : hrs(reportSavedSeconds)}
             <small>h</small>
           </div>
-          <div className="s">total do relatório hoje</div>
+          <div className="s">{reportFiltered ? 'total do relatório com os filtros atuais' : 'total do relatório hoje'}</div>
         </div>
       </div>
 
@@ -380,7 +390,7 @@ export function RobotsWithoutGain({
           <div className="sechead">
             <div>
               <h2>Robôs sem tempo manual</h2>
-              <p>Configure aqui mesmo: o valor passa a valer para as próximas execuções. As que já aconteceram continuam como estão.</p>
+              <p>Configure aqui mesmo: o valor passa a valer para as próximas execuções. As que já aconteceram continuam como estão. Esta aba segue só o período escolhido lá em cima: os filtros de automação, departamento, pessoas e origem não se aplicam a ela.</p>
             </div>
             <span className="seg" role="group" aria-label="Quais robôs mostrar">
               <button type="button" aria-pressed={show === 'sem'} onClick={() => setShow('sem')}>

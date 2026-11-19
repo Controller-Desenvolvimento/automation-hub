@@ -224,3 +224,13 @@ test('insights: todos trazem ícone; sensibilidade usa a unidade escolhida; "%" 
   const warn = simInsights(simulate(input([robot('a', 5)], { from: day(4), times: { a: 8 * 3600 } })), { base: 'exec', workdayHours: 7 }).filter((i) => i.kind === 'warn');
   assert.ok(warn.length && warn.every((i) => i.icon === '!'));
 });
+
+test('insights: "pessoa" no singular de 0,1 a 1,9 e "pessoas" em 0 e a partir de 2 (como nos indicadores da tela)', () => {
+  const base = simulate(input([robot('a', 1)], { times: { a: 300 } }));
+  const text = (people: number) => simInsights({ ...base, extra: people * 147 * 3600, reportMonth: 0 }, { base: 'exec', workdayHours: 7 }).find((i) => i.icon === '👥')?.text ?? '';
+  // 7 h por dia × 21 dias úteis = 147 h por pessoa
+  assert.match(text(0.3), /equivale a 0,3 pessoa trabalhando/, '0,3 pessoa (singular)');
+  assert.match(text(1.8), /equivale a 1,8 pessoa trabalhando/, '1,8 pessoa (singular)');
+  assert.match(text(2.4), /equivale a 2,4 pessoas trabalhando/, '2,4 pessoas (plural)');
+  assert.match(text(12), /equivale a 12 pessoas trabalhando/, '12 pessoas (plural)');
+});

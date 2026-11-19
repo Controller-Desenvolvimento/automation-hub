@@ -278,7 +278,7 @@ export class ReportsService {
     const periodFrom = from ? dayStart(from).getTime() : null;
     const periodTo = to ? dayEnd(to).getTime() : Infinity;
     // Carrega do mais antigo entre o período e a janela dos 12 meses; o resto é separado em memória.
-    const loadFrom = periodFrom === null ? null : Math.min(periodFrom, windowStart);
+    const loadFrom = periodFrom === null ? null : input.light === true ? periodFrom : Math.min(periodFrom, windowStart);
     const success: Prisma.ExecutionWhereInput = {
       robotId: { in: ids },
       status: ExecutionStatus.success,
@@ -348,7 +348,7 @@ export class ReportsService {
         };
       });
     const simRobots = buildRobots((t) => (periodFrom === null || t >= periodFrom) && t <= periodTo);
-    const windowRobots = buildRobots((t) => t >= windowStart);
+    const windowRobots = light ? [] : buildRobots((t) => t >= windowStart);
 
     const simInput: SimInput = {
       robots: simRobots,
