@@ -147,7 +147,16 @@ test('etapa 2: evolução, duração dos robôs mais usados e mapa robô × dia 
   assert.equal(sumSuccess, r.summary.current.success, 'a evolução soma o mesmo que o indicador');
   assert.equal(r.evolution.reduce((s: number, b: any) => s + b.errors, 0), r.summary.current.errors);
   assert.ok(r.durations.length >= 1 && r.durations.length <= 4);
-  assert.ok(r.durations.every((d: any) => d.points.length === 30 && d.name && d.executions >= 1));
+  assert.ok(r.durations.every((d: any) => d.points.length === 30 && d.name && d.executions >= 3 && 't2Minutes' in d), 'só robôs com 3 sucessos ou mais');
+  assert.equal(r.daily.length, 30, 'execuções por dia: um balde por dia');
+  assert.equal(r.mini.granularity, 'week');
+  assert.ok(r.mini.buckets.length >= 4);
+  const robotA = r.robots.find((x: any) => x.robotId === 'h-robo');
+  assert.equal(robotA.trend.length, r.mini.buckets.length, 'a tendência de cada robô acompanha os baldes do minigráfico');
+  assert.ok(robotA.lastSuccessAt);
+  assert.ok(r.summary.current.medianDurationSeconds > 0 && r.summary.current.p95DurationSeconds >= r.summary.current.medianDurationSeconds);
+  assert.ok(r.causes.every((c: any) => Array.isArray(c.robotList) && c.robotList.every((x: any) => x.name)), 'causas trazem os robôs, com nome');
+  assert.deepEqual(r.categoryInfo.map((c: any) => c.key), ['entrada', 'externo', 'hub', 'config', 'robo', 'sem']);
   assert.equal(r.heatmap.granularity, 'day');
   assert.equal(r.heatmap.buckets.length, 30);
   const a = r.heatmap.rows.find((x: any) => x.robotId === 'h-robo');

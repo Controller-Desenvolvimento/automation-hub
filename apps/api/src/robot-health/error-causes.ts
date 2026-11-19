@@ -4,7 +4,8 @@
 /** De quem é a falha: define quem precisa agir e se o erro pesa contra o robô. */
 export type ErrorCategory = 'entrada' | 'externo' | 'hub' | 'robo' | 'config' | 'sem';
 
-export const ERROR_CATEGORIES: readonly ErrorCategory[] = ['entrada', 'externo', 'hub', 'robo', 'config', 'sem'];
+// Ordem do protótipo aprovado (legenda, gráfico e tabelas): Entrada, Sistema externo, Hub, Configuração, Robô, Sem causa.
+export const ERROR_CATEGORIES: readonly ErrorCategory[] = ['entrada', 'externo', 'hub', 'config', 'robo', 'sem'];
 
 export const CATEGORY_INFO: Record<ErrorCategory, { label: string; summary: string; example: string; who: string; countsAgainstRobot: boolean }> = {
   entrada: {
