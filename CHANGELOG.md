@@ -3,6 +3,14 @@
 Mudanças do Automation Hub por data. Este arquivo é **público**: descreve o que mudou no produto, no banco e na
 configuração, sem dados de infraestrutura. O desenho detalhado de cada funcionalidade está no `CLAUDE.md`.
 
+## 2026-11-19 — Simulador: lista de robôs recolhida no "igual para todos"
+
+### Mudado (só frontend; só administradores e Inovação)
+- No simulador, com **"Igual para todos"** a lista de robôs agora começa **recolhida**: aparece só "N robôs incluídos na simulação" (e quantos
+  ficaram fora da conta) e o botão **"Ver os N robôs e tirar algum da conta"**, que abre a tabela (e "Recolher a lista de robôs" fecha).
+  Quem foi tirado continua fora da conta mesmo com a lista recolhida. Com **"Por robô"** (e com "simular novos tempos") a lista
+  fica sempre aberta, porque tem os campos de tempo de cada robô.
+
 ## 2026-11-19 — "Robôs sem ganho" e simulador: visual igual ao do protótipo HTML aprovado
 
 ### Mudado (só administradores e Inovação; sem mudança no banco; a simulação continua não gravando nada)
