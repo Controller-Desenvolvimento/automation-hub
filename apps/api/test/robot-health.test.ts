@@ -211,6 +211,13 @@ test('duração por robô: mediana e p95 só de sucessos, e só com 3 amostras o
   assert.equal(series[1].points[1].med, 120);
 });
 
+test('totais: erros sem causa e total de erros (com os do Hub)', () => {
+  const t = summarize([err('Comando finalizado com codigo 1'), err('Comando finalizado com codigo 1'), err("KeyError: 'x'"), err('Execução interrompida: o servidor do Hub foi reiniciado'), exec()]);
+  assert.equal(t.errorsAll, 4);
+  assert.equal(t.semErrors, 2);
+  assert.equal(t.errors, 3, 'o do Hub não conta contra o robô');
+});
+
 test('totais: mediana, p95 e amostras de duração', () => {
   const t = summarize([1, 2, 3, 4].map((m) => exec({ finishedAt: new Date(at(10).getTime() + mins(m)) })));
   assert.equal(t.medianDurationSeconds, 150);

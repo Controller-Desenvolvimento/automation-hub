@@ -52,6 +52,9 @@ export type Totals = {
   p95DurationSeconds: number | null;
   /** Quantas execuções com sucesso entraram na duração. */
   durationSamples: number;
+  /** Todos os erros (inclui os do Hub) e quantos deles ficaram "sem causa" (o robô não disse o motivo). */
+  errorsAll: number;
+  semErrors: number;
 };
 
 export function situationOf(concluded: number, errors: number): Situation {
@@ -80,6 +83,7 @@ export function summarize(list: HealthExecution[], classify = createClassifier()
   let success = 0;
   let errors = 0;
   let hubErrors = 0;
+  let semErrors = 0;
   let canceled = 0;
   let durationSum = 0;
   let durationCount = 0;
@@ -96,7 +100,9 @@ export function summarize(list: HealthExecution[], classify = createClassifier()
         }
       }
     } else if (e.status === 'error') {
-      if (classify(e.errorMessage).category === 'hub') hubErrors += 1;
+      const category = classify(e.errorMessage).category;
+      if (category === 'sem') semErrors += 1;
+      if (category === 'hub') hubErrors += 1;
       else errors += 1;
     } else {
       canceled += 1;
@@ -116,6 +122,8 @@ export function summarize(list: HealthExecution[], classify = createClassifier()
     medianDurationSeconds: quantile(durations.sort((a, b) => a - b), 0.5),
     p95DurationSeconds: quantile(durations, 0.95),
     durationSamples: durationCount,
+    errorsAll: errors + hubErrors,
+    semErrors,
   };
 }
 
@@ -307,6 +315,8 @@ export type MiniBucket = {
   successRate: number | null;
   medianDurationSeconds: number | null;
   errors: number;
+  /** Parte dos erros que ficou "sem causa" (null se não houve erro). */
+  semShare: number | null;
 };
 
 export function miniSeries(list: HealthExecution[], from: Date, to: Date, granularity: Granularity, classify = createClassifier()): MiniBucket[] {
@@ -329,6 +339,7 @@ export function miniSeries(list: HealthExecution[], from: Date, to: Date, granul
       successRate: t.concluded >= 3 ? t.successRate : null,
       medianDurationSeconds: t.medianDurationSeconds,
       errors: t.errors,
+      semShare: t.errorsAll ? t.semErrors / t.errorsAll : null,
     };
   });
 }
