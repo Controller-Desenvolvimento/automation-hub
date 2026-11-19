@@ -162,3 +162,20 @@ html.dark ::-webkit-scrollbar-thumb:hover {
   --hc-axis: #a1a1aa;
   --hc-surface: #111113;
 }
+
+/* Etapa 2 da Saúde dos robôs: resultado (sucesso / erro / fora da conta) usa a paleta de STATUS da skill de dataviz
+   (fixa nos dois temas; sempre com legenda, ícone ou texto, nunca só a cor). O cinza é "fora da conta": cancelada e erro do Hub. */
+:root {
+  --hc-ok: #0ca30c;
+  --hc-warn: #fab219;
+  --hc-crit: #d03b3b;
+  --hc-out: #a3a29c;
+  --hc-ink: #0b0b0b;
+  --hc-ink-2: #52514e;
+}
+
+.dark {
+  --hc-out: #6b6b67;
+  --hc-ink: #f0efec;
+  --hc-ink-2: #c3c2b7;
+}

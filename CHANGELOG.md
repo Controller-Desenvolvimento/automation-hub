@@ -3,6 +3,21 @@
 Mudanças do Automation Hub por data. Este arquivo é **público**: descreve o que mudou no produto, no banco e na
 configuração, sem dados de infraestrutura. O desenho detalhado de cada funcionalidade está no `CLAUDE.md`.
 
+## 2026-11-19 — Saúde dos robôs, etapa 2: evolução, duração e mapa robô × dia
+
+### Novo (só administradores; só leitura; sem mudança no banco)
+- **Resultado das execuções** (colunas empilhadas: sucesso, "fora da conta" = canceladas e erros do Hub, erro do robô) e
+  **Taxa de sucesso** (linha por dia, semana ou mês, com a faixa da zona crítica, 40% de erro ou mais; o período sem
+  execução concluída quebra a linha em vez de virar 0%; ponto vazado = menos de 5 concluídas). Ambos com detalhe ao passar o
+  mouse ou pelo teclado e "Ver como tabela".
+- **Duração dos robôs mais usados**: um gráfico pequeno por robô (os 4 com mais execuções), só execuções com sucesso, todos
+  na mesma cor, com a média do período e o último ponto em destaque.
+- **Resultado por robô, dia a dia** (mapa): uma linha por robô e uma célula por dia (semana acima de 62 dias, mês acima de
+  180). Verde = só sucessos; amarelo com ! = alguns erros; vermelho com × = 40% ou mais de erro; cinza = só canceladas ou erros do Hub;
+  vazio = não rodou. Os robôs com mais erros ficam no topo. Passe o mouse ou use as setas do teclado; há "Ver como tabela".
+- O controle **Agrupar por (Dia, Semana, Mês)** passou para a barra de filtros e vale para todos os gráficos de evolução.
+- Falta a etapa 3 (capacidade do servidor e horários de pico, ciclos agendados e Insights).
+
 ## 2026-11-19 — Nova aba "Saúde dos robôs" (etapa 1, só administradores)
 
 ### Novo
