@@ -520,3 +520,15 @@ test('administrador reabre um chamado encerrado: pelo status e pelo Enviar com s
   assert.ok(status.every((m: any) => m.author?.name === 'Davi'), 'cada linha traz quem mudou o status');
 });
 
+test('confirmar o encerramento registra "Sim, obrigado(a)." (resolvido) ou "Sim, concordo." (não é problema)', { skip }, async () => {
+  const a = await open(U.ana);
+  await support.update(a.id, U.ino, { status: 'resolved' });
+  await support.confirm(a.id, U.ana);
+  const b = await open(U.bia);
+  await support.update(b.id, U.ino, { status: 'not_issue' });
+  await support.confirm(b.id, U.bia);
+  const last = async (id: string, who: any) => (await support.get(id, who)).messages.filter((m: any) => m.kind === 'message').at(-1).body;
+  assert.equal(await last(a.id, U.ana), 'Sim, obrigado(a).');
+  assert.equal(await last(b.id, U.bia), 'Sim, concordo.');
+});
+

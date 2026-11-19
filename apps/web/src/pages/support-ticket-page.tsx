@@ -201,6 +201,56 @@ export function SupportTicketPage() {
     }
   }
 
+  const replyCard = showReplyBox ? (
+    <Card className="rounded-3xl">
+      <CardContent className="grid gap-3">
+        <label className="text-sm font-medium text-slate-700 dark:text-zinc-200" htmlFor="reply">
+          {reopening ? 'Por que está reabrindo o chamado?' : internal ? 'Nota interna (só a Inovação vê)' : 'Responder'}
+        </label>
+        <Textarea
+          id="reply"
+          autoFocus={reopening}
+          value={body}
+          maxLength={5000}
+          className={cn('min-h-28', internal && 'border-amber-300 bg-amber-50 dark:border-amber-500/40 dark:bg-amber-950/20')}
+          placeholder={reopening ? 'Conte o que ainda acontece. Dica: cole um print com Ctrl+V.' : ticket.status === 'waiting' && !isAdmin ? 'A Inovação está esperando a sua resposta…' : 'Escreva aqui. Dica: cole um print com Ctrl+V.'}
+          onChange={(e) => setBody(e.target.value)}
+          onPaste={att.onPaste}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) void send();
+          }}
+        />
+        <AttachmentBar att={att} compact />
+        {isAdmin ? (
+          <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-sm">
+            <label className="inline-flex items-center gap-2">
+              <input type="checkbox" className="accent-amber-600" checked={internal} onChange={(e) => setInternal(e.target.checked)} />
+              Nota interna
+            </label>
+            {!internal && linkedCount > 0 ? (
+              <label className="inline-flex items-center gap-2">
+                <input type="checkbox" className="accent-sky-600" checked={alsoLinked} onChange={(e) => setAlsoLinked(e.target.checked)} />
+                Enviar também para os {linkedCount} chamados ligados
+              </label>
+            ) : null}
+          </div>
+        ) : null}
+        <div className="flex flex-wrap items-center gap-3">
+          <Button onClick={() => void send()} disabled={sending}>
+            <Send className="mr-2 h-4 w-4" />
+            {sending ? 'Enviando...' : reopening ? 'Confirmar reabertura' : internal ? 'Salvar nota' : 'Enviar'}
+          </Button>
+          {reopening ? (
+            <Button variant="outline" disabled={sending} onClick={() => { setReopening(false); setBody(''); att.clear(); }}>
+              Cancelar
+            </Button>
+          ) : null}
+          <span className="text-xs text-slate-500 dark:text-zinc-400">Ctrl+Enter também envia.</span>
+        </div>
+      </CardContent>
+    </Card>
+  ) : null;
+
   return (
     <div className="space-y-6">
       <Link to="/support" className="inline-flex items-center gap-2 text-sm text-slate-500 transition hover:text-slate-900 dark:text-zinc-400 dark:hover:text-white">
@@ -258,7 +308,7 @@ export function SupportTicketPage() {
             <>
               <span className="font-medium">{closedSummary(closing, ticket.status, ticket.urgency, 'author')}. {ticket.status === 'resolved' ? 'Resolveu para você?' : 'Você concorda?'}</span>
               <Button size="sm" disabled={busy} onClick={() => void confirmResolved()}>
-                {ticket.status === 'resolved' ? 'Sim, obrigado' : 'Sim, concordo'}
+                {ticket.status === 'resolved' ? 'Sim, obrigado(a)' : 'Sim, concordo'}
               </Button>
               {!reopening ? <Button size="sm" variant="outline" disabled={busy} onClick={() => setReopening(true)}>Ainda acontece (reabrir)</Button> : null}
             </>
@@ -266,6 +316,7 @@ export function SupportTicketPage() {
         </div>
       ) : null}
       {!isAdmin && events.length > 1 ? <StatusHistory events={events} viewer="author" /> : null}
+      {!isAdmin && closed ? replyCard : null}
 
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_320px]">
         <div className="space-y-4">
@@ -278,54 +329,7 @@ export function SupportTicketPage() {
             </CardContent>
           </Card>
 
-          {showReplyBox ? (
-          <Card className="rounded-3xl">
-            <CardContent className="grid gap-3">
-              <label className="text-sm font-medium text-slate-700 dark:text-zinc-200" htmlFor="reply">
-                {reopening ? 'Por que está reabrindo o chamado?' : internal ? 'Nota interna (só a Inovação vê)' : 'Responder'}
-              </label>
-              <Textarea
-                id="reply"
-                value={body}
-                maxLength={5000}
-                className={cn('min-h-28', internal && 'border-amber-300 bg-amber-50 dark:border-amber-500/40 dark:bg-amber-950/20')}
-                placeholder={reopening ? 'Conte o que ainda acontece. Dica: cole um print com Ctrl+V.' : ticket.status === 'waiting' && !isAdmin ? 'A Inovação está esperando a sua resposta…' : 'Escreva aqui. Dica: cole um print com Ctrl+V.'}
-                onChange={(e) => setBody(e.target.value)}
-                onPaste={att.onPaste}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) void send();
-                }}
-              />
-              <AttachmentBar att={att} compact />
-              {isAdmin ? (
-                <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-sm">
-                  <label className="inline-flex items-center gap-2">
-                    <input type="checkbox" className="accent-amber-600" checked={internal} onChange={(e) => setInternal(e.target.checked)} />
-                    Nota interna
-                  </label>
-                  {!internal && linkedCount > 0 ? (
-                    <label className="inline-flex items-center gap-2">
-                      <input type="checkbox" className="accent-sky-600" checked={alsoLinked} onChange={(e) => setAlsoLinked(e.target.checked)} />
-                      Enviar também para os {linkedCount} chamados ligados
-                    </label>
-                  ) : null}
-                </div>
-              ) : null}
-              <div className="flex flex-wrap items-center gap-3">
-                <Button onClick={() => void send()} disabled={sending}>
-                  <Send className="mr-2 h-4 w-4" />
-                  {sending ? 'Enviando...' : reopening ? 'Confirmar reabertura' : internal ? 'Salvar nota' : 'Enviar'}
-                </Button>
-                {reopening ? (
-                  <Button variant="outline" disabled={sending} onClick={() => { setReopening(false); setBody(''); att.clear(); }}>
-                    Cancelar
-                  </Button>
-                ) : null}
-                <span className="text-xs text-slate-500 dark:text-zinc-400">Ctrl+Enter também envia.</span>
-              </div>
-            </CardContent>
-          </Card>
-          ) : null}
+          {!isAdmin && closed ? null : replyCard}
         </div>
 
         <aside className="space-y-4">
