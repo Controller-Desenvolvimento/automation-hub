@@ -106,6 +106,8 @@ export function GainSimulator({
   const [scenarios, setScenarios] = useState<Scenario[]>([]);
   const [confirming, setConfirming] = useState(false);
   const [applying, setApplying] = useState(false);
+  // "Igual para todos": a lista de robôs começa recolhida (dá para abrir para ver e tirar algum da conta)
+  const [expanded, setExpanded] = useState(false);
   const resultRef = useRef<HTMLDivElement>(null);
 
   const without = useMemo(() => hubRobots.filter((r) => !r.manualSecondsPerUnit), [hubRobots]);
@@ -261,6 +263,9 @@ export function GainSimulator({
   }
 
   const showEditable = mode === 'robo' || (scope === 'todos' && newTimes);
+  // com campos de tempo por robô a lista precisa estar à vista; no "igual para todos" ela pode ficar recolhida
+  const listOpen = showEditable || expanded;
+  const includedCount = rows.filter((r) => !excluded.has(r.robotId)).length;
   const modeHeader = showEditable ? 'Tempo estimado' : 'Tempo usado';
 
   return (
@@ -339,8 +344,19 @@ export function GainSimulator({
         {rows.length === 0 && preview ? (
           <div className="empty">Todos os robôs ativos do Hub já têm tempo manual. Escolha "Somar com os que já têm ganho" para simular novos tempos para eles.</div>
         ) : null}
-        {rows.length > 0 ? (
-          <div className="tbl-wrap">
+        {rows.length > 0 && !showEditable ? (
+          <div className="listbar" style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '8px 14px', margin: '4px 0 10px' }}>
+            <span className="ro" style={{ whiteSpace: 'normal' }}>
+              {pl(includedCount, 'robô incluído', 'robôs incluídos')} na simulação
+              {excluded.size ? ` · ${pl(excluded.size, 'fora da conta', 'fora da conta')}` : ''}
+            </span>
+            <button type="button" className="btn" aria-expanded={expanded} aria-controls="sim-robots" onClick={() => setExpanded((v) => !v)}>
+              {expanded ? 'Recolher a lista de robôs' : `Ver os ${nf(rows.length)} robôs e tirar algum da conta`}
+            </button>
+          </div>
+        ) : null}
+        {rows.length > 0 && listOpen ? (
+          <div className="tbl-wrap" id="sim-robots">
             <table className="sim stack">
               <thead>
                 <tr>
