@@ -3,6 +3,12 @@
 Mudanças do Automation Hub por data. Este arquivo é **público**: descreve o que mudou no produto, no banco e na
 configuração, sem dados de infraestrutura. O desenho detalhado de cada funcionalidade está no `CLAUDE.md`.
 
+## 2026-11-19 — Suporte: "Histórico da situação" só abre ao clicar no texto
+
+### Corrigido
+- A linha inteira do "Histórico da situação" expandia/recolhia o histórico, inclusive o espaço vazio à direita. Agora só o texto
+  (com o ícone) é clicável. Só frontend.
+
 ## 2026-11-19 — Suporte: reabrir chamado visível e "Sim, obrigado(a)"
 
 ### Corrigido
