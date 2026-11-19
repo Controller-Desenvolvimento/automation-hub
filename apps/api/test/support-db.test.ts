@@ -585,11 +585,13 @@ test('e-mail para a Inovação: departamento com o nome certo (acento), não o c
     create: { id: 's-leg', name: 'Lia', email: 's-leg@example.invalid', passwordHash: 'x', role: 'employee', departments: ['legalizacao'] },
   });
   await open(leg);
+  await tick(); // o e-mail sai em segundo plano
   assert.equal(emails[0].authorDepartment, 'Legalização');
   emails.length = 0;
   await prisma.departmentConfig.upsert({ where: { slug: 'legalizacao' }, update: { name: 'Legalização e Registro' }, create: { slug: 'legalizacao', name: 'Legalização e Registro' } });
   try {
     await open(leg);
+    await tick();
     assert.equal(emails[0].authorDepartment, 'Legalização e Registro', 'o nome cadastrado do departamento vale mais que o padrão');
   } finally {
     await prisma.departmentConfig.deleteMany({ where: { slug: 'legalizacao' } });
