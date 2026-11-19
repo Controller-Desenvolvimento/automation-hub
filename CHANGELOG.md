@@ -3,6 +3,27 @@
 Mudanças do Automation Hub por data. Este arquivo é **público**: descreve o que mudou no produto, no banco e na
 configuração, sem dados de infraestrutura. O desenho detalhado de cada funcionalidade está no `CLAUDE.md`.
 
+## 2026-11-19 — Nova aba "Saúde dos robôs" (etapa 1, só administradores)
+
+### Novo
+- **Saúde dos robôs** (menu Administração; **só administradores e a Inovação**: os demais não veem o item e a API responde
+  404). Etapa 1 de 3, a partir do protótipo aprovado:
+  - **Indicadores** com comparação com o período anterior de mesmo tamanho: execuções, taxa de sucesso, erros dos robôs e
+    duração média (cada um com um "i" que explica a conta).
+  - **Erros por categoria** (gráfico de barras empilhadas por dia, semana ou mês, com legenda, detalhe ao passar o mouse e
+    "Ver como tabela"). O **"i" explica as 6 categorias**: Entrada, Sistema externo, Hub, Robô, Configuração e Sem causa
+    (significado, exemplo e quem age). "Travou: 45 min sem nenhuma saída" conta como **Robô**.
+  - **Principais causas de erro** (cada erro é lido pela mensagem e colocado numa causa conhecida).
+  - **Tabela de robôs**: situação (Crítico a partir de 40% de erro, Atenção a partir de 15%, Saudável, Poucos dados com menos de 5
+    execuções concluídas), taxa de sucesso (com "piorou/melhorou" frente ao período anterior), execuções, erros, duração média,
+    principal causa e último uso; ordenável, com busca e filtro por situação.
+  - Filtros: período (7, 30, 60, 90 dias, este mês, mês passado, todo o histórico ou datas) e origem (todas, manuais,
+    agendadas); ficam na URL.
+- **Regras das contas:** só robôs que rodam no Hub (os externos não entram em nenhuma conta); erros do **Hub** (reinício do
+  servidor) e execuções canceladas **não** entram na taxa de sucesso; duração só de execuções com sucesso.
+- Só leitura: não altera execuções, robôs nem o vigia de 45 minutos. Sem mudança no banco. Etapas 2 e 3 (gráficos de evolução,
+  mapa robô × dia, capacidade do servidor, ciclos agendados e Insights) vêm depois.
+
 ## 2026-11-19 — Suporte: "Histórico da situação" só abre ao clicar no texto
 
 ### Corrigido

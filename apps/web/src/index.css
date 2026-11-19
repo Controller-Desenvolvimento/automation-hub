@@ -136,3 +136,29 @@ html.dark ::-webkit-scrollbar-thumb:hover {
 .bg-grain {
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
 }
+
+/* Gráficos da Saúde dos robôs: as 6 categorias de erro, na ordem fixa da paleta validada (CVD e contraste conferidos
+   com o validador da skill de dataviz nos dois temas). Nunca trocar a ordem nem reaproveitar para outro significado. */
+:root {
+  --hc-entrada: #2a78d6;
+  --hc-externo: #eb6834;
+  --hc-hub: #1baf7a;
+  --hc-robo: #eda100;
+  --hc-config: #e87ba4;
+  --hc-sem: #6250d6;
+  --hc-grid: #e5e7eb;
+  --hc-axis: #64748b;
+  --hc-surface: #ffffff;
+}
+
+.dark {
+  --hc-entrada: #3987e5;
+  --hc-externo: #d95926;
+  --hc-hub: #199e70;
+  --hc-robo: #c98500;
+  --hc-config: #d55181;
+  --hc-sem: #9085e9;
+  --hc-grid: #2b2b31;
+  --hc-axis: #a1a1aa;
+  --hc-surface: #111113;
+}

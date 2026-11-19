@@ -8,6 +8,7 @@ import {
   Download,
   ExternalLink,
   Globe,
+  HeartPulse,
   History,
   LifeBuoy,
   LayoutDashboard,
@@ -161,6 +162,7 @@ export function AppShell() {
             label: 'Administração',
             items: [
               ...(user?.role === 'admin' ? [{ to: '/settings', label: 'Configurações', icon: Settings }, { to: '/docs', label: 'Dev Docs', icon: BookOpen }] : []),
+              { to: '/robot-health', label: 'Saúde dos robôs', icon: HeartPulse },
               { to: '/admin/quadro', label: 'Quadro', icon: CheckCheck },
             ],
           },

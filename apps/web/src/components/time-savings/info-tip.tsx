@@ -9,11 +9,14 @@ export function InfoTip({
   children,
   align = 'start',
   className,
+  wide = false,
 }: {
   label: string;
   children: ReactNode;
   align?: 'start' | 'end';
   className?: string;
+  /** Texto longo (ex.: explicar as 6 categorias): tooltip mais largo. */
+  wide?: boolean;
 }) {
   const id = useId();
 
@@ -32,7 +35,8 @@ export function InfoTip({
         id={id}
         className={cn(
           // `hidden` (e não invisible): tooltips invisíveis ainda ampliam a rolagem horizontal da página.
-          'pointer-events-none absolute top-full z-30 mt-2 hidden w-72 max-w-[calc(100vw-2rem)] rounded-xl border border-slate-200 bg-white p-3 text-left text-xs font-normal normal-case leading-relaxed tracking-normal text-slate-600 shadow-lg max-sm:fixed max-sm:inset-x-4 max-sm:top-auto max-sm:w-auto',
+          'pointer-events-none absolute top-full z-30 mt-2 hidden max-w-[calc(100vw-2rem)] rounded-xl border border-slate-200 bg-white p-3 text-left text-xs font-normal normal-case leading-relaxed tracking-normal text-slate-600 shadow-lg max-sm:fixed max-sm:inset-x-4 max-sm:top-auto max-sm:w-auto',
+          wide ? 'w-[34rem]' : 'w-72',
           'group-hover:block group-focus-within:block',
           'dark:border-[#2b2b31] dark:bg-[#18181b] dark:text-zinc-300',
           align === 'end' ? 'right-0' : 'left-0',
