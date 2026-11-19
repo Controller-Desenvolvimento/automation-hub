@@ -251,6 +251,11 @@ export function RobotsWithoutGain({
   const [loading, setLoading] = useState(false);
   const [editing, setEditing] = useState<RobotWithoutGain | null>(null);
   const seq = useRef(0);
+  // O simulador guarda o resultado e os cenários na própria tela: depois de aberto, fica montado (só escondido) ao voltar para a Lista.
+  const [simOpened, setSimOpened] = useState(sub === 'sim');
+  useEffect(() => {
+    if (sub === 'sim') setSimOpened(true);
+  }, [sub]);
 
   const load = useCallback(() => {
     const id = ++seq.current;
@@ -324,7 +329,8 @@ export function RobotsWithoutGain({
         ))}
       </div>
 
-      {sub === 'sim' ? (
+      {sub === 'sim' || simOpened ? (
+        <div hidden={sub !== 'sim'}>
         <GainSimulator
           from={from}
           to={to}
@@ -336,6 +342,7 @@ export function RobotsWithoutGain({
             onChanged();
           }}
         />
+        </div>
       ) : null}
 
       {sub === 'lista' ? (

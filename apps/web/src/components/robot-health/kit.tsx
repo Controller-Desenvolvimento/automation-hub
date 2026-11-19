@@ -253,6 +253,16 @@ export function HcInfo({ label, text, children }: { label: string; text?: string
     else top = Math.max(margin, vh - h - margin);
     setPos({ left, top });
   }, [anchor]);
+  // rolar a página ou redimensionar a janela com a dica aberta a deixaria no lugar errado: fecha
+  useEffect(() => {
+    if (!anchor) return;
+    window.addEventListener('scroll', hide, true);
+    window.addEventListener('resize', hide);
+    return () => {
+      window.removeEventListener('scroll', hide, true);
+      window.removeEventListener('resize', hide);
+    };
+  }, [anchor]);
   return (
     <>
       <button

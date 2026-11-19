@@ -158,3 +158,33 @@ test('evolução mensal: novo tempo de quem já tem ganho e por item com média;
   assert.equal(oct.currentSim, 1200, 'só o que os robôs da simulação já têm gravado');
   assert.equal(oct.current, 5000, 'o do relatório inteiro vem da própria série do relatório');
 });
+
+// ---------- período que termina antes de hoje (o "Até" conta) ----------
+
+test('período com "Até" no passado: os dias vão do "De" até o "Até", não até hoje', () => {
+  const to = day(19); // 31/10 (NOW = 19/11)
+  const inp = input([robot('a', 119, { firstAt: day(400) })], { from: day(49), to, times: { a: 300 } }); // 01/10 a 31/10
+  assert.equal(periodDays(inp), 31);
+  const r = simulate(inp);
+  assert.equal(r.days, 31);
+  const a = r.rows[0];
+  assert.equal(a.days, 31);
+  // 119 execuções × 5 min = 35.700 s em 31 dias → por mês (30,4375 dias)
+  assert.ok(Math.abs(a.simulatedMonth - (300 * 119) / (31 / MONTH_DAYS)) < 1e-6, String(a.simulatedMonth));
+  assert.ok(Math.abs(simulate(input([robot('a', 119)], { from: day(49), to, times: { a: 300 }, reportSavedSeconds: 31 * 3600 })).reportMonth - (31 * 3600) / (31 / MONTH_DAYS)) < 1e-6, 'o relatório do período também usa os dias do período');
+});
+
+test('período: "Até" depois de hoje vale hoje; sem "Até" vale hoje; robô novo conta só até o "Até"', () => {
+  assert.equal(periodDays(input([], { from: day(29), to: day(-10) })), 30, '"Até" no futuro não aumenta o período');
+  assert.equal(periodDays(input([], { from: day(29), to: null })), 30);
+  // robô que começou em 11/10 (dia 39 antes de hoje): de 11/10 a 31/10 são 21 dias
+  const young = simulate(input([robot('a', 10, { firstAt: day(39) })], { from: day(49), to: day(19), times: { a: 60 } }));
+  assert.equal(young.rows[0].days, 21);
+});
+
+test('período: o dia é o do fuso do relatório, mesmo com "agora" perto da meia-noite', () => {
+  // 22h30 de 19/11 em São Paulo = 01h30 de 20/11 em UTC: continua sendo 19/11 para o relatório
+  const lateNow = Date.parse('2026-11-19T22:30:00-03:00');
+  const inp = input([], { from: Date.parse('2026-11-01T00:00:00-03:00'), now: lateNow });
+  assert.equal(periodDays(inp), 19);
+});

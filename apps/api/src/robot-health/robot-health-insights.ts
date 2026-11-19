@@ -107,9 +107,8 @@ export function buildInsights(input: InsightInput): Insight[] {
   for (const [id, list] of curBy) {
     const s = summarize(list, classify);
     const ps = prevBy.has(id) ? summarize(prevBy.get(id)!, classify) : null;
-    const lastOk = list.filter((e) => e.status === 'success').reduce((m, e) => Math.max(m, e.createdAt.getTime()), 0);
     if (s.success === 0 && s.errors >= 3) {
-      fato(id, 'crit', `Nenhum sucesso no período: ${pl(s.errors, 'erro', 'erros')}${lastOk ? `; último sucesso em ${day(new Date(lastOk).toISOString().slice(0, 10))}` : '; nenhum sucesso no período'}.`);
+      fato(id, 'crit', `Nenhum sucesso no período: ${pl(s.errors, 'erro', 'erros')} e nenhuma execução concluída com sucesso.`);
     } else if (situationOf(s.concluded, s.errors) === 'critical') {
       fato(id, 'crit', `Situação crítica: ${pct(s.errors / s.concluded)} de erro (${nf(s.errors)} de ${pl(s.concluded, 'concluída', 'concluídas')}).`);
     }
@@ -271,7 +270,7 @@ export function buildInsights(input: InsightInput): Insight[] {
     if (atLimit.length) {
       add({
         id: 'cap-limite', sev: daysLimit >= 3 ? 'warn' : 'info', pri: 20 + daysLimit, title: `O servidor chegou ao limite em ${atLimit.length === 1 ? 'um horário' : pl(atLimit.length, 'horário', 'horários')}`,
-        text: `Chegou a ${cap.limit} robôs ao mesmo tempo às ${joinPt(atLimit.slice(0, 6).map((i) => `${i}h (${pl(hs[i].daysLimit, 'dia', 'dias')})`))}${atLimit.length > 6 ? ' e outros' : ''}. Nesses momentos as execuções novas esperam na fila.`,
+        text: `Chegou a ${cap.limit} robôs ao mesmo tempo às ${atLimit.length > 6 ? `${atLimit.slice(0, 6).map((i) => `${i}h (${pl(hs[i].daysLimit, 'dia', 'dias')})`).join(', ')} e outros` : joinPt(atLimit.map((i) => `${i}h (${pl(hs[i].daysLimit, 'dia', 'dias')})`))}. Nesses momentos as execuções novas esperam na fila.`,
         why: `${capWhy} Aparece quando alguma hora do dia chegou ao limite em algum momento; entre parênteses, em quantos dias do período isso aconteceu naquela hora.`, acts: [{ l: 'Ver horários de pico', go: 'servidor' }],
       });
     } else {

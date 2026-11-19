@@ -1,7 +1,7 @@
 // Simulador de ganhos (aba "Robôs sem ganho" do Tempo ganho). Funções puras: nada aqui lê o banco nem grava nada.
 // A conta repete a do protótipo aprovado: projeta as execuções REAIS do período para 1 mês, robô por robô.
 
-import { toReportDay } from './time-savings-metrics';
+import { dayStart as reportDayStart, toReportDay } from './time-savings-metrics';
 
 export const MONTH_DAYS = 30.4375; // dias de um mês médio
 export const BUSINESS_DAYS = 21; // dias úteis por mês (pessoas equivalentes = horas por mês ÷ (jornada × 21))
@@ -39,8 +39,9 @@ export type SimInput = {
   times: Record<string, number>;
   /** Jornada da pessoa, em horas por dia (padrão 7: a mesma do relatório). */
   workdayHours: number;
-  /** Início do período em ms (null = todo o histórico) e "agora". */
+  /** Início e fim do período em ms (null = todo o histórico / até hoje) e "agora". */
   from: number | null;
+  to?: number | null;
   now: number;
   /** Ganho total do relatório no período, em segundos (para comparar o simulado com o que o relatório mostra). */
   reportSavedSeconds: number;
@@ -81,27 +82,31 @@ export type SimResult = {
   reportMonth: number;
 };
 
-const dayStart = (ms: number) => {
-  const d = new Date(ms);
-  return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
-};
+// Início do dia no fuso do relatório (o mesmo do resto da tela), e não no fuso em que o servidor estiver.
+const dayStart = (ms: number) => reportDayStart(toReportDay(new Date(ms))).getTime();
 
-export function periodDays(input: Pick<SimInput, 'robots' | 'from' | 'now'>): number {
+/** Último dia do período: o "Até" escolhido, nunca depois de hoje. */
+function periodEnd(input: Pick<SimInput, 'to' | 'now'>): number {
+  const today = dayStart(input.now);
+  return input.to === null || input.to === undefined || !Number.isFinite(input.to) ? today : Math.min(today, dayStart(input.to));
+}
+
+export function periodDays(input: Pick<SimInput, 'robots' | 'from' | 'to' | 'now'>): number {
   let from = input.from;
   if (from === null || !Number.isFinite(from)) {
     let first = Infinity;
     for (const r of input.robots) if (r.firstAt && r.firstAt < first) first = r.firstAt;
     from = Number.isFinite(first) ? dayStart(first) : input.now;
   }
-  // dias corridos entre o início e hoje, contando os dois (o horário de agora não pode virar um dia a mais)
-  return Math.max(1, Math.round((dayStart(input.now) - dayStart(from)) / DAY_MS) + 1);
+  // dias corridos entre o início e o fim do período (o "Até", ou hoje), contando os dois; o horário de agora não vira um dia a mais
+  return Math.max(1, Math.round((periodEnd(input) - dayStart(from)) / DAY_MS) + 1);
 }
 
-function robotDays(robot: SimRobot, input: Pick<SimInput, 'robots' | 'from' | 'now'>): number {
+function robotDays(robot: SimRobot, input: Pick<SimInput, 'robots' | 'from' | 'to' | 'now'>): number {
   const pd = periodDays(input);
   if (!robot.firstAt) return pd;
   const from = Math.max(input.from ?? -Infinity, dayStart(robot.firstAt));
-  return Math.min(pd, Math.max(1, Math.round((dayStart(input.now) - from) / DAY_MS) + 1));
+  return Math.min(pd, Math.max(1, Math.round((periodEnd(input) - from) / DAY_MS) + 1));
 }
 
 /** Itens de cada execução; as que não informaram a quantidade usam a média do robô (e contam como "estimadas"). */
