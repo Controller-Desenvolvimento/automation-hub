@@ -4,8 +4,13 @@ import { CATEGORY_INFO, ERROR_CATEGORIES, classifyError } from '../src/robot-hea
 import {
   autoGranularity,
   bucketStart,
+  bucketKeys,
   byRobot,
   categorySeries,
+  durationSeries,
+  evolutionSeries,
+  heatGranularity,
+  heatmapGrid,
   dayKey,
   parseDay,
   previousPeriod,
@@ -154,3 +159,62 @@ test('período: padrão 30 dias, anterior do mesmo tamanho, datas inválidas e t
   assert.ok(parseDay('2026-02-28'));
   assert.equal(resolvePeriod('2000-01-01', undefined, now).days, 1830, 'teto de ~5 anos');
 });
+
+const mins = (n: number) => n * 60_000;
+
+test('evolução: um balde por dia, taxa e duração do balde, buraco vira "sem dados"', () => {
+  const list = [
+    exec({ createdAt: at(10), finishedAt: new Date(at(10).getTime() + mins(2)) }),
+    exec({ createdAt: at(10), finishedAt: new Date(at(10).getTime() + mins(4)) }),
+    err("KeyError: 'x'", { createdAt: at(10) }),
+    err('Execução interrompida: o servidor do Hub foi reiniciado', { createdAt: at(12) }),
+    exec({ status: 'canceled', createdAt: at(12) }),
+  ];
+  const days = evolutionSeries(list, at(9), at(13), 'day');
+  assert.deepEqual(days.map((d) => d.start), ['2026-11-09', '2026-11-10', '2026-11-11', '2026-11-12', '2026-11-13']);
+  const d10 = days[1];
+  assert.equal(d10.success, 2);
+  assert.equal(d10.errors, 1);
+  assert.equal(d10.concluded, 3);
+  assert.ok(Math.abs(d10.successRate! - 2 / 3) < 1e-9);
+  assert.equal(d10.avgDurationSeconds, 180, 'média de 2 e 4 minutos');
+  assert.equal(days[0].successRate, null, 'dia sem execução: sem taxa (não é 0%)');
+  const d12 = days[3];
+  assert.equal(d12.hubErrors, 1);
+  assert.equal(d12.errors, 0);
+  assert.equal(d12.canceled, 1);
+  assert.equal(d12.successRate, null, 'só erro do Hub e cancelada: nada concluído');
+  assert.deepEqual(bucketKeys(new Date(2026, 10, 18), new Date(2026, 10, 30), 'week'), ['2026-11-16', '2026-11-23', '2026-11-30']);
+});
+
+test('duração por robô: só sucessos, por balde, com o número de execuções', () => {
+  const list = [
+    exec({ robotId: 'a', createdAt: at(10), finishedAt: new Date(at(10).getTime() + mins(10)) }),
+    exec({ robotId: 'a', createdAt: at(10), finishedAt: new Date(at(10).getTime() + mins(20)) }),
+    err('HTTP 500', { robotId: 'a', createdAt: at(10), finishedAt: new Date(at(10).getTime() + mins(99)) }),
+    exec({ robotId: 'b', createdAt: at(11), startedAt: at(11), finishedAt: new Date(at(11).getTime() + mins(1)) }),
+  ];
+  const series = durationSeries(list, ['a', 'b'], at(10), at(12), 'day');
+  assert.equal(series[0].robotId, 'a');
+  assert.deepEqual(series[0].points.map((p) => [p.start, p.avgSeconds, p.n]), [['2026-11-10', 900, 2], ['2026-11-11', null, 0], ['2026-11-12', null, 0]]);
+  assert.equal(series[1].points[1].avgSeconds, 60);
+});
+
+test('mapa robô × dia: contagens por célula (sucesso, erro do robô, erro do Hub, cancelada)', () => {
+  const list = [
+    exec({ robotId: 'a', createdAt: at(10) }), exec({ robotId: 'a', createdAt: at(10) }),
+    err("KeyError: 'x'", { robotId: 'a', createdAt: at(10) }),
+    err('Execução interrompida: o servidor do Hub foi reiniciado', { robotId: 'a', createdAt: at(11) }),
+    exec({ status: 'canceled', robotId: 'b', createdAt: at(11) }),
+  ];
+  const grid = heatmapGrid(list, at(10), at(12), 'day');
+  assert.deepEqual(grid.buckets, ['2026-11-10', '2026-11-11', '2026-11-12']);
+  assert.deepEqual(grid.rows.find((r) => r.robotId === 'a')!.cells, [[2, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 0]]);
+  assert.deepEqual(grid.rows.find((r) => r.robotId === 'b')!.cells, [[0, 0, 0, 0], [0, 0, 0, 1], [0, 0, 0, 0]]);
+  assert.equal(grid.rows.length, 2, 'só robôs que rodaram');
+  assert.equal(heatGranularity(30), 'day');
+  assert.equal(heatGranularity(62), 'day');
+  assert.equal(heatGranularity(90), 'week');
+  assert.equal(heatGranularity(181), 'month');
+});
+

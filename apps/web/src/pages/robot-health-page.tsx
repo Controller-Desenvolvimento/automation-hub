@@ -2,6 +2,8 @@ import { ArrowDownRight, ArrowUpRight, Minus, Search } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { CategoryChart, categoryColor } from '../components/robot-health/category-chart';
+import { DurationCharts, RateChart, ResultsChart } from '../components/robot-health/evolution-charts';
+import { RobotHeatmap } from '../components/robot-health/robot-heatmap';
 import { PageHeader } from '../components/page-header';
 import { InfoTip } from '../components/time-savings/info-tip';
 import { Card, CardContent } from '../components/ui/card';
@@ -180,6 +182,22 @@ export function RobotHealthPage() {
             </button>
           ))}
         </div>
+        <div role="group" aria-label="Agrupar por" className="inline-flex overflow-hidden rounded-xl border border-slate-300 dark:border-[#2b2b31]">
+          {(['day', 'week', 'month'] as Granularity[]).map((g) => (
+            <button
+              key={g}
+              type="button"
+              aria-pressed={(data?.categories.granularity ?? gran ?? 'day') === g}
+              onClick={() => setParam({ agrupar: g })}
+              className={cn(
+                'px-3 py-2 text-sm transition',
+                (data?.categories.granularity ?? gran ?? 'day') === g ? 'bg-slate-950 text-white dark:bg-white dark:text-slate-950' : 'bg-white text-slate-600 hover:bg-slate-50 dark:bg-[#0f0f10] dark:text-zinc-300 dark:hover:bg-[#18181b]',
+              )}
+            >
+              {g === 'day' ? 'Dia' : g === 'week' ? 'Semana' : 'Mês'}
+            </button>
+          ))}
+        </div>
         {data ? (
           <span className="text-xs text-slate-500 dark:text-zinc-400">
             {data.period.from.split('-').reverse().join('/')} a {data.period.to.split('-').reverse().join('/')} ({data.period.days} dia{data.period.days === 1 ? '' : 's'})
@@ -237,18 +255,45 @@ export function RobotHealthPage() {
             />
           </div>
 
+          {/* ---------- evolução: resultado e taxa de sucesso ---------- */}
+          <div className="grid gap-6 2xl:grid-cols-2">
+            <Card className="min-w-0 rounded-3xl">
+              <CardContent>
+                <ResultsChart buckets={data.evolution} granularity={granularity} />
+              </CardContent>
+            </Card>
+            <Card className="min-w-0 rounded-3xl">
+              <CardContent>
+                <RateChart buckets={data.evolution} granularity={granularity} />
+              </CardContent>
+            </Card>
+          </div>
+
           {/* ---------- erros por categoria ---------- */}
           <Card className="rounded-3xl">
             <CardContent>
               <CategoryChart
                 buckets={data.categories.buckets}
                 granularity={granularity}
-                onGranularity={(g) => setParam({ agrupar: g })}
                 info={data.categoryInfo}
               />
               <p className="mt-3 text-xs text-slate-500 dark:text-zinc-400">
                 Uma barra por {GRANULARITY_LABELS[granularity].one}. O que está em "Hub" não pesa na taxa de sucesso do robô.
               </p>
+            </CardContent>
+          </Card>
+
+          {/* ---------- duração dos robôs mais usados ---------- */}
+          <Card className="rounded-3xl">
+            <CardContent>
+              <DurationCharts series={data.durations} granularity={granularity} />
+            </CardContent>
+          </Card>
+
+          {/* ---------- mapa robô × dia ---------- */}
+          <Card className="rounded-3xl">
+            <CardContent>
+              <RobotHeatmap heatmap={data.heatmap} />
             </CardContent>
           </Card>
 

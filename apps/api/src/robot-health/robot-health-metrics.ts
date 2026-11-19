@@ -192,6 +192,103 @@ export function categorySeries(
   return [...buckets.values()];
 }
 
+// ---------- evolução ao longo do tempo ----------
+
+/** Chaves (início de cada dia, semana ou mês) de todos os baldes entre `from` e `to`, sem buracos. */
+export function bucketKeys(from: Date, to: Date, granularity: Granularity): string[] {
+  const keys: string[] = [];
+  for (let cursor = bucketStart(from, granularity); cursor <= to; cursor = nextBucket(cursor, granularity)) keys.push(dayKey(cursor));
+  return keys;
+}
+
+export type EvolutionBucket = {
+  start: string;
+  success: number;
+  errors: number;
+  hubErrors: number;
+  canceled: number;
+  concluded: number;
+  successRate: number | null;
+  avgDurationSeconds: number | null;
+};
+
+/** Resultado de cada dia/semana/mês: o mesmo que os indicadores, por balde. */
+export function evolutionSeries(list: HealthExecution[], from: Date, to: Date, granularity: Granularity, classify = createClassifier()): EvolutionBucket[] {
+  const groups = new Map<string, HealthExecution[]>();
+  for (const key of bucketKeys(from, to, granularity)) groups.set(key, []);
+  for (const e of list) groups.get(dayKey(bucketStart(e.createdAt, granularity)))?.push(e);
+  return [...groups.entries()].map(([start, items]) => {
+    const t = summarize(items, classify);
+    return {
+      start,
+      success: t.success,
+      errors: t.errors,
+      hubErrors: t.hubErrors,
+      canceled: t.canceled,
+      concluded: t.concluded,
+      successRate: t.successRate,
+      avgDurationSeconds: t.avgDurationSeconds,
+    };
+  });
+}
+
+export type DurationPoint = { start: string; avgSeconds: number | null; n: number };
+
+/** Duração média (só sucessos) por balde, para cada robô pedido. */
+export function durationSeries(
+  list: HealthExecution[],
+  robotIds: string[],
+  from: Date,
+  to: Date,
+  granularity: Granularity,
+): Array<{ robotId: string; points: DurationPoint[] }> {
+  const keys = bucketKeys(from, to, granularity);
+  return robotIds.map((robotId) => {
+    const sums = new Map<string, { sum: number; n: number }>(keys.map((k) => [k, { sum: 0, n: 0 }]));
+    for (const e of list) {
+      if (e.robotId !== robotId || e.status !== 'success' || !e.startedAt || !e.finishedAt) continue;
+      const seconds = (e.finishedAt.getTime() - e.startedAt.getTime()) / 1000;
+      const bucket = sums.get(dayKey(bucketStart(e.createdAt, granularity)));
+      if (!bucket || seconds <= 0) continue;
+      bucket.sum += seconds;
+      bucket.n += 1;
+    }
+    return { robotId, points: keys.map((start) => ({ start, avgSeconds: sums.get(start)!.n ? sums.get(start)!.sum / sums.get(start)!.n : null, n: sums.get(start)!.n })) };
+  });
+}
+
+// ---------- mapa robô × dia ----------
+
+/** Dia até 62 dias de período, semana até 180, mês acima: o mapa continua legível. */
+export function heatGranularity(days: number): Granularity {
+  return days <= 62 ? 'day' : days <= 180 ? 'week' : 'month';
+}
+
+/** Uma célula: [sucessos, erros do robô, erros do Hub, canceladas]. */
+export type HeatCell = [number, number, number, number];
+
+export type HeatmapGrid = { granularity: Granularity; buckets: string[]; rows: Array<{ robotId: string; cells: HeatCell[] }> };
+
+export function heatmapGrid(list: HealthExecution[], from: Date, to: Date, granularity: Granularity, classify = createClassifier()): HeatmapGrid {
+  const buckets = bucketKeys(from, to, granularity);
+  const index = new Map(buckets.map((k, i) => [k, i]));
+  const rows = new Map<string, HeatCell[]>();
+  for (const e of list) {
+    const col = index.get(dayKey(bucketStart(e.createdAt, granularity)));
+    if (col === undefined) continue;
+    let cells = rows.get(e.robotId);
+    if (!cells) {
+      cells = buckets.map(() => [0, 0, 0, 0] as HeatCell);
+      rows.set(e.robotId, cells);
+    }
+    if (e.status === 'success') cells[col][0] += 1;
+    else if (e.status === 'canceled') cells[col][3] += 1;
+    else if (classify(e.errorMessage).category === 'hub') cells[col][2] += 1;
+    else cells[col][1] += 1;
+  }
+  return { granularity, buckets, rows: [...rows.entries()].map(([robotId, cells]) => ({ robotId, cells })) };
+}
+
 // ---------- principais causas ----------
 
 export type CauseRow = { cause: string; category: ErrorCategory; description: string; count: number; robots: number };

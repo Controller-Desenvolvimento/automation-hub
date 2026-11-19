@@ -35,6 +35,33 @@ export type CategoryBucket = { start: string; counts: Record<ErrorCategory, numb
 
 export type CauseRow = { cause: string; category: ErrorCategory; description: string; count: number; robots: number };
 
+export type EvolutionBucket = {
+  start: string;
+  success: number;
+  errors: number;
+  hubErrors: number;
+  canceled: number;
+  concluded: number;
+  successRate: number | null;
+  avgDurationSeconds: number | null;
+};
+
+export type DurationSeries = {
+  robotId: string;
+  name: string;
+  executions: number;
+  points: Array<{ start: string; avgSeconds: number | null; n: number }>;
+};
+
+/** Uma célula do mapa: [sucessos, erros do robô, erros do Hub, canceladas]. */
+export type HeatCell = [number, number, number, number];
+
+export type Heatmap = {
+  granularity: Granularity;
+  buckets: string[];
+  rows: Array<{ robotId: string; name: string; cells: HeatCell[] }>;
+};
+
 export type CategoryInfo = { key: ErrorCategory; label: string; summary: string; example: string; who: string; countsAgainstRobot: boolean };
 
 export type HealthOverview = {
@@ -47,6 +74,9 @@ export type HealthOverview = {
   categories: { granularity: Granularity; buckets: CategoryBucket[] };
   causes: CauseRow[];
   categoryInfo: CategoryInfo[];
+  evolution: EvolutionBucket[];
+  durations: DurationSeries[];
+  heatmap: Heatmap;
 };
 
 export const SITUATION_LABELS: Record<Situation, string> = {

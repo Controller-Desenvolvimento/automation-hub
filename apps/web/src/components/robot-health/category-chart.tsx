@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import {
   CATEGORY_ORDER,
   GRANULARITY_LABELS,
@@ -10,8 +10,8 @@ import {
   type ErrorCategory,
   type Granularity,
 } from '../../lib/robot-health';
-import { cn } from '../../lib/utils';
 import { InfoTip } from '../time-savings/info-tip';
+import { niceMax, topRounded, useContainerWidth } from './chart-utils';
 
 const COLOR: Record<ErrorCategory, string> = {
   entrada: 'var(--hc-entrada)',
@@ -32,20 +32,6 @@ const BAR_MAX = 24;
 const SLOT_MIN = 26;
 const GAP = 2;
 const RADIUS = 4;
-
-/** Retângulo com os cantos de cima arredondados (a base fica reta). */
-function topRounded(x: number, y: number, w: number, h: number, r: number) {
-  const rr = Math.min(r, w / 2, h);
-  return `M${x},${y + h} V${y + rr} Q${x},${y} ${x + rr},${y} H${x + w - rr} Q${x + w},${y} ${x + w},${y + rr} V${y + h} Z`;
-}
-
-function niceMax(value: number) {
-  if (value <= 4) return 4;
-  const raw = value / 4;
-  const pow = 10 ** Math.floor(Math.log10(raw));
-  const step = [1, 2, 2.5, 5, 10].map((m) => m * pow).find((x) => x >= raw) ?? pow * 10;
-  return step * 4;
-}
 
 /** Explicação das 6 categorias (conteúdo do "i" do gráfico). */
 export function CategoryGuide({ info }: { info: CategoryInfo[] }) {
@@ -72,27 +58,16 @@ export function CategoryGuide({ info }: { info: CategoryInfo[] }) {
 export function CategoryChart({
   buckets,
   granularity,
-  onGranularity,
   info,
 }: {
   buckets: CategoryBucket[];
   granularity: Granularity;
-  onGranularity: (g: Granularity) => void;
   info: CategoryInfo[];
 }) {
   const [asTable, setAsTable] = useState(false);
   const [active, setActive] = useState<number | null>(null);
   // Largura disponível: o gráfico ocupa a largura toda e só rola para os lados quando há barras demais.
-  const [wrapEl, setWrapEl] = useState<HTMLDivElement | null>(null);
-  const [cw, setCw] = useState(0);
-  useEffect(() => {
-    if (!wrapEl) return;
-    const update = () => setCw(wrapEl.clientWidth);
-    update();
-    const ro = new ResizeObserver(update);
-    ro.observe(wrapEl);
-    return () => ro.disconnect();
-  }, [wrapEl]);
+  const [setWrapEl, cw] = useContainerWidth();
   const label = (key: ErrorCategory) => info.find((c) => c.key === key)?.label ?? key;
 
   const totals = useMemo(() => {
@@ -122,22 +97,6 @@ export function CategoryChart({
           </InfoTip>
         </div>
         <div className="flex items-center gap-2">
-          <div role="group" aria-label="Agrupar por" className="inline-flex overflow-hidden rounded-lg border border-slate-300 dark:border-[#2b2b31]">
-            {(['day', 'week', 'month'] as Granularity[]).map((g) => (
-              <button
-                key={g}
-                type="button"
-                aria-pressed={granularity === g}
-                onClick={() => onGranularity(g)}
-                className={cn(
-                  'px-2.5 py-1 text-xs transition',
-                  granularity === g ? 'bg-slate-950 text-white dark:bg-white dark:text-slate-950' : 'bg-white text-slate-600 hover:bg-slate-50 dark:bg-[#0f0f10] dark:text-zinc-300 dark:hover:bg-[#18181b]',
-                )}
-              >
-                {g === 'day' ? 'Dia' : g === 'week' ? 'Semana' : 'Mês'}
-              </button>
-            ))}
-          </div>
           <button
             type="button"
             aria-pressed={asTable}

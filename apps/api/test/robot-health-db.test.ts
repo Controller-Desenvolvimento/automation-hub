@@ -139,3 +139,23 @@ test('escopo manual × agendada e período todo o histórico', { skip }, async (
   assert.equal(weird.scope, 'all');
   assert.equal(weird.period.days, 30, 'valores inválidos viram o padrão');
 });
+
+test('etapa 2: evolução, duração dos robôs mais usados e mapa robô × dia na resposta', { skip }, async () => {
+  const r = await health.overview(U.adm, {});
+  assert.equal(r.evolution.length, 30, 'um balde por dia no período de 30 dias');
+  const sumSuccess = r.evolution.reduce((s: number, b: any) => s + b.success, 0);
+  assert.equal(sumSuccess, r.summary.current.success, 'a evolução soma o mesmo que o indicador');
+  assert.equal(r.evolution.reduce((s: number, b: any) => s + b.errors, 0), r.summary.current.errors);
+  assert.ok(r.durations.length >= 1 && r.durations.length <= 4);
+  assert.ok(r.durations.every((d: any) => d.points.length === 30 && d.name && d.executions >= 1));
+  assert.equal(r.heatmap.granularity, 'day');
+  assert.equal(r.heatmap.buckets.length, 30);
+  const a = r.heatmap.rows.find((x: any) => x.robotId === 'h-robo');
+  assert.equal(a.name, 'Robô Saúde A');
+  const totals = a.cells.reduce((acc: number[], c: number[]) => acc.map((v, i) => v + c[i]), [0, 0, 0, 0]);
+  assert.deepEqual(totals, [8, 2, 1, 1], 'sucessos, erros do robô, erro do Hub e cancelada do Robô A');
+  assert.equal(r.heatmap.rows.some((x: any) => x.robotId === 'h-ext'), false, 'externo fora do mapa');
+  const longo = await health.overview(U.adm, { all: '1' });
+  assert.ok(['day', 'week', 'month'].includes(longo.heatmap.granularity));
+});
+
