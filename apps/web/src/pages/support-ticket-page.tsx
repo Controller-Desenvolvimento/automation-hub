@@ -1,9 +1,10 @@
-import { ArrowLeft, CheckCircle2, ExternalLink, Link2, Send, Unlink } from 'lucide-react';
+import { ArrowLeft, CheckCircle2, ExternalLink, Link2, Unlink } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { AttachmentBar, AttachmentView, useAttachments } from '../components/support-attachments';
 import { StatusBadge, UrgencyBadge } from '../components/support-badges';
 import { SupportMergeDialog } from '../components/support-merge-dialog';
+import { SendButton, type SendOption } from '../components/support-send-button';
 import { Button } from '../components/ui/button';
 import { Card, CardContent } from '../components/ui/card';
 import { Textarea } from '../components/ui/textarea';
@@ -43,7 +44,8 @@ export function SupportTicketPage() {
   const [body, setBody] = useState('');
   const [internal, setInternal] = useState(false);
   const [alsoLinked, setAlsoLinked] = useState(true);
-  const [nextStatus, setNextStatus] = useState<'' | TicketStatus>('');
+  // Quem abriu um chamado encerrado só escreve depois de clicar em "Reabrir chamado" (e explica o motivo).
+  const [reopening, setReopening] = useState(false);
   const [sending, setSending] = useState(false);
   const [busy, setBusy] = useState(false);
   const [mergeIds, setMergeIds] = useState<string[] | null>(null);
@@ -100,6 +102,19 @@ export function SupportTicketPage() {
 
   const closed = ticket.status === 'resolved' || ticket.status === 'not_issue';
   const linkedCount = ticket.linked?.length ?? 0;
+  // Quem abriu e o chamado está encerrado: sem caixa de resposta (evita um "obrigado" reabrir sem querer); só o formulário de reabrir.
+  const showReplyBox = isAdmin || !closed || reopening;
+  // Menu do "Enviar" (só a Inovação, e não em nota interna): responder e já mudar o status.
+  const sendOptions: SendOption[] =
+    !isAdmin || internal
+      ? []
+      : closed
+        ? [{ label: 'Enviar e reabrir (Em análise)', status: 'review' }]
+        : [
+            ...(ticket.status !== 'waiting' ? [{ label: 'Enviar e aguardar usuário', status: 'waiting' as const }] : []),
+            { label: 'Enviar e resolver', status: 'resolved' as const },
+            { label: 'Enviar e marcar como "Não é problema"', status: 'not_issue' as const },
+          ];
 
   async function patch(data: Record<string, unknown>, okMessage?: string) {
     if (!ticket || busy) return;
@@ -115,12 +130,12 @@ export function SupportTicketPage() {
     }
   }
 
-  async function authorAction(action: 'confirm' | 'reopen') {
+  async function confirmResolved() {
     if (!ticket || busy) return;
     setBusy(true);
     try {
-      await api(`/support/tickets/${ticket.id}/${action}`, { method: 'POST' });
-      notify(action === 'confirm' ? 'Obrigado! Registramos a sua confirmação.' : 'Chamado reaberto. A Inovação foi avisada.');
+      await api(`/support/tickets/${ticket.id}/confirm`, { method: 'POST' });
+      notify('Obrigado! Registramos a sua confirmação.');
       await load();
     } catch (err) {
       notify(err instanceof Error ? err.message : 'Não foi possível concluir.');
@@ -129,15 +144,16 @@ export function SupportTicketPage() {
     }
   }
 
-  async function send() {
+  async function send(status?: TicketStatus) {
     if (!ticket || sending) return;
+    if (reopening && !body.trim()) return notify('Explique por que o chamado está sendo reaberto.');
     if (!body.trim() && att.files.length === 0) return notify('Escreva uma mensagem ou anexe um arquivo.');
     const form = new FormData();
     form.set('body', body.trim());
     if (isAdmin) {
       if (internal) form.set('internal', 'true');
       if (!internal && linkedCount > 0) form.set('alsoLinked', alsoLinked ? 'true' : 'false');
-      if (!internal && nextStatus) form.set('status', nextStatus);
+      if (!internal && status) form.set('status', status);
     }
     att.files.forEach((file) => form.append('files', file));
     setSending(true);
@@ -145,7 +161,7 @@ export function SupportTicketPage() {
       await api(`/support/tickets/${ticket.id}/messages`, { method: 'POST', body: form });
       setBody('');
       setInternal(false);
-      setNextStatus('');
+      setReopening(false);
       att.clear();
       await load();
     } catch (err) {
@@ -206,14 +222,17 @@ export function SupportTicketPage() {
         <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-emerald-300 bg-emerald-50 px-4 py-3 text-sm text-emerald-900 dark:border-emerald-500/40 dark:bg-emerald-950/30 dark:text-emerald-100">
           <CheckCircle2 className="h-5 w-5 shrink-0" />
           {ticket.authorConfirmed ? (
-            <span>Você confirmou que está resolvido. Se voltar a acontecer, é só responder aqui.</span>
+            <>
+              <span>Você confirmou que está resolvido. Se voltar a acontecer, reabra o chamado.</span>
+              {!reopening ? <Button size="sm" variant="outline" disabled={busy} onClick={() => setReopening(true)}>Reabrir chamado</Button> : null}
+            </>
           ) : (
             <>
               <span className="font-medium">{ticket.status === 'resolved' ? 'A Inovação marcou como resolvido. Resolveu para você?' : 'A Inovação respondeu que não é um problema. Você concorda?'}</span>
-              <Button size="sm" disabled={busy} onClick={() => void authorAction('confirm')}>
+              <Button size="sm" disabled={busy} onClick={() => void confirmResolved()}>
                 {ticket.status === 'resolved' ? 'Sim, obrigado' : 'Sim, concordo'}
               </Button>
-              <Button size="sm" variant="outline" disabled={busy} onClick={() => void authorAction('reopen')}>Ainda acontece</Button>
+              {!reopening ? <Button size="sm" variant="outline" disabled={busy} onClick={() => setReopening(true)}>Ainda acontece (reabrir)</Button> : null}
             </>
           )}
         </div>
@@ -230,17 +249,18 @@ export function SupportTicketPage() {
             </CardContent>
           </Card>
 
+          {showReplyBox ? (
           <Card className="rounded-3xl">
             <CardContent className="grid gap-3">
               <label className="text-sm font-medium text-slate-700 dark:text-zinc-200" htmlFor="reply">
-                {internal ? 'Nota interna (só a Inovação vê)' : closed ? 'Responder (reabre o chamado)' : 'Responder'}
+                {reopening ? 'Por que está reabrindo o chamado?' : internal ? 'Nota interna (só a Inovação vê)' : 'Responder'}
               </label>
               <Textarea
                 id="reply"
                 value={body}
                 maxLength={5000}
                 className={cn('min-h-28', internal && 'border-amber-300 bg-amber-50 dark:border-amber-500/40 dark:bg-amber-950/20')}
-                placeholder={ticket.status === 'waiting' && !isAdmin ? 'A Inovação está esperando a sua resposta…' : 'Escreva aqui. Dica: cole um print com Ctrl+V.'}
+                placeholder={reopening ? 'Conte o que ainda acontece. Dica: cole um print com Ctrl+V.' : ticket.status === 'waiting' && !isAdmin ? 'A Inovação está esperando a sua resposta…' : 'Escreva aqui. Dica: cole um print com Ctrl+V.'}
                 onChange={(e) => setBody(e.target.value)}
                 onPaste={att.onPaste}
                 onKeyDown={(e) => {
@@ -260,28 +280,25 @@ export function SupportTicketPage() {
                       Enviar também para os {linkedCount} chamados ligados
                     </label>
                   ) : null}
-                  {!internal ? (
-                    <label className="inline-flex items-center gap-2">
-                      Depois de enviar:
-                      <select aria-label="Status depois de enviar" className="h-9 rounded-lg border border-slate-300 bg-white px-2 text-sm dark:border-[#2b2b31] dark:bg-[#0f0f10]" value={nextStatus} onChange={(e) => setNextStatus(e.target.value as '' | TicketStatus)}>
-                        <option value="">manter o status</option>
-                        {STATUSES.filter((s) => s !== ticket.status).map((s) => (
-                          <option key={s} value={s}>{statusLabel(s, 'admin')}</option>
-                        ))}
-                      </select>
-                    </label>
-                  ) : null}
                 </div>
               ) : null}
-              <div className="flex items-center gap-3">
-                <Button onClick={() => void send()} disabled={sending}>
-                  <Send className="mr-2 h-4 w-4" />
-                  {sending ? 'Enviando...' : internal ? 'Salvar nota' : 'Enviar'}
-                </Button>
+              <div className="flex flex-wrap items-center gap-3">
+                <SendButton
+                  onSend={(status) => void send(status)}
+                  options={sendOptions}
+                  sending={sending}
+                  label={reopening ? 'Reabrir chamado' : internal ? 'Salvar nota' : 'Enviar'}
+                />
+                {reopening ? (
+                  <Button variant="outline" disabled={sending} onClick={() => { setReopening(false); setBody(''); att.clear(); }}>
+                    Cancelar
+                  </Button>
+                ) : null}
                 <span className="text-xs text-slate-500 dark:text-zinc-400">Ctrl+Enter também envia.</span>
               </div>
             </CardContent>
           </Card>
+          ) : null}
         </div>
 
         <aside className="space-y-4">
