@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { DAY_MS, MONTH_DAYS, peopleOf, periodDays, simInsights, simulate, type SimExecution, type SimInput, type SimRobot } from '../src/reports/time-savings-simulator';
+import { DAY_MS, MONTH_DAYS, peopleOf, periodDays, simInsights, simulate, simulateMonthly, type SimExecution, type SimInput, type SimRobot } from '../src/reports/time-savings-simulator';
 
 const NOW = new Date(2026, 10, 19, 12, 0, 0).getTime();
 const day = (n: number) => new Date(2026, 10, 19 - n, 0, 0, 0).getTime();
@@ -109,4 +109,52 @@ test('insights: robô que não rodou no período e ganho concentrado', () => {
   assert.match(texts, /Robô a responde por/);
   assert.match(texts, /Os 3 maiores somam/);
   assert.match(texts, /1 robô não rodou no período \(Robô idle\)/);
+});
+
+// ---------- evolução mensal ----------
+
+
+const at = (y: number, m: number, d: number) => new Date(y, m - 1, d, 12, 0, 0).getTime(); // meio-dia local (m = 1..12)
+
+test('evolução mensal: ganho do relatório + extra simulado nas execuções de cada mês; mês corrente incompleto', () => {
+  const r = robot('a', 0, {
+    firstAt: at(2026, 8, 5),
+    executions: [exec({ finishedAt: at(2026, 9, 10) }), exec({ finishedAt: at(2026, 9, 11) }), exec({ finishedAt: at(2026, 10, 3) }), exec({ finishedAt: at(2026, 11, 2) })],
+  });
+  const { months } = simulateMonthly({
+    robots: [r], base: 'exec', times: { a: 600 }, workdayHours: 7, now: NOW, windowMonths: 4,
+    currentByMonth: { '2026-08': 100, '2026-09': 200, '2026-10': 300, '2026-11': 50 }, firstDataAt: at(2026, 8, 1),
+  });
+  assert.deepEqual(months.map((m) => m.key), ['2026-08', '2026-09', '2026-10', '2026-11']);
+  assert.deepEqual(months.map((m) => m.extra), [0, 1200, 600, 600]);
+  assert.deepEqual(months.map((m) => m.partial), [false, false, false, true]);
+  assert.deepEqual(months.map((m) => m.current), [100, 200, 300, 50]);
+});
+
+test('evolução mensal: começa no 1º mês COMPLETO de dados', () => {
+  const r = robot('a', 0, { firstAt: at(2026, 9, 15), executions: [exec({ finishedAt: at(2026, 9, 20) }), exec({ finishedAt: at(2026, 10, 3) })] });
+  const base = { robots: [r], base: 'exec' as const, times: { a: 60 }, workdayHours: 7, now: NOW, windowMonths: 4, currentByMonth: {} };
+  const cut = simulateMonthly({ ...base, firstDataAt: at(2026, 9, 15) });
+  assert.deepEqual(cut.months.map((m) => m.key), ['2026-10', '2026-11'], 'setembro começou no meio: sai');
+  assert.equal(cut.cut, true);
+  const full = simulateMonthly({ ...base, firstDataAt: at(2026, 9, 1) });
+  assert.deepEqual(full.months.map((m) => m.key), ['2026-09', '2026-10', '2026-11']);
+  assert.equal(full.cut, false);
+});
+
+test('evolução mensal: novo tempo de quem já tem ganho e por item com média; "só simulados" separa o ganho dos robôs da simulação', () => {
+  const c = robot('c', 0, {
+    hasTime: true, firstAt: at(2026, 9, 1),
+    executions: [exec({ finishedAt: at(2026, 10, 5), storedGain: 600, units: 2 }), exec({ finishedAt: at(2026, 10, 6), storedGain: 600, units: 2 })],
+  });
+  const a = robot('a', 0, { firstAt: at(2026, 9, 1), executions: [exec({ finishedAt: at(2026, 10, 7), units: 10 }), exec({ finishedAt: at(2026, 10, 8) })] });
+  const { months } = simulateMonthly({
+    robots: [c, a], base: 'item', times: { c: 100, a: 60 }, workdayHours: 7, now: NOW, windowMonths: 3,
+    currentByMonth: { '2026-10': 5000 }, firstDataAt: at(2026, 9, 1),
+  });
+  const oct = months.find((m) => m.key === '2026-10')!;
+  // c: 2 × (100 × 2 − 600) = −800; a: 60 × 10 + 60 × média 10 = 1200
+  assert.equal(oct.extra, 400);
+  assert.equal(oct.currentSim, 1200, 'só o que os robôs da simulação já têm gravado');
+  assert.equal(oct.current, 5000, 'o do relatório inteiro vem da própria série do relatório');
 });

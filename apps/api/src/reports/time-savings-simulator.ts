@@ -1,6 +1,8 @@
 // Simulador de ganhos (aba "Robôs sem ganho" do Tempo ganho). Funções puras: nada aqui lê o banco nem grava nada.
 // A conta repete a do protótipo aprovado: projeta as execuções REAIS do período para 1 mês, robô por robô.
 
+import { toReportDay } from './time-savings-metrics';
+
 export const MONTH_DAYS = 30.4375; // dias de um mês médio
 export const BUSINESS_DAYS = 21; // dias úteis por mês (pessoas equivalentes = horas por mês ÷ (jornada × 21))
 export const DAY_MS = 86_400_000;
@@ -263,3 +265,75 @@ export function simInsights(result: SimResult, input: Pick<SimInput, 'base' | 'w
   void input.base;
   return [...warn, ...out];
 }
+
+// ---------- evolução mensal (até 12 meses) ----------
+
+export type MonthlyPoint = {
+  /** AAAA-MM (mês do relatório, fuso de São Paulo). */
+  key: string;
+  /** O mês corrente: ainda não terminou, então fica incompleto (sem projeção). */
+  partial: boolean;
+  /** Ganho do relatório no mês (todos os robôs e fontes), em segundos. */
+  current: number;
+  /** Ganho do relatório no mês só dos robôs da simulação. */
+  currentSim: number;
+  /** Extra simulado no mês, nas execuções reais dele. */
+  extra: number;
+};
+
+export type MonthlyInput = Omit<SimInput, 'from' | 'reportSavedSeconds'> & {
+  /** Execuções dos robôs da simulação nos últimos meses da janela (não só as do período escolhido). */
+  windowMonths: number;
+  /** Ganho do relatório por mês (AAAA-MM -> segundos). */
+  currentByMonth: Record<string, number>;
+  /** Primeiro dado de ganho do relatório (ms), para começar no 1º mês COMPLETO. */
+  firstDataAt: number | null;
+};
+
+const monthKeyOf = (ms: number) => toReportDay(new Date(ms)).slice(0, 7);
+const monthKeyAt = (year: number, month0: number) => `${year}-${String(month0 + 1).padStart(2, '0')}`;
+
+/**
+ * Ganho atual + extra simulado nas execuções reais de cada mês. Começa no 1º mês COMPLETO de dados (um mês em que o histórico
+ * começa no meio daria uma variação falsa no mês seguinte). O mês corrente fica incompleto, sem projeção.
+ */
+export function simulateMonthly(input: MonthlyInput): { months: MonthlyPoint[]; cut: boolean } {
+  const nowKey = monthKeyOf(input.now);
+  const [ny, nm] = nowKey.split('-').map(Number);
+  const points: MonthlyPoint[] = [];
+  for (let i = input.windowMonths - 1; i >= 0; i--) {
+    const d = new Date(ny, nm - 1 - i, 1);
+    const key = monthKeyAt(d.getFullYear(), d.getMonth());
+    points.push({ key, partial: key === nowKey, current: input.currentByMonth[key] ?? 0, currentSim: 0, extra: 0 });
+  }
+  const byKey = new Map(points.map((p) => [p.key, p]));
+  for (const robot of input.robots) {
+    const guess = input.times[robot.robotId];
+    const has = Number.isFinite(guess) && guess > 0;
+    const known = robot.executions.filter((e) => e.units !== null) as Array<SimExecution & { units: number }>;
+    const avg = known.length ? known.reduce((a, e) => a + e.units, 0) / known.length : 1;
+    for (const e of robot.executions) {
+      const point = byKey.get(monthKeyOf(e.finishedAt));
+      if (!point) continue;
+      point.currentSim += e.storedGain;
+      if (!has) continue;
+      if (robot.hasTime) point.extra += guess * (e.units ?? 1) - e.storedGain; // novo tempo de quem já tem ganho: por item
+      else point.extra += input.base === 'exec' ? guess : guess * (e.units ?? avg);
+    }
+  }
+  const firstKey = input.firstDataAt === null ? null : monthKeyOf(input.firstDataAt);
+  let months = points;
+  // meses inteiramente antes do primeiro dado saem
+  if (firstKey) months = months.filter((m) => m.key >= firstKey);
+  // se o histórico começa no meio do primeiro mês, ele sai também (e há mais de um mês para mostrar)
+  let cut = false;
+  if (months.length > 1 && input.firstDataAt !== null) {
+    const firstDay = toReportDay(new Date(input.firstDataAt));
+    if (firstDay.slice(0, 7) === months[0].key && firstDay.slice(8, 10) !== '01') {
+      months = months.slice(1);
+      cut = true;
+    }
+  }
+  return { months, cut };
+}
+
