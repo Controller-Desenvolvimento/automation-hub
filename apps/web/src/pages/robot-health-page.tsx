@@ -51,7 +51,6 @@ function CategoryGuide({ info }: { info: CategoryInfo[] }) {
                 {!c.countsAgainstRobot ? <em> (fora da taxa de sucesso)</em> : null}
               </div>
               <div style={{ color: 'var(--hc-ink2)' }}>Ex.: {c.example}</div>
-              <div style={{ color: 'var(--hc-ink2)' }}>Quem age: {c.who}</div>
             </div>
           </div>
         );

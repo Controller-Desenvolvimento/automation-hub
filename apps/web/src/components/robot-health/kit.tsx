@@ -223,12 +223,36 @@ export function TipLayer() {
 // ---------- ícone "i" com explicação ----------
 
 export function HcInfo({ label, text, children }: { label: string; text?: string; children?: ReactNode }) {
-  const [open, setOpen] = useState<{ x: number; y: number } | null>(null);
+  const [anchor, setAnchor] = useState<DOMRect | null>(null);
+  const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
   const ref = useRef<HTMLButtonElement>(null);
+  const tipRef = useRef<HTMLDivElement>(null);
   const show = () => {
     const r = ref.current?.getBoundingClientRect();
-    if (r) setOpen({ x: Math.min(r.left, window.innerWidth - 420), y: r.bottom + 8 });
+    if (r) setAnchor(r);
   };
+  const hide = () => {
+    setAnchor(null);
+    setPos(null);
+  };
+  // Mede a dica e a mantém inteira na tela: abre embaixo do "i" se couber; senão sobe (acima dele); se nem assim couber,
+  // encosta no topo da janela. Na horizontal, nunca passa das bordas.
+  useLayoutEffect(() => {
+    if (!anchor || !tipRef.current) return;
+    const w = tipRef.current.offsetWidth;
+    const h = tipRef.current.offsetHeight;
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    const margin = 8;
+    const left = Math.max(margin, Math.min(anchor.left, vw - w - margin));
+    const below = anchor.bottom + margin;
+    const above = anchor.top - margin - h;
+    let top: number;
+    if (below + h <= vh - margin) top = below;
+    else if (above >= margin) top = above;
+    else top = Math.max(margin, vh - h - margin);
+    setPos({ left, top });
+  }, [anchor]);
   return (
     <>
       <button
@@ -236,17 +260,17 @@ export function HcInfo({ label, text, children }: { label: string; text?: string
         type="button"
         className="hc-info"
         aria-label={label}
-        aria-expanded={!!open}
+        aria-expanded={!!anchor}
         onMouseEnter={show}
-        onMouseLeave={() => setOpen(null)}
+        onMouseLeave={hide}
         onFocus={show}
-        onBlur={() => setOpen(null)}
-        onKeyDown={(e) => e.key === 'Escape' && setOpen(null)}
+        onBlur={hide}
+        onKeyDown={(e) => e.key === 'Escape' && hide()}
       >
         i
       </button>
-      {open ? (
-        <div className="hc-infotip" role="tooltip" style={{ left: Math.max(8, open.x), top: open.y }}>
+      {anchor ? (
+        <div ref={tipRef} className="hc-infotip" role="tooltip" style={{ left: pos?.left ?? 0, top: pos?.top ?? 0, visibility: pos ? 'visible' : 'hidden', maxHeight: 'calc(100vh - 16px)', overflow: 'hidden' }}>
           {children ?? text}
         </div>
       ) : null}

@@ -3,6 +3,13 @@
 Mudanças do Automation Hub por data. Este arquivo é **público**: descreve o que mudou no produto, no banco e na
 configuração, sem dados de infraestrutura. O desenho detalhado de cada funcionalidade está no `CLAUDE.md`.
 
+## 2026-11-19 — Saúde dos robôs: "i" que cabe na tela
+
+### Mudado (só administradores; só leitura; sem mudança no banco; só frontend)
+- A dica do **"i"** agora mede o próprio tamanho e fica sempre inteira na janela: abre embaixo do "i" se couber; senão **sobe** (fica
+  acima dele); se nem assim couber, encosta na borda da janela. Na horizontal nunca passa das bordas. Antes passava da tela e cortava.
+- O "i" do gráfico de erros por categoria **não mostra mais "Quem age"** (continua o significado e o exemplo de cada categoria).
+
 ## 2026-11-19 — Saúde dos robôs: escolher o robô de cada quadro da duração
 
 ### Mudado (só administradores; só leitura; sem mudança no banco)
