@@ -3,6 +3,19 @@
 Mudanças do Automation Hub por data. Este arquivo é **público**: descreve o que mudou no produto, no banco e na
 configuração, sem dados de infraestrutura. O desenho detalhado de cada funcionalidade está no `CLAUDE.md`.
 
+## 2026-11-19 — Saúde dos robôs, etapa 3: capacidade do servidor, ciclos agendados e Insights
+
+### Adicionado (só administradores; só leitura; sem mudança no banco)
+- **Horários de pico do servidor:** quantos robôs rodam ao mesmo tempo em cada hora do dia (barra = pior momento, linha vermelha =
+  limite do servidor), com a faixa de tempo ocupado por hora e quatro cartões: horário mais cheio, quantos horários chegaram ao
+  limite, horário mais ocupado e **bons horários para agendar**. Segue o período e ignora o filtro manual/agendada.
+- **Resultado dos ciclos agendados:** por agendamento, quantos ciclos deram certo de primeira, quantos o reinício automático
+  salvou, quantos falharam de vez e quantos foram cancelados ou pulados.
+- **Insights:** frases prontas, por regras fixas, com o "i" mostrando a conta (erros sem motivo, robôs que pedem atenção,
+  queda na taxa, agendamento acima do limite de reinício, servidor no limite, fila das manuais, agendamentos que falham, etc.).
+  Alternância **Gráficos | Insights** no topo, com selo dos pontos de atenção.
+- A API de `/api/robot-health` devolve a mais `capacity`, `cycles` e `insights`; as execuções canceladas passam a levar o motivo.
+
 ## 2026-11-19 — Saúde dos robôs: visual igual ao do protótipo HTML aprovado (etapas 1 e 2)
 
 ### Mudado (só administradores; só leitura; sem mudança no banco)
