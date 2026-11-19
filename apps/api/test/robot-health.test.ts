@@ -230,7 +230,7 @@ test('minigráficos: granularidade pelo tamanho do período, execuções por dia
   assert.equal(mini[0].successRate, 1, '3 concluídas já dão taxa');
   assert.equal(mini[1].successRate, null, 'só 1 concluída: sem taxa');
   // 10/11 é terça: a semana de 9 a 15 só tem 6 dias dentro do período (10 a 15), então a média é por esses 6 dias
-  const semana = miniSeries(list, at(10), at(15), 'week');
+  const semana = miniSeries(list, new Date(2026, 10, 10), new Date(2026, 10, 15, 23, 59, 59, 999), 'week'); // períodos reais: dias inteiros
   assert.equal(semana.length, 1);
   assert.ok(Math.abs(semana[0].executionsPerDay - 4 / 6) < 1e-9, 'média por dia, só com os dias do período');
   assert.deepEqual(robotTrend(list, ['2026-11-10', '2026-11-11'], 'day'), [1, 0]);
