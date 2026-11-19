@@ -2,6 +2,7 @@ import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/commo
 import { ExecutionStatus } from '@prisma/client';
 import { rm } from 'node:fs/promises';
 import { PrismaService } from '../prisma/prisma.service';
+import { SupportService } from '../support/support.service';
 import { executionRoot } from '../shared/storage';
 
 const SWEEP_INTERVAL_MS = 6 * 60 * 60 * 1000;
@@ -13,7 +14,10 @@ export class RetentionService implements OnModuleInit, OnModuleDestroy {
   private timer?: NodeJS.Timeout;
   private isSweeping = false;
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly support: SupportService,
+  ) {}
 
   onModuleInit() {
     // Primeiro sweep 1min após o boot para não competir com a inicialização
@@ -37,6 +41,8 @@ export class RetentionService implements OnModuleInit, OnModuleDestroy {
       await this.purgeExpiredSessions();
       await this.cleanOldExecutions();
       await this.purgeOldSiteChatMessages();
+      // Anexos do Suporte: 90 dias depois de o chamado ser encerrado (SUPPORT_ATTACHMENT_RETENTION_DAYS; 0 = nunca apagar). O texto fica.
+      await this.support.cleanOldAttachments(getRetentionDays('SUPPORT_ATTACHMENT_RETENTION_DAYS', 90));
     } catch (error) {
       this.logger.error('Retention sweep failed', error);
     } finally {

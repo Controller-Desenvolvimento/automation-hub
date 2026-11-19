@@ -254,6 +254,8 @@ export type Notification = {
   title: string;
   body?: string | null;
   executionId?: string | null;
+  supportTicketId?: string | null;
+  supportTicket?: { id: string; number: number } | null;
   isRead: boolean;
   createdAt: string;
   execution?: {

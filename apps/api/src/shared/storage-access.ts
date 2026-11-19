@@ -76,5 +76,14 @@ export async function canAccessStoragePath(
     );
   }
 
+  if (scope === 'support') {
+    // Anexos do Suporte: só quem abriu o chamado e os administradores (a pessoa nunca vê chamado de outra).
+    if (isAdmin(user)) {
+      return true;
+    }
+    const ticket = await prisma.supportTicket.findUnique({ where: { id }, select: { authorId: true } });
+    return !!ticket && ticket.authorId === user.id;
+  }
+
   return false;
 }

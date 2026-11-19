@@ -9,6 +9,7 @@ import {
   ExternalLink,
   Globe,
   History,
+  LifeBuoy,
   LayoutDashboard,
   LogOut,
   Menu,
@@ -44,7 +45,7 @@ export function AppShell() {
   const navigate = useNavigate();
   const { user, logout } = useAuth();
   const { theme, toggleTheme } = useTheme();
-  const { hub, unreadNotifications, refreshUnreadCount } = useHub();
+  const { hub, unreadNotifications, refreshUnreadCount, supportUnread } = useHub();
   const [search, setSearch] = useState('');
   const [profileOpen, setProfileOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
@@ -151,6 +152,7 @@ export function AppShell() {
         { to: '/history', label: 'Histórico', icon: History },
         { to: '/results', label: 'Resultados', icon: Download },
         { to: '/time-savings', label: 'Tempo ganho', icon: BarChart3 },
+        { to: '/support', label: 'Suporte', icon: LifeBuoy, badge: supportUnread },
       ],
     },
     ...(canViewBoard
@@ -200,7 +202,7 @@ export function AppShell() {
                     </div>
                   ) : null}
                   <div className="space-y-1">
-                    {group.items.map(({ to, label, icon: Icon }) => (
+                    {group.items.map(({ to, label, icon: Icon, badge }) => (
                       <NavLink
                         key={to}
                         to={to}
@@ -219,6 +221,7 @@ export function AppShell() {
                         <>
                           <Icon className={cn('h-4 w-4 shrink-0', isActive && 'text-sky-500 dark:text-sky-400')} />
                           {label}
+                          <NavBadge count={badge} />
                         </>
                       )}
                       </NavLink>
@@ -308,7 +311,7 @@ export function AppShell() {
                 ) : null}
 
                 <div className="space-y-1">
-                  {group.items.map(({ to, label, icon: Icon }) => (
+                  {group.items.map(({ to, label, icon: Icon, badge }) => (
                     <NavLink
                       key={to}
                       to={to}
@@ -325,12 +328,16 @@ export function AppShell() {
                             : 'text-slate-600 hover:bg-slate-100 hover:text-slate-950 dark:text-zinc-300 dark:hover:bg-[#18181b] dark:hover:text-white',
                         )
                       }
-                      title={sidebarCollapsed ? label : undefined}
+                      title={sidebarCollapsed ? (badge ? `${label} (${badge} novidade${badge === 1 ? '' : 's'})` : label) : undefined}
                     >
                       {({ isActive }) => (
                         <>
-                          <Icon className={cn('h-4 w-4 shrink-0', isActive && 'text-sky-500 dark:text-sky-400')} />
+                          <span className="relative flex shrink-0">
+                            <Icon className={cn('h-4 w-4 shrink-0', isActive && 'text-sky-500 dark:text-sky-400')} />
+                            {sidebarCollapsed && badge ? <span className="absolute -right-1 -top-1 h-2 w-2 rounded-full bg-sky-500" /> : null}
+                          </span>
                           {!sidebarCollapsed ? label : null}
+                          {!sidebarCollapsed ? <NavBadge count={badge} /> : null}
                         </>
                       )}
                     </NavLink>
@@ -656,9 +663,14 @@ function NotifPanelItem({
 }) {
   const navigate = useNavigate();
   const isError = notification.type === 'execution_error';
+  const isSupport = notification.type.startsWith('support_');
 
   function handleClick() {
     onClose();
+    if (notification.supportTicketId) {
+      void navigate(`/support/${notification.supportTicketId}`);
+      return;
+    }
     if (notification.type === 'automation_request_new') {
       void navigate('/automation-requests');
       return;
@@ -683,14 +695,18 @@ function NotifPanelItem({
           <span className="text-sm font-medium text-slate-900 dark:text-zinc-100">
             {notification.title}
           </span>
-          <span className={cn(
-            'shrink-0 rounded-full px-1.5 py-0.5 text-[11px] font-medium',
-            isError
-              ? 'bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400'
-              : 'bg-emerald-100 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-400',
-          )}>
-            {isError ? 'Erro' : 'OK'}
-          </span>
+          {notification.type === 'automation_request_new' || notification.type === 'automation_request_status' ? null : (
+            <span className={cn(
+              'shrink-0 rounded-full px-1.5 py-0.5 text-[11px] font-medium',
+              isSupport
+                ? 'bg-sky-100 text-sky-700 dark:bg-sky-900/30 dark:text-sky-300'
+                : isError
+                  ? 'bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400'
+                  : 'bg-emerald-100 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-400',
+            )}>
+              {isSupport ? 'Suporte' : isError ? 'Erro' : 'OK'}
+            </span>
+          )}
         </div>
         {notification.body ? (
           <p className="mt-0.5 text-xs text-slate-500 dark:text-zinc-400">{notification.body}</p>
@@ -698,5 +714,18 @@ function NotifPanelItem({
         <p className="mt-0.5 text-xs text-slate-400 dark:text-zinc-500">{timeAgo(notification.createdAt)}</p>
       </div>
     </button>
+  );
+}
+
+/** Número de novidades ao lado de um item do menu (some quando é zero). */
+function NavBadge({ count }: { count?: number }) {
+  if (!count) return null;
+  return (
+    <span
+      className="ml-auto flex h-5 min-w-5 items-center justify-center rounded-full bg-sky-500 px-1.5 text-[11px] font-bold leading-none text-white"
+      aria-label={`${count} novidade${count === 1 ? '' : 's'}`}
+    >
+      {count > 99 ? '99+' : count}
+    </span>
   );
 }
