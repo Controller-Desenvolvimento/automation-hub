@@ -230,7 +230,8 @@ export function TimeSavingsPage() {
     URL.revokeObjectURL(url);
   }
 
-  const withoutRateCount = report?.quality.automationsWithoutRate.count ?? 0;
+  // o selo conta os robôs ativos do Hub sem tempo manual (o mesmo número do indicador da aba), não só os que rodaram no período
+  const withoutRateCount = (hub?.robots ?? []).filter((r) => r.isActive && !r.isExternal && !(r.manualSecondsPerUnit ?? 0)).length;
   const tabs: Array<{ id: View; label: string; badge?: number }> = [
     { id: 'overview', label: 'Visão geral' },
     { id: 'executions', label: 'Execuções' },
@@ -302,6 +303,7 @@ export function TimeSavingsPage() {
           }}
           isAdmin={canConfigure}
           reportSavedSeconds={report?.totals.savedSeconds ?? null}
+          reportFiltered={Boolean(filters.robotId || filters.department || filters.origin || filters.userIds.length > 0)}
           sub={searchParams.get('aba') === 'simular' ? 'sim' : 'lista'}
           onSub={(next) => updateParams((params) => (next === 'sim' ? params.set('aba', 'simular') : params.delete('aba')))}
         />

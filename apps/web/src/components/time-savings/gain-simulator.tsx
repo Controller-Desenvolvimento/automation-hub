@@ -6,6 +6,7 @@ import {
   UNIT_NAME,
   UNIT_SECONDS,
   convertUnit,
+  formatInUnit,
   dur,
   hrs,
   jornadaTxt,
@@ -24,7 +25,7 @@ import {
   type SimUnit,
   type SimulationResult,
 } from '../../lib/gain-simulator';
-import { DEFAULT_METRIC_KEY, type RobotWithoutGain } from '../../lib/robots-without-gain';
+import { DEFAULT_METRIC_KEY, executionModeKey, type RobotWithoutGain } from '../../lib/robots-without-gain';
 import { GainMonthlyChart } from './gain-monthly-chart';
 import { SgInfo, SgSeg } from './sg-parts';
 
@@ -35,8 +36,8 @@ type Scenario = { letter: string; name: string; desc: string; per: string; mais:
 const LETTERS = ['A', 'B', 'C', 'D'];
 
 /** Campo numérico do protótipo: lê vírgula decimal e mostra o erro logo abaixo, em vermelho. */
-function NumField({ value, onChange, max, width, placeholder, label }: { value: string; onChange: (v: string) => void; max: number; width: number; placeholder?: string; label: string }) {
-  const parsed = parseNum(value, max);
+function NumField({ value, onChange, max, min, minMessage, width, placeholder, label }: { value: string; onChange: (v: string) => void; max: number; min?: number; minMessage?: string; width: number; placeholder?: string; label: string }) {
+  const parsed = parseNum(value, max, min, minMessage);
   const error = 'error' in parsed ? parsed.error : null;
   return (
     <div className="fwrap">
@@ -109,10 +110,15 @@ export function GainSimulator({
   // "Igual para todos": a lista de robôs começa recolhida (dá para abrir para ver e tirar algum da conta)
   const [expanded, setExpanded] = useState(false);
   const resultRef = useRef<HTMLDivElement>(null);
+  // o que a pessoa digitou, em segundos exatos: trocar de unidade várias vezes não acumula arredondamento (5 min -> h -> min volta a 5)
+  const exact = useRef<Record<string, number>>({ equal: 300 }); // o padrão inicial, 5 minutos
 
   const without = useMemo(() => hubRobots.filter((r) => !r.manualSecondsPerUnit), [hubRobots]);
   const unitSec = UNIT_SECONDS[unit];
   const maxInUnit = MAX_SECONDS / unitSec;
+  // o menor tempo que vale é 1 segundo (menos que isso arredondava para 0 e o campo era ignorado sem avisar)
+  const minInUnit = 1 / unitSec;
+  const MIN_MSG = 'O tempo mínimo é 1 segundo.';
 
   // linhas por robô para a tabela do formulário (execuções por mês, ganho de hoje, métrica que o robô informa)
   useEffect(() => {
@@ -138,7 +144,7 @@ export function GainSimulator({
   // tempos válidos em segundos; campo preenchido e inválido bloqueia o "Simular"
   const errors: string[] = [];
   const secondsOf = (raw: string): number | null => {
-    const p = parseNum(raw, maxInUnit);
+    const p = parseNum(raw, maxInUnit, minInUnit, MIN_MSG);
     if ('error' in p) {
       errors.push(p.error);
       return null;
@@ -164,7 +170,7 @@ export function GainSimulator({
       }
     } else if (equalSeconds) times[row.robotId] = equalSeconds;
   }
-  const workdayParsed = parseNum(workday, 24);
+  const workdayParsed = parseNum(workday, 24, 1, 'A jornada vai de 1 a 24 horas.');
   if ('error' in workdayParsed) errors.push(workdayParsed.error);
   const workdayHours = 'error' in workdayParsed || workdayParsed.empty ? 7 : workdayParsed.value;
 
@@ -207,11 +213,18 @@ export function GainSimulator({
     }
   }
 
+  // guarda os segundos exatos de um campo quando a pessoa digita (campo vazio ou inválido não guarda nada)
+  function remember(field: string, raw: string) {
+    const p = parseNum(raw);
+    if ('error' in p || p.empty) delete exact.current[field];
+    else exact.current[field] = p.value * unitSec;
+  }
   function changeUnit(next: SimUnit) {
-    const conv = (m: Record<string, string>) => Object.fromEntries(Object.entries(m).map(([k, v]) => [k, convertUnit(v, unit, next)]));
-    setEqual(convertUnit(equal, unit, next));
-    setPerRobot(conv(perRobot));
-    setPerCurrent(conv(perCurrent));
+    const show = (field: string, text: string) => (exact.current[field] !== undefined ? formatInUnit(exact.current[field], next) : convertUnit(text, unit, next));
+    const conv = (prefix: string, m: Record<string, string>) => Object.fromEntries(Object.entries(m).map(([k, v]) => [k, show(`${prefix}:${k}`, v)]));
+    setEqual(show('equal', equal));
+    setPerRobot(conv('r', perRobot));
+    setPerCurrent(conv('c', perCurrent));
     setUnit(next);
   }
 
@@ -247,7 +260,7 @@ export function GainSimulator({
           body: JSON.stringify({
             manualSecondsPerUnit: seconds,
             unitLabel: novo ? hub?.unitLabel || 'item' : base === 'exec' ? 'execução' : info?.unitLabel && info.unitLabel !== 'item' ? info.unitLabel : 'item',
-            unitMetricKey: novo ? info?.unitMetricKey ?? DEFAULT_METRIC_KEY : base === 'exec' ? DEFAULT_METRIC_KEY : info?.metrics[0]?.key ?? DEFAULT_METRIC_KEY,
+            unitMetricKey: novo ? info?.unitMetricKey ?? DEFAULT_METRIC_KEY : base === 'exec' ? (info ? executionModeKey(info) : DEFAULT_METRIC_KEY) : info?.metrics[0]?.key ?? DEFAULT_METRIC_KEY,
           }),
         });
         ok += 1;
@@ -329,11 +342,11 @@ export function GainSimulator({
             </>
           }
         >
-          <NumField value={workday} onChange={setWorkday} max={24} width={80} label="Horas por dia da pessoa" />
+          <NumField value={workday} onChange={setWorkday} max={24} min={1} minMessage="A jornada vai de 1 a 24 horas." width={80} label="Horas por dia da pessoa" />
           <span className="ro">h por dia × 21 dias úteis no mês (padrão 7 h; de 1 a 24)</span>
         </Frow>
         <Frow label={mode === 'igual' ? 'Tempo para todos' : 'Tempo padrão'}>
-          <NumField value={equal} onChange={setEqual} max={maxInUnit} width={100} label={mode === 'igual' ? 'Tempo para todos' : 'Tempo padrão'} />
+          <NumField value={equal} onChange={(v) => { setEqual(v); remember('equal', v); }} max={maxInUnit} min={minInUnit} minMessage={MIN_MSG} width={100} label={mode === 'igual' ? 'Tempo para todos' : 'Tempo padrão'} />
           <span className="ro">
             {UNIT_NAME[unit]} {base === 'exec' ? 'por execução' : 'por item'}
           </span>
@@ -381,7 +394,7 @@ export function GainSimulator({
                     const current = nfx(Math.round((seg / unitSec) * 100) / 100);
                     cell = (
                       <div className="tcell">
-                        <NumField value={perCurrent[r.robotId] ?? ''} onChange={(v) => setPerCurrent((p) => ({ ...p, [r.robotId]: v }))} max={maxInUnit} width={110} placeholder={`atual: ${current}`} label={`Novo tempo de ${r.name} (hoje ${current} ${UNIT_AB[unit]} por ${label})`} />
+                        <NumField value={perCurrent[r.robotId] ?? ''} onChange={(v) => { setPerCurrent((p) => ({ ...p, [r.robotId]: v })); remember(`c:${r.robotId}`, v); }} max={maxInUnit} min={minInUnit} minMessage={MIN_MSG} width={110} placeholder={`atual: ${current}`} label={`Novo tempo de ${r.name} (hoje ${current} ${UNIT_AB[unit]} por ${label})`} />
                         <span className="ro un">
                           {UNIT_AB[unit]} por {label}
                         </span>
@@ -390,7 +403,7 @@ export function GainSimulator({
                   } else if (mode === 'robo' && !r.hasTime) {
                     cell = (
                       <div className="tcell">
-                        <NumField value={perRobot[r.robotId] ?? ''} onChange={(v) => setPerRobot((p) => ({ ...p, [r.robotId]: v }))} max={maxInUnit} width={110} placeholder="padrão" label={`Tempo de ${r.name}`} />
+                        <NumField value={perRobot[r.robotId] ?? ''} onChange={(v) => { setPerRobot((p) => ({ ...p, [r.robotId]: v })); remember(`r:${r.robotId}`, v); }} max={maxInUnit} min={minInUnit} minMessage={MIN_MSG} width={110} placeholder="padrão" label={`Tempo de ${r.name}`} />
                         <span className="ro un">
                           {UNIT_AB[unit]}
                           {base === 'exec' ? ' por execução' : ' por item'}

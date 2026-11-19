@@ -30,6 +30,16 @@ export type RobotsWithoutGainResponse = {
 };
 
 export const DEFAULT_METRIC_KEY = 'itens_processados';
+/** Chave que nenhum robô informa: "cada execução conta como 1 item" (o Hub conta 1 item quando a chave não aparece). */
+export const PER_EXECUTION_KEY = 'por_execucao';
+
+/**
+ * Chave a gravar quando "cada execução conta como 1 item". Normalmente a padrão; mas se o robô JÁ informa a métrica padrão
+ * (`itens_processados`), ela contaria os itens dele e não 1 por execução: nesse caso usa uma chave que ele não informa.
+ */
+export function executionModeKey(robot: Pick<RobotWithoutGain, 'metrics'>): string {
+  return robot.metrics.some((m) => m.key === DEFAULT_METRIC_KEY) ? PER_EXECUTION_KEY : DEFAULT_METRIC_KEY;
+}
 
 export type TimeUnit = 'seconds' | 'minutes' | 'hours';
 export const TIME_UNITS: Array<{ value: TimeUnit; label: string; factor: number }> = [

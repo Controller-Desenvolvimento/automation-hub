@@ -280,7 +280,9 @@ const names = (rows: SimRow[]) => `${rows.slice(0, 3).map((r) => r.name).join(',
 const peopleTxt = (secondsPerMonth: number, jh: number) => {
   const p = Math.abs(peopleOf(secondsPerMonth, jh));
   const shown = nf(p, p < 10 ? 1 : 0);
-  return `${shown} ${p < 10 ? (Math.round(p * 10) / 10 === 1 ? 'pessoa' : 'pessoas') : 'pessoas'}`;
+  // a mesma regra dos indicadores da tela: 0 e 2 ou mais = "pessoas"; de 0,1 a 1,9 = "pessoa" ("0,3 pessoa", "1,8 pessoa")
+  const rounded = p < 10 ? Math.round(p * 10) / 10 : Math.round(p);
+  return `${shown} ${rounded === 0 || rounded >= 2 ? 'pessoas' : 'pessoa'}`;
 };
 
 /** Frases sobre o resultado: avisos primeiro (o que conferir), depois o que vale saber. */

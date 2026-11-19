@@ -124,7 +124,7 @@ export const MAX_SECONDS = 86_400; // o mesmo teto do tempo manual configurado
 /**
  * Lê um número digitado. Vazio = sem valor. Aceita vírgula (ou ponto) decimal; recusa milhar ("1.000"), zero, negativo e texto.
  */
-export function parseNum(raw: string | undefined, max?: number): { empty: true; value: 0 } | { error: string } | { value: number; empty?: false } {
+export function parseNum(raw: string | undefined, max?: number, min?: number, minMessage?: string): { empty: true; value: 0 } | { error: string } | { value: number; empty?: false } {
   const t = String(raw ?? '').trim();
   if (!t) return { empty: true, value: 0 };
   if (/^\d{1,3}(\.\d{3})+$/.test(t)) return { error: 'Use vírgula para decimais (ex.: 1,5). Ponto de milhar não vale.' };
@@ -133,6 +133,7 @@ export function parseNum(raw: string | undefined, max?: number): { empty: true; 
   const x = Number(t.replace(',', '.'));
   if (!(x > 0)) return { error: 'Use um número maior que zero.' };
   if (max !== undefined && x > max) return { error: `Valor alto demais (no máximo ${nfx(max)}).` };
+  if (min !== undefined && x < min) return { error: minMessage ?? `Valor baixo demais (no mínimo ${nfx(min)}).` };
   return { value: x };
 }
 
@@ -140,5 +141,11 @@ export function parseNum(raw: string | undefined, max?: number): { empty: true; 
 export function convertUnit(raw: string, from: SimUnit, to: SimUnit): string {
   const p = parseNum(raw);
   if ('error' in p || p.empty) return raw;
-  return nfx(Math.round(((p.value * UNIT_SECONDS[from]) / UNIT_SECONDS[to]) * 100) / 100);
+  // até 4 casas: com 2, 5 min virava 0,08 h (= 4,8 min) e a simulação passava a usar 288 s em vez de 300 s
+  return (Math.round(((p.value * UNIT_SECONDS[from]) / UNIT_SECONDS[to]) * 10000) / 10000).toLocaleString('pt-BR', { maximumFractionDigits: 4 });
+}
+
+/** Segundos exatos mostrados na unidade escolhida (até 4 casas): usado para trocar de unidade sem acumular erro de arredondamento. */
+export function formatInUnit(seconds: number, unit: SimUnit): string {
+  return (Math.round((seconds / UNIT_SECONDS[unit]) * 10000) / 10000).toLocaleString('pt-BR', { maximumFractionDigits: 4 });
 }

@@ -3,6 +3,26 @@
 Mudanças do Automation Hub por data. Este arquivo é **público**: descreve o que mudou no produto, no banco e na
 configuração, sem dados de infraestrutura. O desenho detalhado de cada funcionalidade está no `CLAUDE.md`.
 
+## 2026-11-19 — Auditoria da aba "Robôs sem ganho": correções
+
+### Corrigido
+- **Trocar a unidade do tempo perdia precisão:** 5 min virava 0,08 h (= 4,8 min) e a simulação usava 288 s em vez de 300 s (4% a menos,
+  em silêncio). Agora a tela guarda o que foi digitado em segundos exatos: 5 min → 0,0833 h → 5 min, e o resultado não muda.
+- **Tempo menor que 1 segundo** no simulador arredondava para 0 e o campo era ignorado sem aviso; agora mostra "O tempo mínimo é 1 segundo".
+- **Jornada fora de 1 a 24 h** (ex.: 0,5) era aceita na tela e o servidor usava 7 h em silêncio; agora a tela recusa com o aviso.
+- **"Cada execução conta como 1 item" em robô que já informa `itens_processados`:** a chave padrão contaria os itens dele, não 1 por
+  execução, e o tempo gravado ficaria diferente do simulado. Nesse caso a tela grava a chave `por_execucao` (que nenhum robô informa);
+  nos demais continua a padrão. Vale na janela "Configurar" e no "Usar estes tempos".
+- **"Configurar" de quem já tem tempo** abria sempre em minutos e trocava a forma de contar pela métrica mais informada; agora abre na
+  unidade exata (horas, minutos ou segundos) e mantém a métrica e o item de hoje.
+- **Selo da aba "Robôs sem ganho"** contava só robôs que rodaram no período e filtrados; agora é o mesmo número do indicador "Robôs sem
+  tempo manual" (ativos do Hub sem tempo, rodando ou não).
+- **Indicador "Tempo ganho no período"** passa a dizer "com os filtros atuais" quando há filtro de automação/departamento/pessoas/origem
+  (o total já era filtrado, sem avisar), e a aba avisa que esses filtros não se aplicam a ela (só o período).
+- **Frases do simulador:** "0,3 pessoas" nas frases e "0,3 pessoa" nos indicadores; agora as duas seguem a mesma regra (0,1 a 1,9 =
+  "pessoa").
+- O preview do formulário (modo leve) deixou de carregar a janela de 12 meses de execuções que não usava.
+
 ## 2026-11-19 — Simulador: lista de robôs recolhida no "igual para todos"
 
 ### Mudado (só frontend; só administradores e Inovação)
