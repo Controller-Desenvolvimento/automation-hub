@@ -1,4 +1,4 @@
-import { Controller, Get, Query, Req, Res } from '@nestjs/common';
+import { Body, Controller, Get, Post, Query, Req, Res } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import type { Request, Response } from 'express';
 import { AuthService } from '../auth/auth.service';
@@ -69,6 +69,22 @@ export class ReportsController {
     const user = await this.authService.requireUser(request);
     this.authService.ensureAdmin(user);
     return this.reportsService.listRobotsWithoutGain({ from: query.from, to: query.to });
+  }
+
+  // Simulador de ganhos (aba "Robôs sem ganho"): só administradores; não grava nada.
+  @Post('robots-without-gain/simulate')
+  async simulateRobotsGain(@Req() request: Request, @Body() body: Record<string, unknown>) {
+    const user = await this.authService.requireUser(request);
+    this.authService.ensureAdmin(user);
+    return this.reportsService.simulateGains(user, {
+      from: typeof body.from === 'string' ? body.from : undefined,
+      to: typeof body.to === 'string' ? body.to : undefined,
+      scope: typeof body.scope === 'string' ? body.scope : undefined,
+      base: typeof body.base === 'string' ? body.base : undefined,
+      times: body.times && typeof body.times === 'object' ? (body.times as Record<string, unknown>) : undefined,
+      excluded: body.excluded,
+      workdayHours: body.workdayHours,
+    });
   }
 
   @Get('time-savings')

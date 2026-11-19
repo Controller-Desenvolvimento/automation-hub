@@ -28,7 +28,8 @@ import {
   type SeriesPoint,
   type TimeSavingsConfig,
 } from './time-savings-metrics';
-import { summarizeMetricLogs } from './robots-without-gain';
+import { metricsByExecution, summarizeMetricLogs } from './robots-without-gain';
+import { MAX_SIM_SECONDS, peopleOf, simInsights, simulate, type SimBase, type SimInput, type SimRobot, type SimScope } from './time-savings-simulator';
 
 const EXTERNAL_SOURCE_PREFIX = 'ext:';
 const PAGE_SIZE = 1000;
@@ -199,6 +200,134 @@ export class ReportsService {
           metrics: summarizeMetricLogs(logsBy.get(robot.id) ?? []),
         }))
         .sort((a, b) => b.executions - a.executions || a.name.localeCompare(b.name, 'pt-BR')),
+    };
+  }
+
+  /**
+   * Simulador de ganhos: projeta as execuções REAIS do período para 1 mês com os tempos que a pessoa escolheu. Nada é gravado.
+   * `times` = segundos por item (ou por execução) de cada robô; robô sem tempo informado não soma (ou mantém o atual, se já tem).
+   * Robôs externos ficam de fora (o sistema deles informa o tempo de cada execução). Só administradores (a rota confere).
+   */
+  async simulateGains(
+    user: User,
+    input: { from?: string; to?: string; scope?: string; base?: string; times?: Record<string, unknown>; excluded?: unknown; workdayHours?: unknown },
+  ) {
+    const from = input.from && isDayString(input.from) ? input.from : null;
+    const to = input.to && isDayString(input.to) ? input.to : null;
+    const scope: SimScope = input.scope === 'todos' ? 'todos' : 'sem';
+    const base: SimBase = input.base === 'item' ? 'item' : 'exec';
+    const hours = Number(input.workdayHours);
+    const workdayHours = Number.isFinite(hours) && hours >= 1 && hours <= 24 ? hours : 7;
+    const times: Record<string, number> = {};
+    for (const [id, value] of Object.entries(input.times ?? {})) {
+      const seconds = Number(value);
+      if (Number.isFinite(seconds) && seconds > 0) times[id] = Math.min(MAX_SIM_SECONDS, Math.round(seconds));
+    }
+    const excluded = new Set(Array.isArray(input.excluded) ? input.excluded.filter((x): x is string => typeof x === 'string') : []);
+
+    const robotRows = await this.prisma.robot.findMany({
+      where: { isActive: true, isExternal: false, ...(scope === 'sem' ? { manualSecondsPerUnit: 0 } : {}) },
+      select: { id: true, name: true, manualSecondsPerUnit: true },
+      orderBy: { name: 'asc' },
+    });
+    const robots = robotRows.filter((r) => !excluded.has(r.id));
+    const ids = robots.map((r) => r.id);
+
+    const finishedAt: Prisma.DateTimeFilter = {};
+    if (from) finishedAt.gte = dayStart(from);
+    if (to) finishedAt.lte = dayEnd(to);
+    const success: Prisma.ExecutionWhereInput = {
+      robotId: { in: ids },
+      status: ExecutionStatus.success,
+      ...(Object.keys(finishedAt).length ? { finishedAt } : { finishedAt: { not: null } }),
+    };
+    const withoutTimeIds = robots.filter((r) => r.manualSecondsPerUnit === 0).map((r) => r.id);
+    const executions = ids.length
+      ? await this.prisma.execution.findMany({
+          where: success,
+          select: { id: true, robotId: true, finishedAt: true, unitsProcessed: true, manualEstimatedSeconds: true, scheduledTaskId: true },
+          take: 300_000,
+        })
+      : [];
+    const firsts = ids.length
+      ? await this.prisma.execution.groupBy({ by: ['robotId'], where: { robotId: { in: ids }, status: ExecutionStatus.success, finishedAt: { not: null } }, _min: { finishedAt: true } })
+      : [];
+    const logs =
+      base === 'item' && withoutTimeIds.length
+        ? await this.prisma.executionLog.findMany({
+            where: { message: { startsWith: 'Metrica registrada: ' }, execution: { ...success, robotId: { in: withoutTimeIds } } },
+            select: { executionId: true, message: true, execution: { select: { robotId: true } } },
+            take: 300_000,
+          })
+        : [];
+    const report = await this.getTimeSavingsReport(user, { from: from ?? undefined, to: to ?? undefined });
+
+    const firstBy = new Map(firsts.map((f) => [f.robotId, f._min.finishedAt?.getTime() ?? null]));
+    const logsBy = new Map<string, Array<{ executionId: string; message: string }>>();
+    for (const row of logs) {
+      const list = logsBy.get(row.execution.robotId) ?? [];
+      list.push({ executionId: row.executionId, message: row.message });
+      logsBy.set(row.execution.robotId, list);
+    }
+    const execBy = new Map<string, typeof executions>();
+    for (const e of executions) execBy.set(e.robotId, [...(execBy.get(e.robotId) ?? []), e]);
+
+    const simRobots: SimRobot[] = robots.map((robot) => {
+      const hasTime = robot.manualSecondsPerUnit > 0;
+      const rows = logsBy.get(robot.id) ?? [];
+      // Sem tempo configurado, "item" = a métrica que o robô mais informa (a mesma que a janela Configurar sugere).
+      const key = hasTime ? null : summarizeMetricLogs(rows)[0]?.key ?? null;
+      const perExecution = hasTime || !key ? null : metricsByExecution(rows);
+      return {
+        robotId: robot.id,
+        name: robot.name,
+        hasTime,
+        firstAt: firstBy.get(robot.id) ?? null,
+        fallbackAvgItems: null,
+        executions: (execBy.get(robot.id) ?? []).map((e) => ({
+          finishedAt: e.finishedAt!.getTime(),
+          scheduled: e.scheduledTaskId !== null,
+          storedGain: e.manualEstimatedSeconds ?? robot.manualSecondsPerUnit * Math.max(0, e.unitsProcessed ?? 1),
+          units: hasTime ? e.unitsProcessed : key ? perExecution?.get(e.id)?.get(key) ?? null : null,
+        })),
+      };
+    });
+
+    const simInput: SimInput = {
+      robots: simRobots,
+      base,
+      times,
+      workdayHours,
+      from: from ? dayStart(from).getTime() : null,
+      now: this.clock().getTime(),
+      reportSavedSeconds: report.totals.savedSeconds,
+    };
+    const main = simulate(simInput, 1);
+    const low = simulate(simInput, 0.5);
+    const high = simulate(simInput, 1.5);
+    const people = (seconds: number) => peopleOf(seconds, workdayHours);
+    return {
+      scope,
+      base,
+      workdayHours,
+      range: from || to ? { from, to } : null,
+      days: main.days,
+      months: main.months,
+      currentMonth: main.currentMonth,
+      simulatedMonth: main.simulatedMonth,
+      extraMonth: main.extra,
+      extraYear: main.extra * 12,
+      fromWithout: main.fromWithout,
+      fromNewTimes: main.fromNewTimes,
+      reportMonth: main.reportMonth,
+      people: { extra: people(main.extra), total: people(main.reportMonth + main.extra), current: people(main.reportMonth) },
+      band: {
+        low: { extraMonth: low.extra, people: people(low.extra) },
+        likely: { extraMonth: main.extra, people: people(main.extra) },
+        high: { extraMonth: high.extra, people: people(high.extra) },
+      },
+      rows: main.rows.sort((a, b) => b.simulatedMonth - b.currentMonth - (a.simulatedMonth - a.currentMonth) || a.name.localeCompare(b.name, 'pt-BR')),
+      insights: simInsights(main, { base, workdayHours }),
     };
   }
 

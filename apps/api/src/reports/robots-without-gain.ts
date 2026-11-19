@@ -73,3 +73,19 @@ export function parseTimeSavingsInput(input: TimeSavingsInput): { ok: true; valu
 
   return { ok: true, value: { manualSecondsPerUnit: rounded, unitLabel: label, unitMetricKey: key } };
 }
+
+/** Soma de cada métrica por execução (a partir dos mesmos logs): execução -> chave -> valor. */
+export function metricsByExecution(rows: Array<{ executionId: string; message: string }>): Map<string, Map<string, number>> {
+  const out = new Map<string, Map<string, number>>();
+  for (const row of rows) {
+    const match = METRIC_LOG.exec(row.message.trim());
+    if (!match) continue;
+    const value = Number(match[2]);
+    if (!Number.isFinite(value)) continue;
+    const perExecution = out.get(row.executionId) ?? new Map<string, number>();
+    const key = match[1].toLowerCase();
+    perExecution.set(key, (perExecution.get(key) ?? 0) + value);
+    out.set(row.executionId, perExecution);
+  }
+  return out;
+}

@@ -119,6 +119,7 @@ export function TimeSavingsPage() {
       if (nextView === 'executions') next.set('view', 'executions');
       else if (nextView === 'no-gain') next.set('view', 'sem-ganho');
       else next.delete('view');
+      next.delete('aba');
     });
   }
 
@@ -299,6 +300,8 @@ export function TimeSavingsPage() {
             setReloadKey((k) => k + 1);
             void refreshHub();
           }}
+          sub={searchParams.get('aba') === 'simular' ? 'sim' : 'lista'}
+          onSub={(next) => updateParams((params) => (next === 'sim' ? params.set('aba', 'simular') : params.delete('aba')))}
         />
       ) : view === 'executions' ? (
         <ExecutionsTable
