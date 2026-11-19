@@ -7,6 +7,8 @@ export type SimRow = {
   robotId: string;
   name: string;
   hasTime: boolean;
+  /** Robô externo: o ganho vem do próprio sistema dele ("usar estes tempos" não grava nele). */
+  external: boolean;
   executions: number;
   scheduled: number;
   currentMonth: number;
@@ -14,6 +16,8 @@ export type SimRow = {
   source: SimSource;
   perExecution: number | null;
   avgItems: number | null;
+  /** Só de robô externo: segundos que ele ganha hoje por item (ou por execução, se não informa a quantidade). */
+  currentPerUnit: number | null;
   estimated: number;
   days: number;
   monthsCovered: number;

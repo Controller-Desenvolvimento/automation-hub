@@ -25,6 +25,8 @@ export type SimRobot = {
   name: string;
   /** Tem tempo manual configurado hoje (só aparece no escopo "somando os que já têm ganho"). */
   hasTime: boolean;
+  /** Robô externo: o sistema dele informa o ganho de cada execução (entra na simulação só se a pessoa pedir). */
+  external?: boolean;
   executions: SimExecution[];
   /** Primeira execução do robô (ms): um robô que começou há 20 dias não é diluído no período inteiro. */
   firstAt: number | null;
@@ -56,6 +58,8 @@ export type SimRow = {
   robotId: string;
   name: string;
   hasTime: boolean;
+  /** Robô externo (o tempo dele vem do próprio sistema; "usar estes tempos" não grava nele). */
+  external: boolean;
   executions: number;
   scheduled: number;
   /** Segundos por mês, hoje e simulado. */
@@ -65,6 +69,8 @@ export type SimRow = {
   /** Segundos que cada execução somaria (null quando o robô mantém o tempo atual). */
   perExecution: number | null;
   avgItems: number | null;
+  /** Só de robô externo: segundos que ele ganha hoje por item (ou por execução, se não informa a quantidade). */
+  currentPerUnit: number | null;
   estimated: number;
   /** Dias de histórico do robô dentro do período. */
   days: number;
@@ -185,6 +191,12 @@ export function simulate(input: SimInput, mult = 1): SimResult {
     let perExecution: number | null = null;
     let avgItems: number | null = null;
     let estimated = 0;
+    let currentPerUnit: number | null = null;
+    if (robot.external) {
+      const now0 = unitsOf(robot, 'item', true);
+      currentPerUnit = now0.total > 0 ? current / now0.total : null;
+      avgItems = list.length ? now0.avg : null;
+    }
 
     if (robot.hasTime) {
       if (!has) {
@@ -214,6 +226,7 @@ export function simulate(input: SimInput, mult = 1): SimResult {
       robotId: robot.robotId,
       name: robot.name,
       hasTime: robot.hasTime,
+      external: robot.external === true,
       executions: list.length,
       scheduled: list.filter((e) => e.scheduled).length,
       currentMonth: current / mr,
@@ -221,6 +234,7 @@ export function simulate(input: SimInput, mult = 1): SimResult {
       source,
       perExecution,
       avgItems,
+      currentPerUnit,
       estimated,
       days: d,
       monthsCovered: mr,
@@ -317,6 +331,8 @@ export function simInsights(result: SimResult, input: SimInsightOptions): SimIns
     out.push({ kind: 'info', icon: result.extra > 0 ? '↑' : '↓', text: `O tempo ganho do relatório passaria de ${dur(result.reportMonth)} para ${dur(result.reportMonth + result.extra)} por mês (${result.extra > 0 ? '+' : '−'}${nf(Math.abs(result.extra / result.reportMonth) * 100)}%).` });
   }
   const news = rows.filter((r) => r.source === 'novo');
+  const ext = news.filter((r) => r.external);
+  if (ext.length) out.push({ kind: 'info', icon: '↗', text: `${names(ext)} ${ext.length === 1 ? 'é um robô externo' : 'são robôs externos'}: o ganho ${ext.length === 1 ? 'dele' : 'deles'} vem do próprio sistema que o executa. O novo tempo aqui só simula; "Usar estes tempos" não grava nada neles.` });
   if (news.length) out.push({ kind: 'info', icon: '↻', text: `Novos tempos em ${pl(news.length, 'robô que já tem ganho', 'robôs que já têm ganho')}: ${result.fromNewTimes >= 0 ? '+' : '−'}${dur(Math.abs(result.fromNewTimes))} por mês em relação aos tempos atuais.${result.fromNewTimes < 0 ? ' Os tempos novos são menores que os cadastrados hoje.' : ''}` });
   // sensibilidade: o robô em que cada unidade de tempo a mais pesa mais no mês é o que vale estimar com mais cuidado
   const unitName = input.unit ?? 'minutes';

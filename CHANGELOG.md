@@ -3,6 +3,14 @@
 Mudanças do Automation Hub por data. Este arquivo é **público**: descreve o que mudou no produto, no banco e na
 configuração, sem dados de infraestrutura. O desenho detalhado de cada funcionalidade está no `CLAUDE.md`.
 
+## 2026-11-19 — Simulador de ganhos: robôs externos como opção
+
+### Adicionado
+- Em "Robôs sem ganho" > simulador, com "Somar com os que já têm ganho" e "Simular novos tempos", a opção **Robôs externos** (desligada por
+  padrão). Ligada, os robôs externos (os que rodam fora do Hub e informam o próprio ganho) entram na tabela com o ganho de hoje (média
+  por item, ou por execução se não informam a quantidade) e dá para simular outro tempo neles. O novo tempo só entra na simulação:
+  "Usar estes tempos" não grava nada em robô externo, e a tela avisa quando algum ficou de fora.
+
 ## 2026-11-19 — Auditoria de "Saúde dos robôs" e do Suporte: correções
 
 ### Corrigido (Saúde dos robôs)

@@ -87,6 +87,7 @@ export class ReportsController {
       light: body.light === true,
       unit: typeof body.unit === 'string' ? body.unit : undefined,
       defaultIds: body.defaultIds,
+      includeExternal: body.includeExternal === true,
     });
   }
 
