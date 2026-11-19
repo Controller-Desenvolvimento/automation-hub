@@ -22,6 +22,12 @@ export const STATUS_LABELS: Record<TicketStatus, string> = {
   not_issue: 'Não é problema',
 };
 
+export const TYPE_LABELS: Record<TicketType, string> = {
+  problem: 'Algo não funciona',
+  suggestion: 'Sugestão de melhoria',
+  question: 'Dúvida',
+};
+
 export const URGENCY_LABELS: Record<TicketUrgency, string> = {
   critical: 'Crítica',
   high: 'Alta',

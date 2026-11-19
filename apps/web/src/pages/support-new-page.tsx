@@ -305,7 +305,7 @@ export function SupportNewPage() {
           <Card className="rounded-3xl">
             <CardContent className="grid gap-2 text-sm text-slate-600 dark:text-zinc-300">
               <div className="font-semibold text-slate-900 dark:text-white">Como funciona</div>
-              <p>Só você e a Inovação veem o seu chamado. As respostas aparecem aqui, em Suporte, com um número ao lado do menu e no sino. Não enviamos e-mail.</p>
+              <p>Só você e a Inovação veem o seu chamado. A Inovação é avisada por e-mail. Você acompanha as respostas aqui, em Suporte, com um número ao lado do menu e no sino (não enviamos e-mail para você).</p>
             </CardContent>
           </Card>
         </div>

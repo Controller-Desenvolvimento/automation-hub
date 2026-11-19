@@ -17,6 +17,7 @@ import {
   type ScheduledExecutionAlertInput,
 } from './scheduled-execution-alert';
 import type { ScheduledWarningInput } from './alert-extras';
+import { buildSupportAlert, supportAlertsEnabled, type SupportAlertInput } from './support-alert';
 
 const FROM    = process.env.MAIL_FROM     ?? 'inovacao01@controller-rnc.com.br';
 const PASS    = process.env.MAIL_PASSWORD ?? '';
@@ -117,6 +118,29 @@ export class MailService {
       this.logger.log(`Alerta de atualização de painel enviado para: ${BI_TO.join(', ')} — ${input.panelName}`);
     } catch (err) {
       this.logger.error(`Falha ao enviar email de alerta de painel (${input.panelName}): ${(err as Error).message}`);
+    }
+  }
+
+  // Chamado do Suporte esperando a Inovação (novo, resposta de quem abriu, reaberto): mesma lista dos alertas de BI.
+  // Só resumo e link (o texto e os anexos ficam no Hub). SUPPORT_ALERT_EMAILS=false desliga. Nunca lança.
+  async sendSupportAlert(input: SupportAlertInput): Promise<void> {
+    if (!supportAlertsEnabled()) return;
+    if (!PASS || BI_TO.length === 0) {
+      this.logger.warn('Email do Suporte não configurado (MAIL_PASSWORD ou MAIL_BI_ALERT_TO ausente).');
+      return;
+    }
+    const mail = buildSupportAlert(input);
+    try {
+      await this.transporter.sendMail({
+        from: `"Automation Hub" <${FROM}>`,
+        to: BI_TO.join(', '),
+        subject: mail.subject,
+        text: mail.text,
+        html: mail.html,
+      });
+      this.logger.log(`Alerta do Suporte (${input.kind}) enviado para: ${BI_TO.join(', ')} — #${input.number}`);
+    } catch (err) {
+      this.logger.error(`Falha ao enviar email do Suporte (#${input.number}): ${(err as Error).message}`);
     }
   }
 

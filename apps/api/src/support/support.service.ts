@@ -8,6 +8,9 @@ import {
 import type { Prisma, User } from '@prisma/client';
 import { copyFile, mkdir, rename, rm } from 'node:fs/promises';
 import { join } from 'node:path';
+import { MailService } from '../mail/mail.service';
+import { claimReplyAlert, supportAlertsEnabled, type SupportAlertKind } from '../mail/support-alert';
+import { resolveHubBaseUrl } from '../mail/scheduled-execution-alert';
 import { PrismaService } from '../prisma/prisma.service';
 import { canAccessDashboard, canAccessExecution, canAccessRobot, isAdmin } from '../shared/access';
 import { secretParameterNames } from '../shared/execution-parameters';
@@ -25,6 +28,7 @@ import {
   TICKET_SUBJECTS,
   TICKET_TYPES,
   TICKET_URGENCIES,
+  TYPE_LABELS,
   URGENCY_LABELS,
   type TicketStatus,
   type TicketType,
@@ -42,6 +46,9 @@ import {
 export type SupportUpload = { originalname?: string; mimetype?: string; size?: number; path?: string };
 
 type Actor = Pick<User, 'id' | 'name' | 'role' | 'departments'>;
+
+// Várias respostas seguidas de quem abriu o chamado viram um e-mail só: de novo só depois de 10 minutos.
+const REPLY_ALERT_WINDOW_MS = 10 * 60 * 1000;
 
 const LINKED_NOTICE =
   'Seu chamado foi ligado a um problema que já estamos tratando. As respostas chegam aqui, no seu chamado.';
@@ -80,8 +87,13 @@ type TicketRow = Prisma.SupportTicketGetPayload<{ select: typeof TICKET_ROW_SELE
 @Injectable()
 export class SupportService {
   private readonly logger = new Logger(SupportService.name);
+  // Última vez que a Inovação foi avisada por e-mail de uma RESPOSTA em cada chamado (várias seguidas viram um e-mail só).
+  private readonly replyAlerts = new Map<string, number>();
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly mail: MailService,
+  ) {}
 
   // ---------- consultas ----------
 
@@ -424,6 +436,7 @@ export class SupportService {
         throw error;
       }
 
+      if (!isAdmin(user)) void this.emailInnovation(ticket.id, 'new');
       await this.notifyAdmins(user.id, ticket.id, 'support_new', `Novo chamado #${ticket.number}: ${title}`, `${user.name} abriu um chamado. Abra "Suporte" para ver os detalhes.`);
       return { id: ticket.id, number: ticket.number };
     } finally {
@@ -500,6 +513,7 @@ export class SupportService {
           await this.prisma.supportTicket.update({ where: { id: ticket.mainTicketId }, data: { needsAdmin: true, updatedAt: new Date() }, select: { id: true } });
         }
         await this.notifyStaffOfAuthorReply(user, ticket);
+        void this.emailInnovation(ticket.id, reopen ? 'reopen' : 'reply');
       }
       return { id: message.id };
     } finally {
@@ -592,6 +606,7 @@ export class SupportService {
       await this.prisma.supportTicket.update({ where: { id: ticket.mainTicketId }, data: { needsAdmin: true, updatedAt: new Date() }, select: { id: true } });
     }
     await this.notifyStaffOfAuthorReply(user, ticket);
+    if (!isAdmin(user)) void this.emailInnovation(ticket.id, 'reopen');
     return { ok: true };
   }
 
@@ -903,7 +918,51 @@ export class SupportService {
     };
   }
 
-  // ---------- notificações (o aviso é só dentro do Hub: sem e-mail) ----------
+  // ---------- e-mail para a Inovação (só resumo e link; nunca lança nem atrasa a resposta) ----------
+
+  private async emailInnovation(ticketId: string, kind: SupportAlertKind) {
+    try {
+      if (!supportAlertsEnabled()) return;
+      if (kind === 'reply' && !claimReplyAlert(this.replyAlerts, ticketId, Date.now(), REPLY_ALERT_WINDOW_MS)) return;
+      const t = await this.prisma.supportTicket.findUnique({
+        where: { id: ticketId },
+        select: {
+          id: true, number: true, title: true, type: true, subject: true, urgency: true, hubArea: true,
+          robot: { select: { name: true } },
+          dashboard: { select: { name: true } },
+          author: { select: { name: true, departments: true } },
+          assignee: { select: { name: true } },
+          mainTicket: { select: { number: true } },
+        },
+      });
+      if (!t) return;
+      const subjectLabel =
+        t.subject === 'robot' ? (t.robot ? `Robô: ${t.robot.name}` : 'Um robô')
+        : t.subject === 'dashboard' ? (t.dashboard ? `Painel: ${t.dashboard.name}` : 'Um painel ou BI')
+        : t.subject === 'hub' ? (t.hubArea ? `Hub: ${t.hubArea}` : 'O Hub')
+        : 'Outro assunto';
+      const department = t.author.departments[0] ?? null;
+      await this.mail.sendSupportAlert({
+        kind,
+        ticketId: t.id,
+        number: t.number,
+        title: t.title,
+        authorName: t.author.name,
+        authorDepartment: department ? department.charAt(0).toUpperCase() + department.slice(1) : null,
+        typeLabel: TYPE_LABELS[t.type],
+        subjectLabel,
+        urgencyLabel: URGENCY_LABELS[t.urgency],
+        critical: t.urgency === 'critical',
+        assigneeName: t.assignee?.name ?? null,
+        linkedToNumber: t.mainTicket?.number ?? null,
+        baseUrl: resolveHubBaseUrl(),
+      });
+    } catch (error) {
+      this.logger.warn(`Não consegui enviar o e-mail do Suporte: ${(error as Error).message}`);
+    }
+  }
+
+  // ---------- notificações (dentro do Hub: menu e sino) ----------
 
   private async notifyAdmins(exceptUserId: string, ticketId: string, type: string, title: string, body: string) {
     const admins = await this.listAdmins();

@@ -17,6 +17,8 @@ const cwdOriginal = process.cwd();
 let prisma: any;
 let support: any;
 let canAccessStoragePath: any;
+const emails: any[] = [];
+const fakeMail = { sendSupportAlert: async (input: any) => { emails.push(input); } };
 let U: Record<string, any> = {};
 let n = 0;
 
@@ -29,7 +31,7 @@ before(async () => {
   ({ canAccessStoragePath } = await import('../src/shared/storage-access'));
   prisma = new PrismaService();
   await prisma.$connect();
-  support = new SupportService(prisma);
+  support = new SupportService(prisma, fakeMail as any);
   await cleanup();
   const mk = (id: string, name: string, role: string, departments: string[] = []) =>
     prisma.user.upsert({
@@ -63,6 +65,7 @@ after(async () => {
 });
 
 beforeEach(async () => {
+  emails.length = 0;
   if (!skip) await cleanup();
 });
 
@@ -413,5 +416,79 @@ test('detalhe do admin traz os chamados parecidos; o autor não', { skip }, asyn
   await support.merge(U.ino, { mainId: a.id, ticketIds: [b.id] });
   assert.deepEqual((await support.get(a.id, U.ino)).similar, [], 'depois de juntar, nada a sugerir');
   assert.deepEqual((await support.get(b.id, U.ino)).similar, [], 'ligado não recebe sugestão');
+});
+
+// O e-mail é disparado em segundo plano (sem await): dá um respiro para a fila de tarefas.
+const tick = () => new Promise((resolve) => setTimeout(resolve, 60));
+
+test('e-mail para a Inovação: chamado novo avisa; quem é da Inovação abrindo não avisa', { skip }, async () => {
+  const { id, number } = await open(U.ana, { urgency: 'critical' });
+  await tick();
+  assert.equal(emails.length, 1);
+  assert.equal(emails[0].kind, 'new');
+  assert.equal(emails[0].ticketId, id);
+  assert.equal(emails[0].number, number);
+  assert.equal(emails[0].authorName, 'Ana');
+  assert.equal(emails[0].authorDepartment, 'Fiscal');
+  assert.equal(emails[0].critical, true);
+  assert.equal(emails[0].subjectLabel, 'Robô: Robô Teste');
+  assert.equal(emails[0].typeLabel, 'Algo não funciona');
+  assert.equal(JSON.stringify(emails[0]).includes('Deu erro na linha 5'), false, 'o texto da mensagem nunca vai no e-mail');
+  await open(U.ino);
+  await tick();
+  assert.equal(emails.length, 1, 'chamado aberto pela própria Inovação não gera e-mail');
+});
+
+test('e-mail para a Inovação: resposta de quem abriu avisa (uma vez por janela); resposta da Inovação não avisa', { skip }, async () => {
+  const { id } = await open(U.ana);
+  await tick();
+  emails.length = 0;
+  await support.addMessage(id, U.ino, { body: 'Olá, estamos vendo' });
+  await tick();
+  assert.equal(emails.length, 0, 'a Inovação respondendo não manda e-mail para a Inovação');
+  await support.addMessage(id, U.ana, { body: 'Segue mais detalhe' });
+  await tick();
+  assert.deepEqual(emails.map((e) => e.kind), ['reply']);
+  await support.addMessage(id, U.ana, { body: 'E mais um detalhe' });
+  await support.addMessage(id, U.ana, { body: 'E outro' });
+  await tick();
+  assert.equal(emails.length, 1, 'respostas seguidas viram um e-mail só');
+  await support.addMessage(id, U.ino, { body: 'nota', internal: 'true' });
+  await tick();
+  assert.equal(emails.length, 1, 'nota interna nunca manda e-mail');
+});
+
+test('e-mail para a Inovação: reabrir avisa sempre, inclusive dentro da janela de respostas', { skip }, async () => {
+  const { id } = await open(U.ana);
+  await support.addMessage(id, U.ana, { body: 'Mais um detalhe' });
+  await support.update(id, U.ino, { status: 'resolved' });
+  await tick();
+  emails.length = 0;
+  await support.reopen(id, U.ana);
+  await tick();
+  assert.deepEqual(emails.map((e) => e.kind), ['reopen']);
+  await support.update(id, U.ino, { status: 'resolved' });
+  await support.addMessage(id, U.ana, { body: 'Ainda dá erro, respondendo direto' }); // responder num encerrado também reabre
+  await tick();
+  assert.deepEqual(emails.map((e) => e.kind), ['reopen', 'reopen']);
+});
+
+test('e-mail para a Inovação: falha no envio não derruba a abertura do chamado', { skip }, async () => {
+  const quebrado = new (support.constructor as any)(prisma, { sendSupportAlert: async () => { throw new Error('SMTP fora do ar'); } });
+  const r = await quebrado.create(U.ana, { type: 'problem', subject: 'hub', title: 'Teste de falha', body: 'x' });
+  await tick();
+  assert.ok(r.id);
+  assert.equal(await prisma.supportTicket.count(), 1);
+});
+
+test('e-mail para a Inovação: SUPPORT_ALERT_EMAILS=false desliga', { skip }, async () => {
+  process.env.SUPPORT_ALERT_EMAILS = 'false';
+  try {
+    await open(U.ana);
+    await tick();
+    assert.equal(emails.length, 0);
+  } finally {
+    delete process.env.SUPPORT_ALERT_EMAILS;
+  }
 });
 
