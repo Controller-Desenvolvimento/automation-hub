@@ -333,7 +333,8 @@ export function SupportTicketPage() {
         </div>
 
         <aside className="space-y-4">
-          {isAdmin ? (
+          {/* Administrar (urgência e responsável) só enquanto o chamado está em andamento; encerrado, volta quando for reaberto. */}
+          {isAdmin && !closed ? (
             <Card className="rounded-3xl">
               <CardContent className="grid gap-3 text-sm">
                 <div className="font-semibold text-slate-900 dark:text-white">Administrar</div>

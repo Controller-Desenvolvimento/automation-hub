@@ -11,6 +11,8 @@ configuração, sem dados de infraestrutura. O desenho detalhado de cada funcion
   com o cursor já na caixa de texto, e a tela não precisa rolar.
 
 ### Mudado
+- **O cartão "Administrar" (urgência e responsável) some quando o chamado está encerrado** e volta se ele for reaberto. A urgência
+  continua no resumo do encerramento ("Resolvido por … · Urgência …").
 - "Sim, obrigado" passou a **"Sim, obrigado(a)"** (botão e a mensagem registrada na conversa); em "Não é problema" continua "Sim,
   concordo". A API mudou só esse texto (sem mudança no banco).
 
