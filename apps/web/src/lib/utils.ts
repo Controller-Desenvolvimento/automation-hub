@@ -177,3 +177,14 @@ export function automationRequestCadenceLabel(cadence: AutomationRequestCadence)
     monthly: 'Mensal',
   }[cadence];
 }
+
+/** Data completa e plausível (AAAA-MM-DD, ano de 2000 a 2100). Enquanto a pessoa digita, o campo de data passa por valores
+ * pela metade (ano 0002, 0020, 0202...) ou vazios: nenhum deles pode virar filtro. */
+export function isCompleteDay(value: string): boolean {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!match) return false;
+  const year = Number(match[1]);
+  if (year < 2000 || year > 2100) return false;
+  const date = new Date(year, Number(match[2]) - 1, Number(match[3]));
+  return date.getFullYear() === year && date.getMonth() === Number(match[2]) - 1 && date.getDate() === Number(match[3]);
+}

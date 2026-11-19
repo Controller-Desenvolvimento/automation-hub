@@ -3,6 +3,16 @@
 Mudanças do Automation Hub por data. Este arquivo é **público**: descreve o que mudou no produto, no banco e na
 configuração, sem dados de infraestrutura. O desenho detalhado de cada funcionalidade está no `CLAUDE.md`.
 
+## 2026-11-19 — Correção: digitar datas nos filtros de período
+
+### Corrigido (só frontend; sem mudança na API nem no banco)
+- Em **Tempo ganho** (intervalo personalizado "De" / "Até") e em **Saúde dos robôs** (período "Datas"), digitar uma data à mão
+  bagunçava o período: cada tecla virava filtro, e o campo de data passa por valores pela metade (ano 0002, 0020, 0202...) ou vazios
+  enquanto se digita. Em Tempo ganho o "Até" pela metade ficava menor que o "De", e a tela **apagava o "De"** para acompanhá-lo
+  (e ainda consultava o relatório a cada tecla). Agora cada campo guarda o que está sendo digitado e **só vira filtro quando a data
+  está completa** (ano de 2000 a 2100); apagar um pedaço do campo não muda o período. Atalhos de período e "Todo o histórico"
+  continuam substituindo o que estava digitado.
+
 ## 2026-11-19 — Tempo ganho: evolução mensal e cenários no simulador (etapa 3b de "Robôs sem ganho")
 
 ### Adicionado (só administradores e Inovação; sem mudança no banco; a simulação continua não gravando nada)
