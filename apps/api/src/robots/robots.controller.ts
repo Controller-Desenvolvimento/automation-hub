@@ -5,6 +5,7 @@ import {
   Get,
   NotFoundException,
   Param,
+  Patch,
   Post,
   Query,
   Req,
@@ -254,6 +255,18 @@ export class RobotsController {
     const user = await this.authService.requireUser(request);
     this.authService.ensureAdmin(user);
     return this.robotsService.removeInputExample(id, exampleId);
+  }
+
+  // Altera só o tempo manual do robô (3 campos), sem tocar no resto do cadastro.
+  @Patch(':id/time-savings')
+  async updateTimeSavings(@Param('id') id: string, @Body() body: Record<string, unknown>, @Req() request: Request) {
+    const user = await this.authService.requireUser(request);
+    this.authService.ensureAdmin(user);
+    return this.robotsService.updateTimeSavings(
+      id,
+      { manualSecondsPerUnit: body.manualSecondsPerUnit, unitLabel: body.unitLabel, unitMetricKey: body.unitMetricKey },
+      user,
+    );
   }
 
   @Delete(':id')

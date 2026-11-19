@@ -28,6 +28,7 @@ import {
   type SeriesPoint,
   type TimeSavingsConfig,
 } from './time-savings-metrics';
+import { summarizeMetricLogs } from './robots-without-gain';
 
 const EXTERNAL_SOURCE_PREFIX = 'ext:';
 const PAGE_SIZE = 1000;
@@ -135,6 +136,71 @@ export class ReportsService {
   clock: () => Date = () => new Date();
 
   constructor(private readonly prisma: PrismaService) {}
+
+  /**
+   * Aba "Robôs sem ganho": robôs ativos do Hub com tempo manual 0 (toda execução deles soma 0 h no relatório), com o uso no período
+   * (`from`/`to` em AAAA-MM-DD; sem datas = todo o histórico) e as métricas que o robô já informa (lidas dos logs, que a retenção
+   * apaga depois de EXECUTION_RETENTION_DAYS). Só administradores (a rota confere). Robôs externos ficam de fora: o sistema deles
+   * informa o tempo de cada execução.
+   */
+  async listRobotsWithoutGain(query: { from?: string; to?: string }) {
+    const from = query.from && isDayString(query.from) ? query.from : null;
+    const to = query.to && isDayString(query.to) ? query.to : null;
+    const finishedAt: Prisma.DateTimeFilter = {};
+    if (from) finishedAt.gte = dayStart(from);
+    if (to) finishedAt.lte = dayEnd(to);
+    const inPeriod: Prisma.ExecutionWhereInput = Object.keys(finishedAt).length ? { finishedAt } : { finishedAt: { not: null } };
+
+    const robots = await this.prisma.robot.findMany({
+      where: { isActive: true, isExternal: false, manualSecondsPerUnit: 0 },
+      select: { id: true, name: true, slug: true, category: true, allowedDepartments: true, unitLabel: true, unitMetricKey: true },
+      orderBy: { name: 'asc' },
+    });
+    const ids = robots.map((r) => r.id);
+    if (ids.length === 0) return { range: from || to ? { from, to } : null, robots: [] };
+
+    const success: Prisma.ExecutionWhereInput = { robotId: { in: ids }, status: ExecutionStatus.success, ...inPeriod };
+    const [counts, withUnits, lastRuns, logs] = await Promise.all([
+      this.prisma.execution.groupBy({ by: ['robotId'], where: success, _count: { _all: true } }),
+      this.prisma.execution.groupBy({ by: ['robotId'], where: { ...success, unitsProcessed: { not: null } }, _count: { _all: true }, _sum: { unitsProcessed: true } }),
+      this.prisma.execution.groupBy({ by: ['robotId'], where: { robotId: { in: ids } }, _max: { createdAt: true } }),
+      this.prisma.executionLog.findMany({
+        where: { message: { startsWith: 'Metrica registrada: ' }, execution: success },
+        select: { executionId: true, message: true, execution: { select: { robotId: true } } },
+        take: 200_000,
+      }),
+    ]);
+    const countBy = new Map(counts.map((c) => [c.robotId, c._count._all]));
+    const unitsBy = new Map(withUnits.map((c) => [c.robotId, { executions: c._count._all, total: c._sum.unitsProcessed ?? 0 }]));
+    const lastBy = new Map(lastRuns.map((c) => [c.robotId, c._max.createdAt]));
+    const logsBy = new Map<string, Array<{ executionId: string; message: string }>>();
+    for (const row of logs) {
+      const list = logsBy.get(row.execution.robotId) ?? [];
+      list.push({ executionId: row.executionId, message: row.message });
+      logsBy.set(row.execution.robotId, list);
+    }
+
+    return {
+      range: from || to ? { from, to } : null,
+      robots: robots
+        .map((robot) => ({
+          robotId: robot.id,
+          name: robot.name,
+          slug: robot.slug,
+          category: robot.category,
+          departments: robot.allowedDepartments,
+          unitLabel: robot.unitLabel || 'item',
+          unitMetricKey: robot.unitMetricKey || 'itens_processados',
+          /** Execuções com sucesso no período (todas entram no relatório com 0 h). */
+          executions: countBy.get(robot.id) ?? 0,
+          lastExecutionAt: lastBy.get(robot.id) ?? null,
+          /** Itens gravados nas execuções do período, quando o robô informou a métrica da chave atual. */
+          recordedUnits: unitsBy.get(robot.id) ?? { executions: 0, total: 0 },
+          metrics: summarizeMetricLogs(logsBy.get(robot.id) ?? []),
+        }))
+        .sort((a, b) => b.executions - a.executions || a.name.localeCompare(b.name, 'pt-BR')),
+    };
+  }
 
   async getTimeSavingsReport(user: User, query: QueryInput) {
     const loaded = await this.load(user, query);

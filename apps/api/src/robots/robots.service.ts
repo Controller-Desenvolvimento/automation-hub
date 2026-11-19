@@ -2,6 +2,7 @@ import {
   BadRequestException,
   ConflictException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { Prisma, type Robot, type User } from '@prisma/client';
@@ -11,6 +12,7 @@ import { dirname, join, resolve, sep } from 'node:path';
 import AdmZip from 'adm-zip';
 import { createExtractorFromData } from 'node-unrar-js';
 import { PrismaService } from '../prisma/prisma.service';
+import { parseTimeSavingsInput, type TimeSavingsInput } from '../reports/robots-without-gain';
 import {
   buildExecutionScope,
   canAccessExecution,
@@ -47,7 +49,36 @@ type PipStatus = 'installing' | 'done' | 'error';
 export class RobotsService {
   private readonly pipStatus = new Map<string, PipStatus>();
 
+  private readonly logger = new Logger(RobotsService.name);
+
   constructor(private readonly prisma: PrismaService) {}
+
+  /**
+   * Tempo manual do robô (aba "Robôs sem ganho" do Tempo ganho): altera SÓ manualSecondsPerUnit, unitLabel e unitMetricKey
+   * (o POST /api/robots é um upsert total e zeraria o que não fosse enviado). Vale daqui pra frente: as execuções já gravadas
+   * guardam o ganho calculado na hora e não mudam. Quem confere que é administrador é a rota.
+   */
+  async updateTimeSavings(id: string, input: TimeSavingsInput, actor: Pick<User, 'id'>) {
+    const robot = await this.prisma.robot.findUnique({
+      where: { id },
+      select: { id: true, name: true, isExternal: true, manualSecondsPerUnit: true, unitLabel: true, unitMetricKey: true },
+    });
+    if (!robot) throw new NotFoundException('Automação não encontrada.');
+    if (robot.isExternal) {
+      throw new BadRequestException('Robôs externos informam o tempo ganho de cada execução por conta própria: não há tempo manual para configurar aqui.');
+    }
+    const parsed = parseTimeSavingsInput(input);
+    if (!parsed.ok) throw new BadRequestException(parsed.message);
+    const updated = await this.prisma.robot.update({
+      where: { id },
+      data: parsed.value,
+      select: { id: true, name: true, manualSecondsPerUnit: true, unitLabel: true, unitMetricKey: true },
+    });
+    this.logger.log(
+      `[tempo-ganho] robô ${robot.name} (${robot.id}) alterado por ${actor.id}: ${robot.manualSecondsPerUnit}s/${robot.unitLabel}/${robot.unitMetricKey} -> ${updated.manualSecondsPerUnit}s/${updated.unitLabel}/${updated.unitMetricKey}`,
+    );
+    return updated;
+  }
 
   getPipStatus(robotId: string): PipStatus | null {
     return this.pipStatus.get(robotId) ?? null;
