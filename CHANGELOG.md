@@ -3,6 +3,22 @@
 Mudanças do Automation Hub por data. Este arquivo é **público**: descreve o que mudou no produto, no banco e na
 configuração, sem dados de infraestrutura. O desenho detalhado de cada funcionalidade está no `CLAUDE.md`.
 
+## 2026-11-19 — Tempo ganho: aba "Robôs sem ganho" (etapa 1)
+
+### Adicionado (só administradores e Inovação; sem mudança no banco)
+- Nova aba **"Robôs sem ganho"** na tela Tempo ganho (ao lado de Visão geral e Execuções, com o número de robôs que rodaram sem
+  tempo configurado). Lista os robôs **ativos do Hub** com tempo manual 0 (toda execução deles entra no relatório com 0 h): execuções
+  com sucesso no período, última execução, departamentos e as métricas (`AH_METRIC`) que o robô já informa, com a média por execução.
+  Robôs externos ficam de fora (o sistema deles informa o tempo ganho de cada execução).
+- **"Configurar"** abre uma janela: tempo manual por item (segundos, minutos ou horas), o que é um item e como contar (cada
+  execução = 1 item, ou pela métrica que o robô informa), com **prévia** de quanto isso somaria no período. Salva só esses 3
+  campos no cadastro do robô, por uma rota nova (`PATCH /api/robots/:id/time-savings`); o `POST /api/robots` continua sendo o upsert
+  total e não foi usado.
+- **Só vale daqui para frente:** as execuções já gravadas guardam o ganho calculado na hora e não mudam (nenhum número já
+  apresentado se altera). Recalcular o passado ficou para uma etapa seguinte, com registro de quem aplicou.
+- Na Visão geral, o painel de qualidade dos dados ganhou o link "Configurar o tempo desses robôs →" (só para administradores).
+- API: `GET /api/reports/robots-without-gain?from=&to=` (só administradores).
+
 ## 2026-11-19 — Saúde dos robôs: "i" que cabe na tela
 
 ### Mudado (só administradores; só leitura; sem mudança no banco; só frontend)

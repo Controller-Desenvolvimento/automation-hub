@@ -63,6 +63,14 @@ export class ReportsController {
     private readonly authService: AuthService,
   ) {}
 
+  // Aba "Robôs sem ganho": só administradores.
+  @Get('robots-without-gain')
+  async getRobotsWithoutGain(@Req() request: Request, @Query() query: RawQuery) {
+    const user = await this.authService.requireUser(request);
+    this.authService.ensureAdmin(user);
+    return this.reportsService.listRobotsWithoutGain({ from: query.from, to: query.to });
+  }
+
   @Get('time-savings')
   async getTimeSavings(@Req() request: Request, @Query() query: RawQuery) {
     const user = await this.authService.requireUser(request);
