@@ -1,10 +1,10 @@
-import { ArrowLeft, CheckCircle2, ExternalLink, Link2, Unlink } from 'lucide-react';
+import { ArrowLeft, CheckCircle2, ExternalLink, Link2, Send, Unlink } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { AttachmentBar, AttachmentView, useAttachments } from '../components/support-attachments';
 import { StatusBadge, UrgencyBadge } from '../components/support-badges';
 import { SupportMergeDialog } from '../components/support-merge-dialog';
-import { SendButton, type SendOption } from '../components/support-send-button';
+import { SituationCard, StatusHistory, closedSummary } from '../components/support-situation';
 import { Button } from '../components/ui/button';
 import { Card, CardContent } from '../components/ui/card';
 import { Textarea } from '../components/ui/textarea';
@@ -12,11 +12,12 @@ import { useAuth } from '../contexts/auth-context';
 import { useHub } from '../contexts/hub-context';
 import { api } from '../lib/api';
 import {
-  STATUSES,
   TYPE_LABELS,
   URGENCIES,
   URGENCY_LABELS,
-  statusLabel,
+  isClosedStatus,
+  lastClosing,
+  statusHistory,
   subjectText,
   type SupportOptions,
   type TicketDetail,
@@ -104,17 +105,9 @@ export function SupportTicketPage() {
   const linkedCount = ticket.linked?.length ?? 0;
   // Quem abriu e o chamado está encerrado: sem caixa de resposta (evita um "obrigado" reabrir sem querer); só o formulário de reabrir.
   const showReplyBox = isAdmin || !closed || reopening;
-  // Menu do "Enviar" (só a Inovação, e não em nota interna): responder e já mudar o status.
-  const sendOptions: SendOption[] =
-    !isAdmin || internal
-      ? []
-      : closed
-        ? [{ label: 'Enviar e reabrir (Em análise)', status: 'review' }]
-        : [
-            ...(ticket.status !== 'waiting' ? [{ label: 'Enviar e aguardar usuário', status: 'waiting' as const }] : []),
-            { label: 'Enviar e resolver', status: 'resolved' as const },
-            { label: 'Enviar e marcar como "Não é problema"', status: 'not_issue' as const },
-          ];
+  // Quem abriu, quem mudou o status, quem resolveu e quem reabriu (vem das linhas de status da conversa).
+  const events = statusHistory(ticket.messages, { at: ticket.createdAt, by: ticket.author?.name ?? user?.name ?? 'Quem abriu' });
+  const closing = lastClosing(events, ticket.status);
 
   async function patch(data: Record<string, unknown>, okMessage?: string) {
     if (!ticket || busy) return;
@@ -125,6 +118,29 @@ export function SupportTicketPage() {
       await load();
     } catch (err) {
       notify(err instanceof Error ? err.message : 'Não foi possível salvar.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function applyStatus(status: TicketStatus, message?: string): Promise<boolean> {
+    if (!ticket || busy) return false;
+    setBusy(true);
+    try {
+      if (message) {
+        const form = new FormData();
+        form.set('body', message);
+        form.set('status', status);
+        await api(`/support/tickets/${ticket.id}/messages`, { method: 'POST', body: form });
+      } else {
+        await api(`/support/tickets/${ticket.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status }) });
+      }
+      notify(isClosedStatus(status) ? 'Chamado encerrado. Quem abriu foi avisado.' : 'Situação atualizada.');
+      await load();
+      return true;
+    } catch (err) {
+      notify(err instanceof Error ? err.message : 'Não foi possível salvar.');
+      return false;
     } finally {
       setBusy(false);
     }
@@ -218,17 +234,29 @@ export function SupportTicketPage() {
         </div>
       ) : null}
 
+      {isAdmin ? (
+        <SituationCard
+          status={ticket.status}
+          urgency={ticket.urgency}
+          authorConfirmed={ticket.authorConfirmed}
+          events={events}
+          closing={closing}
+          busy={busy}
+          onApply={applyStatus}
+        />
+      ) : null}
+
       {!isAdmin && closed ? (
         <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-emerald-300 bg-emerald-50 px-4 py-3 text-sm text-emerald-900 dark:border-emerald-500/40 dark:bg-emerald-950/30 dark:text-emerald-100">
           <CheckCircle2 className="h-5 w-5 shrink-0" />
           {ticket.authorConfirmed ? (
             <>
-              <span>Você confirmou que está resolvido. Se voltar a acontecer, reabra o chamado.</span>
+              <span>{closedSummary(closing, ticket.status, ticket.urgency, 'author')}. Você confirmou. Se voltar a acontecer, reabra o chamado.</span>
               {!reopening ? <Button size="sm" variant="outline" disabled={busy} onClick={() => setReopening(true)}>Reabrir chamado</Button> : null}
             </>
           ) : (
             <>
-              <span className="font-medium">{ticket.status === 'resolved' ? 'A Inovação marcou como resolvido. Resolveu para você?' : 'A Inovação respondeu que não é um problema. Você concorda?'}</span>
+              <span className="font-medium">{closedSummary(closing, ticket.status, ticket.urgency, 'author')}. {ticket.status === 'resolved' ? 'Resolveu para você?' : 'Você concorda?'}</span>
               <Button size="sm" disabled={busy} onClick={() => void confirmResolved()}>
                 {ticket.status === 'resolved' ? 'Sim, obrigado' : 'Sim, concordo'}
               </Button>
@@ -237,6 +265,7 @@ export function SupportTicketPage() {
           )}
         </div>
       ) : null}
+      {!isAdmin && events.length > 1 ? <StatusHistory events={events} viewer="author" /> : null}
 
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_320px]">
         <div className="space-y-4">
@@ -283,12 +312,10 @@ export function SupportTicketPage() {
                 </div>
               ) : null}
               <div className="flex flex-wrap items-center gap-3">
-                <SendButton
-                  onSend={(status) => void send(status)}
-                  options={sendOptions}
-                  sending={sending}
-                  label={reopening ? 'Reabrir chamado' : internal ? 'Salvar nota' : 'Enviar'}
-                />
+                <Button onClick={() => void send()} disabled={sending}>
+                  <Send className="mr-2 h-4 w-4" />
+                  {sending ? 'Enviando...' : reopening ? 'Confirmar reabertura' : internal ? 'Salvar nota' : 'Enviar'}
+                </Button>
                 {reopening ? (
                   <Button variant="outline" disabled={sending} onClick={() => { setReopening(false); setBody(''); att.clear(); }}>
                     Cancelar
@@ -306,12 +333,6 @@ export function SupportTicketPage() {
             <Card className="rounded-3xl">
               <CardContent className="grid gap-3 text-sm">
                 <div className="font-semibold text-slate-900 dark:text-white">Administrar</div>
-                <label className="grid gap-1.5">
-                  <span className="text-xs font-medium text-slate-500">Status</span>
-                  <select className={selectClass} value={ticket.status} disabled={busy} onChange={(e) => void patch({ status: e.target.value })}>
-                    {STATUSES.map((s) => <option key={s} value={s}>{statusLabel(s, 'admin')}</option>)}
-                  </select>
-                </label>
                 <label className="grid gap-1.5">
                   <span className="text-xs font-medium text-slate-500">Urgência</span>
                   <select className={selectClass} value={ticket.urgency} disabled={busy} onChange={(e) => void patch({ urgency: e.target.value as TicketUrgency })}>
@@ -446,7 +467,7 @@ function MessageItem({ message: m, ticketAuthorName, notify }: { message: Ticket
     return (
       <div className="text-center text-xs text-slate-500 dark:text-zinc-400">
         {m.kind === 'system_admin' ? <span className="mr-1 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-amber-800 dark:bg-amber-950 dark:text-amber-200">só Inovação</span> : null}
-        {m.body} · {formatDate(m.createdAt)}
+        {m.body}{m.author && m.kind === 'system' ? ` (${m.author.name})` : ''} · {formatDate(m.createdAt)}
       </div>
     );
   }

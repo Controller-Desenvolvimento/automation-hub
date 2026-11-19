@@ -211,3 +211,54 @@ export function subjectText(t: Pick<TicketRow, 'subject' | 'robot' | 'dashboard'
   if (t.subject === 'hub') return t.hubArea ? `Hub: ${t.hubArea}` : 'O Hub';
   return 'Outro assunto';
 }
+
+// ---------- histórico da situação ----------
+
+export type StatusEvent = {
+  id: string;
+  status: TicketStatus;
+  at: string;
+  by: string;
+  /** Mudou de encerrado para em andamento. */
+  reopened: boolean;
+  /** Primeira linha do histórico: quando o chamado foi aberto. */
+  opening?: boolean;
+};
+
+// O servidor escreve "Status alterado para: <rótulo>." a cada mudança (com quem mudou). Os rótulos de lá:
+const SERVER_STATUS_LABELS: Record<string, TicketStatus> = {
+  Aberto: 'open',
+  'Em análise': 'review',
+  'Aguardando resposta': 'waiting',
+  Resolvido: 'resolved',
+  'Não é problema': 'not_issue',
+};
+
+export function isClosedStatus(status: TicketStatus) {
+  return status === 'resolved' || status === 'not_issue';
+}
+
+/** Linha do tempo da situação do chamado (quem abriu, quem mudou o status, quem resolveu e quem reabriu), da mais antiga para a mais nova. */
+export function statusHistory(
+  messages: Array<{ id: string; kind: MessageKind; body: string; createdAt: string; author: { name: string } | null }>,
+  opened: { at: string; by: string },
+): StatusEvent[] {
+  const events: StatusEvent[] = [{ id: 'opening', status: 'open', at: opened.at, by: opened.by, reopened: false, opening: true }];
+  let previous: TicketStatus = 'open';
+  for (const m of messages) {
+    if (m.kind !== 'system') continue;
+    const match = /^Status alterado para: (.+)\.$/.exec(m.body);
+    const status = match ? SERVER_STATUS_LABELS[match[1]] : undefined;
+    if (!status) continue;
+    events.push({ id: m.id, status, at: m.createdAt, by: m.author?.name ?? 'Sistema', reopened: isClosedStatus(previous) && !isClosedStatus(status) });
+    previous = status;
+  }
+  return events;
+}
+
+/** Quem encerrou o chamado (o último evento de encerramento, se ele está encerrado agora). */
+export function lastClosing(events: StatusEvent[], status: TicketStatus): StatusEvent | null {
+  if (!isClosedStatus(status)) return null;
+  for (let i = events.length - 1; i >= 0; i--) if (isClosedStatus(events[i].status)) return events[i];
+  return null;
+}
