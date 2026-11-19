@@ -3,6 +3,19 @@
 Mudanças do Automation Hub por data. Este arquivo é **público**: descreve o que mudou no produto, no banco e na
 configuração, sem dados de infraestrutura. O desenho detalhado de cada funcionalidade está no `CLAUDE.md`.
 
+## 2026-11-19 — Suporte: reabrir chamado visível e "Sim, obrigado(a)"
+
+### Corrigido
+- **Quem abriu um chamado encerrado clicava em "Reabrir chamado" e "nada acontecia".** O formulário (motivo + "Confirmar
+  reabertura") abria no fim da página, fora da tela, e o botão sumia. Agora o formulário aparece **logo abaixo da faixa verde**,
+  com o cursor já na caixa de texto, e a tela não precisa rolar.
+
+### Mudado
+- **O cartão "Administrar" (urgência e responsável) some quando o chamado está encerrado** e volta se ele for reaberto. A urgência
+  continua no resumo do encerramento ("Resolvido por … · Urgência …").
+- "Sim, obrigado" passou a **"Sim, obrigado(a)"** (botão e a mensagem registrada na conversa); em "Não é problema" continua "Sim,
+  concordo". A API mudou só esse texto (sem mudança no banco).
+
 ## 2026-11-19 — Suporte: cartão "Situação" (encerrar, reabrir e histórico de quem fez o quê)
 
 ### Mudado (só frontend: sem mudança na API nem no banco)

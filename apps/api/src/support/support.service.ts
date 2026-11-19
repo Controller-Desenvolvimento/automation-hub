@@ -582,14 +582,14 @@ export class SupportService {
     return { ok: true };
   }
 
-  /** Quem abriu confirma que foi resolvido ("Sim, obrigado" / "Sim, concordo"). */
+  /** Quem abriu confirma que foi resolvido ("Sim, obrigado(a)" / "Sim, concordo"). */
   async confirm(id: string, user: User) {
     const ticket = await this.ownTicket(id, user);
     if (!isClosed(ticket.status)) throw new BadRequestException('Este chamado ainda não foi encerrado.');
     if (ticket.authorConfirmed) return { ok: true };
     await this.prisma.$transaction([
       this.prisma.supportMessage.create({
-        data: { ticketId: id, authorId: user.id, kind: 'message', body: ticket.status === 'resolved' ? 'Sim, obrigado.' : 'Sim, concordo.' },
+        data: { ticketId: id, authorId: user.id, kind: 'message', body: ticket.status === 'resolved' ? 'Sim, obrigado(a).' : 'Sim, concordo.' },
       }),
       this.prisma.supportTicket.update({ where: { id }, data: { authorConfirmed: true, needsAdmin: false }, select: { id: true } }),
     ]);
