@@ -9,6 +9,10 @@ import {
   categorySeries,
   createClassifier,
   dayKey,
+  durationSeries,
+  evolutionSeries,
+  heatGranularity,
+  heatmapGrid,
   previousPeriod,
   resolvePeriod,
   summarize,
@@ -72,6 +76,10 @@ export class RobotHealthService {
       : [];
     const names = new Map(robots.map((r) => [r.id, r]));
 
+    // Os 4 robôs mais usados do período (para o gráfico de duração) e a grade robô × dia.
+    const topRobots = [...robotRows].sort((x, y) => y.executions - x.executions).slice(0, 4);
+    const heat = heatmapGrid(current, period.from, period.to, heatGranularity(period.days), classify);
+
     const granularity: Granularity = query.granularity === 'day' || query.granularity === 'week' || query.granularity === 'month' ? query.granularity : autoGranularity(period.days);
 
     return {
@@ -84,6 +92,17 @@ export class RobotHealthService {
         .map((row) => ({ ...row, name: names.get(row.robotId)?.name ?? 'Robô removido', slug: names.get(row.robotId)?.slug ?? '', active: names.get(row.robotId)?.isActive ?? false }))
         .sort((a, b) => b.executions - a.executions || a.name.localeCompare(b.name, 'pt-BR')),
       categories: { granularity, buckets: categorySeries(current, period.from, period.to, granularity, classify) },
+      evolution: evolutionSeries(current, period.from, period.to, granularity, classify),
+      durations: durationSeries(current, topRobots.map((r) => r.robotId), period.from, period.to, granularity).map((d) => ({
+        ...d,
+        name: names.get(d.robotId)?.name ?? 'Robô removido',
+        executions: topRobots.find((r) => r.robotId === d.robotId)?.executions ?? 0,
+      })),
+      heatmap: {
+        granularity: heat.granularity,
+        buckets: heat.buckets,
+        rows: heat.rows.map((row) => ({ ...row, name: names.get(row.robotId)?.name ?? 'Robô removido' })),
+      },
       causes: topCauses(current, classify),
       categoryInfo: ERROR_CATEGORIES.map((key) => ({ key, ...CATEGORY_INFO[key] })),
     };
