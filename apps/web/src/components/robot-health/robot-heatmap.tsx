@@ -81,7 +81,8 @@ function HeatPlot({ heatmap, period, w }: { heatmap: Heatmap; period: Period; w:
     const next = { r: Math.min(rows.length - 1, Math.max(0, base.r + (ring ? mv[0] : 0))), c: Math.min(nd - 1, Math.max(0, base.c + (ring ? mv[1] : 0))) };
     setRing(next);
     const rc = svgRef.current?.getBoundingClientRect();
-    if (rc) tip.show(rc.left + (next.c + 0.5) * cw - (boxRef.current?.scrollLeft ?? 0) + aw, rc.top + (next.r + 0.5) * CH, describe(next.r, next.c));
+    // O retângulo do svg já acompanha a rolagem: a célula está em rc.left + a posição dela (antes descontava a rolagem e somava o eixo de novo).
+    if (rc) tip.show(rc.left + (next.c + 0.5) * cw, rc.top + (next.r + 0.5) * CH, describe(next.r, next.c));
   };
 
   if (!rows.length) return <div className="hc-empty">Nenhuma execução neste filtro.</div>;

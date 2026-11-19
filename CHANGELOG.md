@@ -3,6 +3,30 @@
 Mudanças do Automation Hub por data. Este arquivo é **público**: descreve o que mudou no produto, no banco e na
 configuração, sem dados de infraestrutura. O desenho detalhado de cada funcionalidade está no `CLAUDE.md`.
 
+## 2026-11-19 — Auditoria de "Saúde dos robôs" e do Suporte: correções
+
+### Corrigido (Saúde dos robôs)
+- **Causas de erro, "Acumulado":** o percentual passava de 100% (ex.: 142%) quando o gráfico era redesenhado (trocar Gráfico/Tabela,
+  redimensionar a janela). Agora o acumulado é calculado antes, por posição, e termina sempre em 100%.
+- **Período com "De" no futuro** (ex.: de 01/12 a 01/01, estando em 19/11) devolvia dias que ainda não existem; agora o começo e o fim
+  nunca passam de hoje.
+- **Insight do reinício do Hub:** só aparecia com 10 erros ou mais, e a "boa notícia" (nenhuma execução interrompida) só aparecia com
+  zero erros no total, mesmo que nenhum fosse do Hub. Agora as duas frases dependem só dos erros do Hub.
+- **Mapa de falhas por robô e dia:** a dica ao navegar pelo teclado (setas) aparecia deslocada; agora fica sobre a célula.
+
+### Corrigido (Suporte)
+- **Aviso de resposta em chamados ligados:** o sino de cada pessoa ligada apontava para o chamado do primeiro da lista (e o aviso de
+  quem não era o primeiro nunca sumia). Agora cada pessoa é avisada no próprio chamado, com o número dele.
+- **E-mail para a Inovação:** o departamento aparecia pelo código ("Legalizacao", "Sucesso_do_cliente"); agora usa o nome cadastrado
+  ("Legalização").
+- **Confirmação de quem abriu:** uma resposta da Inovação num chamado já encerrado e confirmado derrubava a confirmação (a pessoa era
+  perguntada de novo); agora só cai quando a situação muda de verdade.
+- **Limpeza de anexos:** um chamado reaberto depois de ter os anexos apagados nunca mais era limpo; agora, reaberto, a contagem
+  recomeça e os anexos novos são apagados depois do prazo, como os de qualquer chamado.
+
+### Conferido e sem erro
+- Todos os números da Saúde (taxa, concluídas, duração, mapa, capacidade, ciclos) contra um cálculo independente em SQL: nenhuma diferença.
+
 ## 2026-11-19 — Auditoria da aba "Robôs sem ganho": correções
 
 ### Corrigido

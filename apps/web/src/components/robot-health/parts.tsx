@@ -153,7 +153,9 @@ export function ParetoCard({ causes, info }: { causes: CauseRow[]; info: Categor
   const total = causes.reduce((a, c) => a + c.count, 0);
   const max = Math.max(1, ...causes.map((c) => c.count));
   const catName = (k: CauseRow['category']) => info.find((i) => i.key === k)?.label ?? k;
-  let acc = 0;
+  // Acumulado calculado ANTES, por posição: o HcCard chama a função de desenho várias vezes (a cada medida da largura) e um contador
+  // alterado lá dentro continuava somando, passando de 100%.
+  const cumulative = causes.reduce<number[]>((list, c) => [...list, (list[list.length - 1] ?? 0) + c.count], []);
   return (
     <HcCard
       title="Causas de erro, todas"
@@ -175,8 +177,7 @@ export function ParetoCard({ causes, info }: { causes: CauseRow[]; info: Categor
             <div className="h" />
             <div className="h n">Erros</div>
             <div className="h n">Acumulado</div>
-            {causes.map((c) => {
-              acc += c.count;
+            {causes.map((c, index) => {
               const color = CATEGORY_COLOR[c.category];
               const isOpen = open.has(c.cause);
               const toggle = () => setOpen((cur) => { const next = new Set(cur); if (next.has(c.cause)) next.delete(c.cause); else next.add(c.cause); return next; });
@@ -194,7 +195,7 @@ export function ParetoCard({ causes, info }: { causes: CauseRow[]; info: Categor
                     <div className="fill" style={{ width: `${Math.max(0.5, (c.count / max) * 100)}%`, background: `linear-gradient(90deg, ${color}, color-mix(in srgb, ${color} 70%, #fff))` }} />
                   </div>
                   <div className="n">{nf(c.count)}</div>
-                  <div className="acc">{pct(acc / total)}</div>
+                  <div className="acc">{pct(cumulative[index] / total)}</div>
                   {isOpen ? (
                     <div className="hc-pdet">
                       <div>{c.description || 'Sem descrição.'}</div>
