@@ -3,6 +3,24 @@
 Mudanças do Automation Hub por data. Este arquivo é **público**: descreve o que mudou no produto, no banco e na
 configuração, sem dados de infraestrutura. O desenho detalhado de cada funcionalidade está no `CLAUDE.md`.
 
+## 2026-11-19 — Suporte: e-mail para a equipe de Inovação
+
+### Novo
+- **A equipe de Inovação recebe e-mail do Suporte** (mesmos destinatários e remetente dos alertas de BI: `MAIL_FROM`,
+  `MAIL_PASSWORD`, `MAIL_BI_ALERT_TO`): quando uma pessoa **abre um chamado**, **responde** um chamado ou o **reabre** ("ainda
+  acontece"). Chamados abertos por quem já é da Inovação/admin, respostas da própria Inovação e notas internas **não** mandam
+  e-mail. Várias respostas seguidas no mesmo chamado viram **um e-mail só** (de novo depois de 10 minutos); chamado novo e
+  reaberto avisam sempre. Chamado crítico leva "(CRÍTICO)" no assunto e a cor vermelha.
+- **O e-mail leva só o resumo e o link** (número, título, quem abriu e departamento, tipo, assunto, urgência, responsável e o
+  botão "Abrir o chamado no Hub"): o texto da mensagem e os anexos **não** vão por e-mail, porque podem ter dados de clientes ou
+  de RH. Quem abriu o chamado continua sem receber e-mail (acompanha pelo número no menu e pelo sino).
+- Endereço do link: `HUB_PUBLIC_URL` (ou o primeiro `ALLOWED_ORIGIN` que não seja local); sem endereço válido o e-mail sai sem o
+  botão. Um problema de envio nunca atrapalha abrir ou responder o chamado.
+
+### Configuração
+- Nova variável, opcional: `SUPPORT_ALERT_EMAILS=false` desliga só os e-mails do Suporte (independente de `SCHEDULE_ALERT_EMAILS`).
+  Sem mudança no banco.
+
 ## 2026-11-18 — Nova aba "Suporte" (chamados)
 
 ### Novo
@@ -12,7 +30,7 @@ configuração, sem dados de infraestrutura. O desenho detalhado de cada funcion
   outros). Administradores e a Inovação veem todos, com indicadores (abertos, sem resposta, tempo até a 1ª resposta, robô com
   mais chamados), filtros (urgência, pessoa, departamento, tipo, robô, busca, ordem), responsável, status (Aberto, Em análise,
   Aguardando resposta, Resolvido, Não é problema), urgência ajustável e **notas internas** que quem abriu nunca vê.
-- **Sem e-mail:** o aviso é dentro do Hub. Um número ao lado de "Suporte" no menu mostra as novidades (administrador: chamados
+- **Aviso dentro do Hub** (o e-mail para a Inovação veio em 19/11): Um número ao lado de "Suporte" no menu mostra as novidades (administrador: chamados
   esperando a Inovação; pessoa: respostas novas aos seus chamados), com uma bolinha na lista, e o sino também avisa.
 - **Botão "Reportar problema"** na tela da execução: o chamado já abre sobre o robô e leva o erro, os parâmetros digitados
   (**senhas ficam de fora**) e o fim do log.
