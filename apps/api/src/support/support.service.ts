@@ -486,7 +486,8 @@ export class SupportService {
       if (admin) {
         if (!internal) {
           const nextStatus = wantedStatus ?? (ticket.status === 'open' ? 'review' : ticket.status);
-          await this.applyStatus(ticket.id, nextStatus, user, { silent: nextStatus === ticket.status, authorUnread: true, needsAdmin: false });
+          // Com "enviar também para os ligados" eles já recebem o aviso da resposta: não duplica com o da situação.
+          await this.applyStatus(ticket.id, nextStatus, user, { silent: nextStatus === ticket.status, authorUnread: true, needsAdmin: false, notifyLinked: !alsoLinked });
           if (alsoLinked) {
             for (const child of ticket.linkedTickets) {
               await this.copyReplyToLinked(child.id, user, text, saved);
@@ -762,12 +763,13 @@ export class SupportService {
     id: string,
     status: TicketStatus,
     actor: Actor,
-    opts: { silent: boolean; needsAdmin: boolean; authorUnread: boolean },
+    // notifyLinked (padrão: sim): avisa no sino quem abriu cada chamado ligado quando a situação do principal muda.
+    opts: { silent: boolean; needsAdmin: boolean; authorUnread: boolean; notifyLinked?: boolean },
   ) {
     const closedAt = isClosed(status) ? new Date() : null;
     const current = await this.prisma.supportTicket.findUnique({
       where: { id },
-      select: { status: true, closedAt: true, linkedTickets: { select: { id: true, authorId: true } } },
+      select: { status: true, closedAt: true, linkedTickets: { select: { id: true, number: true, title: true, authorId: true } } },
     });
     if (!current) return;
     const changed = status !== current.status;
@@ -802,6 +804,10 @@ export class SupportService {
       await this.prisma.supportMessage.create({
         data: { ticketId: child.id, authorId: actor.id, kind: 'system', body: `Status alterado para: ${STATUS_LABELS[status]}.` },
       });
+      // Sino de quem abriu o chamado ligado (antes só ganhava o número do menu e a bolinha), no PRÓPRIO chamado dele.
+      if (opts.notifyLinked !== false && child.authorId !== actor.id) {
+        await this.notifyUsers([child.authorId], child.id, 'support_reply', `Chamado #${child.number}: ${STATUS_LABELS[status]}`, `O status do chamado "${child.title}" agora é ${STATUS_LABELS[status]}.`);
+      }
     }
   }
 
