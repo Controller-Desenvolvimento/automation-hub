@@ -3,9 +3,11 @@ import { useSearchParams } from 'react-router-dom';
 import { PageHeader } from '../components/page-header';
 import { Input } from '../components/ui/input';
 import { CatsCard, DurationCard, ExecDailyCard, RateCard } from '../components/robot-health/charts';
+import { InsightsView, attentionCount } from '../components/robot-health/insights';
 import { ChartDefs, TipLayer } from '../components/robot-health/kit';
 import { ParetoCard, RobotsTableCard, Tiles } from '../components/robot-health/parts';
 import { HeatmapCard } from '../components/robot-health/robot-heatmap';
+import { CapacityCard, CyclesCard } from '../components/robot-health/server';
 import { useHub } from '../contexts/hub-context';
 import { api } from '../lib/api';
 import {
@@ -17,6 +19,7 @@ import {
   type CategoryInfo,
   type Granularity,
   type HealthOverview,
+  type InsightTarget,
   type PeriodPreset,
   type Scope,
 } from '../lib/robot-health';
@@ -66,6 +69,7 @@ export function RobotHealthPage() {
   const from = params.get('de') ?? '';
   const to = params.get('ate') ?? '';
   const granParam = params.get('agrupar');
+  const view: 'graficos' | 'insights' = params.get('exibir') === 'insights' ? 'insights' : 'graficos';
   const gran: Granularity | null = granParam === 'day' || granParam === 'week' || granParam === 'month' ? granParam : null;
 
   const [data, setData] = useState<HealthOverview | null>(null);
@@ -119,6 +123,13 @@ export function RobotHealthPage() {
 
   const granularity = data?.categories.granularity ?? gran ?? 'day';
   const setGran = (g: Granularity) => setParam({ agrupar: g });
+  const attention = data ? attentionCount(data.insights) : 0;
+  const hasCrit = !!data?.insights.some((i) => i.sev === 'crit');
+  // "Ver ..." dos insights: volta para os gráficos e rola até a seção.
+  const goTo = (target: InsightTarget) => {
+    setParam({ exibir: null });
+    window.setTimeout(() => document.getElementById(`hc-${target}`)?.scrollIntoView({ block: 'start', behavior: 'smooth' }), 150);
+  };
 
   return (
     <div className="hc space-y-6">
@@ -169,6 +180,18 @@ export function RobotHealthPage() {
         ) : null}
       </div>
 
+      {data ? (
+        <div className="hc-views">
+          <div className="hc-seg" role="group" aria-label="Exibição">
+            <button type="button" aria-pressed={view === 'graficos'} onClick={() => setParam({ exibir: null })}>Gráficos</button>
+            <button type="button" aria-pressed={view === 'insights'} onClick={() => setParam({ exibir: 'insights' })}>
+              Insights
+              {attention ? <span className="badge" data-sev={hasCrit ? 'crit' : 'warn'} aria-label={`${attention} para atender`}>{attention}</span> : null}
+            </button>
+          </div>
+        </div>
+      ) : null}
+
       {error ? (
         <p role="alert" className="rounded-xl bg-rose-50 px-4 py-3 text-sm text-rose-700 dark:bg-rose-950/40 dark:text-rose-200">{error}</p>
       ) : !data ? (
@@ -178,21 +201,33 @@ export function RobotHealthPage() {
         </div>
       ) : (
         <div className={cn('space-y-4', loading && 'hc-refetch')} aria-busy={loading}>
-          <div className="hc-sec">Visão geral</div>
+          {view === 'insights' ? (
+            <InsightsView insights={data.insights} hasExecutions={data.summary.current.executions > 0} onGo={goTo} />
+          ) : (
+            <>
+          <div className="hc-sec" id="hc-visao">Visão geral</div>
           <Tiles current={data.summary.current} previous={data.summary.previous} mini={data.mini} period={data.period} previousPeriod={data.previousPeriod} />
           <ExecDailyCard daily={data.daily} period={data.period} avgPerDay={data.summary.current.executions / Math.max(1, data.period.days)} />
           <RateCard buckets={data.evolution} gran={granularity} onGran={setGran} period={data.period} avgRate={data.summary.current.successRate} />
 
-          <div className="hc-sec">Robôs</div>
+          <div className="hc-sec" id="hc-robos">Robôs</div>
           <HeatmapCard heatmap={data.heatmap} period={data.period} />
           <RobotsTableCard robots={data.robots} />
 
-          <div className="hc-sec">Erros</div>
+          <div className="hc-sec" id="hc-erros">Erros</div>
           <ParetoCard causes={data.causes} info={data.categoryInfo} />
           <CatsCard buckets={data.categories.buckets} gran={granularity} onGran={setGran} period={data.period} info={data.categoryInfo} guide={<CategoryGuide info={data.categoryInfo} />} />
 
-          <div className="hc-sec">Duração</div>
+          <div className="hc-sec" id="hc-duracao">Duração</div>
           <DurationCard durations={data.durations} gran={granularity} onGran={setGran} period={data.period} />
+
+          <div className="hc-sec" id="hc-servidor">Capacidade do servidor</div>
+          <CapacityCard cap={data.capacity} />
+
+          <div className="hc-sec" id="hc-agend">Agendamentos</div>
+          <CyclesCard cycles={data.cycles} />
+            </>
+          )}
         </div>
       )}
     </div>

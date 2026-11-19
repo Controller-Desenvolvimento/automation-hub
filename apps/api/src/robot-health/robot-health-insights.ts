@@ -271,7 +271,7 @@ export function buildInsights(input: InsightInput): Insight[] {
     if (atLimit.length) {
       add({
         id: 'cap-limite', sev: daysLimit >= 3 ? 'warn' : 'info', pri: 20 + daysLimit, title: `O servidor chegou ao limite em ${atLimit.length === 1 ? 'um horário' : pl(atLimit.length, 'horário', 'horários')}`,
-        text: `Chegou a ${cap.limit} robôs ao mesmo tempo às ${joinPt(atLimit.slice(0, 6).map((i) => `${i}h (${pl(hs[i].daysLimit, 'dia', 'dias')})`))}${atLimit.length > 6 ? '…' : ''}. Nesses momentos as execuções novas esperam na fila.`,
+        text: `Chegou a ${cap.limit} robôs ao mesmo tempo às ${joinPt(atLimit.slice(0, 6).map((i) => `${i}h (${pl(hs[i].daysLimit, 'dia', 'dias')})`))}${atLimit.length > 6 ? ' e outros' : ''}. Nesses momentos as execuções novas esperam na fila.`,
         why: `${capWhy} Aparece quando alguma hora do dia chegou ao limite em algum momento; entre parênteses, em quantos dias do período isso aconteceu naquela hora.`, acts: [{ l: 'Ver horários de pico', go: 'servidor' }],
       });
     } else {

@@ -115,7 +115,87 @@ export type HealthOverview = {
   mini: { granularity: Granularity; buckets: MiniBucket[] };
   durations: DurationSeries[];
   heatmap: Heatmap;
+  capacity: Capacity;
+  cycles: CycleRow[];
+  insights: Insight[];
 };
+
+// ---------- etapa 3: capacidade do servidor, ciclos agendados e insights ----------
+
+export type HourStat = {
+  ms: number;
+  busyMs: number;
+  sumMs: number;
+  peak: number;
+  peakAt: string | null;
+  daysLimit: number;
+  days: number;
+  busyShare: number;
+  minutesPerDay: number;
+};
+
+export type Capacity = {
+  limit: number;
+  hours: HourStat[];
+  any: boolean;
+  busiest: number;
+  atLimit: number[];
+  mostBusy: number;
+  quiet: { best: number; hours: number[]; ranges: Array<[number, number]> };
+};
+
+export type CycleRow = {
+  taskId: string;
+  name: string;
+  robotName: string;
+  ok: number;
+  recovered: number;
+  failed: number;
+  canceled: number;
+  attempting: number;
+  hasRestart: boolean;
+};
+
+export type InsightSeverity = 'crit' | 'warn' | 'info' | 'good';
+export type InsightTarget = 'visao' | 'robos' | 'erros' | 'duracao' | 'servidor' | 'agend';
+
+export type Insight = {
+  id: string;
+  sev: InsightSeverity;
+  pri: number;
+  kind?: 'robo';
+  title: string;
+  text: string;
+  why: string;
+  facts?: Array<{ sev: 'crit' | 'warn' | 'info'; t: string }>;
+  chipsLabel?: string;
+  chips?: Array<{ t: string; n: string }>;
+  acts?: Array<{ l: string; go: InsightTarget }>;
+};
+
+export const SEVERITY_META: Record<InsightSeverity, { icon: string; label: string }> = {
+  crit: { icon: '▲', label: 'Crítico' },
+  warn: { icon: '◆', label: 'Atenção' },
+  info: { icon: 'i', label: 'Para saber' },
+  good: { icon: '✓', label: 'Boa notícia' },
+};
+
+export const hourLabel = (h: number) => `${h}h–${(h + 1) % 24}h`;
+export const pctTxt = (v: number) => (v > 0 && v < 0.01 ? '<1%' : `${Math.round(v * 100)}%`);
+
+/** Rampa azul do protótipo (tempo ocupado por hora), clara e escura. */
+const BLUE = { light: ['#cde2fb', '#9ec5f4', '#5598e7', '#256abf', '#104281'], dark: ['#0d366b', '#184f95', '#2a78d6', '#5598e7', '#9ec5f4'] };
+export function blueRamp(t: number, dark: boolean) {
+  const st = BLUE[dark ? 'dark' : 'light'];
+  const clamped = Math.max(0, Math.min(1, t));
+  const x = clamped * (st.length - 1);
+  const i = Math.min(st.length - 2, Math.floor(x));
+  const f = x - i;
+  const rgb = (h: string) => [1, 3, 5].map((k) => parseInt(h.slice(k, k + 2), 16));
+  const a = rgb(st[i]);
+  const b = rgb(st[i + 1]);
+  return `rgb(${a.map((v, j) => Math.round(v + (b[j] - v) * f)).join(',')})`;
+}
 
 // ---------- situação ----------
 
