@@ -21,7 +21,7 @@ export function StatusHistory({ events, viewer }: { events: StatusEvent[]; viewe
   if (events.length < 2) return null;
   return (
     <details className="group text-sm">
-      <summary className="flex cursor-pointer items-center gap-2 text-xs font-medium text-slate-500 transition hover:text-slate-800 dark:text-zinc-400 dark:hover:text-white">
+      <summary className="inline-flex w-fit cursor-pointer items-center gap-2 text-xs font-medium text-slate-500 transition hover:text-slate-800 dark:text-zinc-400 dark:hover:text-white">
         <History className="h-3.5 w-3.5" />
         Histórico da situação ({events.length})
       </summary>
