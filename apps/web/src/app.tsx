@@ -26,6 +26,7 @@ const TimeSavingsPage = lazy(() => import('./pages/time-savings-page').then(m =>
 const SupportPage = lazy(() => import('./pages/support-page').then(m => ({ default: m.SupportPage })));
 const SupportNewPage = lazy(() => import('./pages/support-new-page').then(m => ({ default: m.SupportNewPage })));
 const SupportTicketPage = lazy(() => import('./pages/support-ticket-page').then(m => ({ default: m.SupportTicketPage })));
+const RobotHealthPage = lazy(() => import('./pages/robot-health-page').then(m => ({ default: m.RobotHealthPage })));
 const ProfilePage = lazy(() => import('./pages/profile-page').then(m => ({ default: m.ProfilePage })));
 
 export function App() {
@@ -90,6 +91,10 @@ function AppRoutes() {
         <Route path="/support" element={<Suspense fallback={null}><SupportPage /></Suspense>} />
         <Route path="/support/new" element={<Suspense fallback={null}><SupportNewPage /></Suspense>} />
         <Route path="/support/:id" element={<Suspense fallback={null}><SupportTicketPage /></Suspense>} />
+        <Route
+          path="/robot-health"
+          element={canViewBoard ? <Suspense fallback={null}><RobotHealthPage /></Suspense> : <Navigate to="/" replace />}
+        />
         <Route path="/profile" element={<Suspense fallback={null}><ProfilePage /></Suspense>} />
         <Route
           path="/settings"
