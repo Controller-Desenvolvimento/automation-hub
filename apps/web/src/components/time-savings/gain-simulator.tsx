@@ -1,57 +1,72 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { api } from '../../lib/api';
-import { SOURCE_LABEL, dur, nf, peopleText, signedDur, type SimulationResult } from '../../lib/gain-simulator';
-import { DEFAULT_METRIC_KEY, TIME_UNITS, toSeconds, type RobotWithoutGain, type TimeUnit } from '../../lib/robots-without-gain';
-import { cn } from '../../lib/utils';
-import { Button } from '../ui/button';
-import { Input } from '../ui/input';
+import {
+  MAX_SECONDS,
+  UNIT_AB,
+  UNIT_NAME,
+  UNIT_SECONDS,
+  convertUnit,
+  dur,
+  hrs,
+  jornadaTxt,
+  nf,
+  nfx,
+  parseNum,
+  peopleNum,
+  peopleTxt,
+  peopleWord,
+  perUnitTxt,
+  pl,
+  signed,
+  signedDur,
+  type SimPreview,
+  type SimRow,
+  type SimUnit,
+  type SimulationResult,
+} from '../../lib/gain-simulator';
+import { DEFAULT_METRIC_KEY, type RobotWithoutGain } from '../../lib/robots-without-gain';
 import { GainMonthlyChart } from './gain-monthly-chart';
+import { SgInfo, SgSeg } from './sg-parts';
 
-type HubRobot = { id: string; name: string; manualSecondsPerUnit: number };
+type HubRobot = { id: string; name: string; manualSecondsPerUnit: number; unitLabel?: string | null };
 
-/** Um cenário guardado (só nesta tela, enquanto ela estiver aberta): o resultado e como ele foi simulado. */
-type Scenario = {
-  letter: string;
-  description: string;
-  extraMonth: number;
-  extraYear: number;
-  peopleExtra: number;
-  simulatedReport: number;
-  peopleTotal: number;
-  low: number;
-  high: number;
-  days: number;
-  informed: number;
-};
-
+/** Um cenário guardado (só nesta tela, enquanto ela estiver aberta). */
+type Scenario = { letter: string; name: string; desc: string; per: string; mais: number; lo: number; hi: number; tot: number; jh: number };
 const LETTERS = ['A', 'B', 'C', 'D'];
 
-const MAX_SECONDS = 86_400;
-
-const segBtn = (active: boolean) =>
-  cn(
-    'px-3 py-2 text-sm transition',
-    active ? 'bg-slate-950 text-white dark:bg-white dark:text-slate-950' : 'bg-white text-slate-600 hover:bg-slate-50 dark:bg-[#0f0f10] dark:text-zinc-300 dark:hover:bg-[#18181b]',
-  );
-
-function Seg<T extends string>({ label, value, items, onChange }: { label: string; value: T; items: Array<[T, string]>; onChange: (v: T) => void }) {
+/** Campo numérico do protótipo: lê vírgula decimal e mostra o erro logo abaixo, em vermelho. */
+function NumField({ value, onChange, max, width, placeholder, label }: { value: string; onChange: (v: string) => void; max: number; width: number; placeholder?: string; label: string }) {
+  const parsed = parseNum(value, max);
+  const error = 'error' in parsed ? parsed.error : null;
   return (
-    <div role="group" aria-label={label} className="inline-flex flex-wrap overflow-hidden rounded-xl border border-slate-300 dark:border-[#2b2b31]">
-      {items.map(([v, text]) => (
-        <button key={v} type="button" aria-pressed={value === v} onClick={() => onChange(v)} className={segBtn(value === v)}>
-          {text}
-        </button>
-      ))}
+    <div className="fwrap">
+      <input className={`inp${error ? ' bad' : ''}`} style={{ width }} inputMode="decimal" value={value} placeholder={placeholder} aria-label={label} aria-invalid={!!error} onChange={(e) => onChange(e.target.value)} />
+      {error ? <div className="fe" role="alert">{error}</div> : null}
     </div>
   );
 }
 
-function Stat({ label, value, hint }: { label: string; value: string; hint?: string }) {
+function Frow({ label, info, children }: { label: string; info?: ReactNode; children: ReactNode }) {
   return (
-    <div className="rounded-2xl border border-slate-200 p-4 text-center dark:border-[#27272a]">
-      <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-500 dark:text-zinc-400">{label}</div>
-      <div className="mt-1 text-2xl font-semibold tracking-tight text-slate-950 dark:text-white">{value}</div>
-      {hint ? <div className="mt-0.5 text-xs text-slate-500 dark:text-zinc-400">{hint}</div> : null}
+    <div className="frow">
+      <span className="fl">
+        {label}
+        {info ? <SgInfo label={`Sobre: ${label}`}>{info}</SgInfo> : null}
+      </span>
+      {children}
+    </div>
+  );
+}
+
+function Kpi({ title, value, small, sub }: { title: string; value: string; small?: string; sub?: string }) {
+  return (
+    <div className="kpi">
+      <div className="t">{title}</div>
+      <div className="v">
+        {value}
+        {small ? <small>{small}</small> : null}
+      </div>
+      {sub ? <div className="s">{sub}</div> : null}
     </div>
   );
 }
@@ -61,6 +76,7 @@ export function GainSimulator({
   to,
   hubRobots,
   withoutGain,
+  isAdmin,
   notify,
   onApplied,
 }: {
@@ -69,71 +85,105 @@ export function GainSimulator({
   hubRobots: HubRobot[];
   /** Robôs sem ganho (da lista da aba): servem para sugerir o rótulo e a métrica ao aplicar os tempos. */
   withoutGain: RobotWithoutGain[];
+  isAdmin: boolean;
   notify: (message: string) => void;
   onApplied: () => void;
 }) {
   const [scope, setScope] = useState<'sem' | 'todos'>('sem');
   const [mode, setMode] = useState<'igual' | 'robo'>('igual');
   const [base, setBase] = useState<'exec' | 'item'>('exec');
-  const [unit, setUnit] = useState<TimeUnit>('minutes');
+  const [unit, setUnit] = useState<SimUnit>('minutes');
   const [equal, setEqual] = useState('5');
   const [perRobot, setPerRobot] = useState<Record<string, string>>({});
   const [newTimes, setNewTimes] = useState(false);
   const [perCurrent, setPerCurrent] = useState<Record<string, string>>({});
   const [workday, setWorkday] = useState('7');
   const [excluded, setExcluded] = useState<Set<string>>(new Set());
-  const [result, setResult] = useState<SimulationResult | null>(null);
-  const [resultKey, setResultKey] = useState('');
+  const [preview, setPreview] = useState<SimPreview | null>(null);
+  const [result, setResult] = useState<{ data: SimulationResult; desc: string; per: string; key: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [scenarios, setScenarios] = useState<Scenario[]>([]);
   const [confirming, setConfirming] = useState(false);
   const [applying, setApplying] = useState(false);
-  const [scenarios, setScenarios] = useState<Scenario[]>([]);
+  const resultRef = useRef<HTMLDivElement>(null);
 
   const without = useMemo(() => hubRobots.filter((r) => !r.manualSecondsPerUnit), [hubRobots]);
-  const withTime = useMemo(() => hubRobots.filter((r) => r.manualSecondsPerUnit > 0), [hubRobots]);
-  const shown = scope === 'sem' ? without : hubRobots;
+  const unitSec = UNIT_SECONDS[unit];
+  const maxInUnit = MAX_SECONDS / unitSec;
 
-  // Tempos válidos em segundos; campo preenchido e inválido é o que bloqueia o "Simular".
-  const problems: string[] = [];
-  const times: Record<string, number> = {};
-  const parse = (raw: string, who: string): number | null => {
-    if (!raw.trim()) return null;
-    const s = toSeconds(raw, unit);
-    if (s === null || s > MAX_SECONDS) {
-      problems.push(who);
+  // linhas por robô para a tabela do formulário (execuções por mês, ganho de hoje, métrica que o robô informa)
+  useEffect(() => {
+    let alive = true;
+    const t = window.setTimeout(() => {
+      api<SimPreview>('/reports/robots-without-gain/simulate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ from: from || undefined, to: to || undefined, scope, base, times: {}, light: true }),
+      })
+        .then((data) => alive && setPreview(data))
+        .catch(() => alive && setPreview(null));
+    }, 200);
+    return () => {
+      alive = false;
+      window.clearTimeout(t);
+    };
+  }, [from, to, scope, base]);
+
+  const robotsById = useMemo(() => new Map(hubRobots.map((r) => [r.id, r])), [hubRobots]);
+  const rows: SimRow[] = useMemo(() => (preview ? [...preview.rows].sort((a, b) => (a.hasTime ? 1 : 0) - (b.hasTime ? 1 : 0) || a.name.localeCompare(b.name, 'pt-BR')) : []), [preview]);
+
+  // tempos válidos em segundos; campo preenchido e inválido bloqueia o "Simular"
+  const errors: string[] = [];
+  const secondsOf = (raw: string): number | null => {
+    const p = parseNum(raw, maxInUnit);
+    if ('error' in p) {
+      errors.push(p.error);
       return null;
     }
-    return s;
+    return p.empty ? null : Math.round(p.value * unitSec);
   };
-  const equalSeconds = parse(equal, 'o tempo padrão');
-  for (const r of shown) {
-    if (excluded.has(r.id)) continue;
-    if (r.manualSecondsPerUnit > 0) {
+  const equalSeconds = secondsOf(equal);
+  const times: Record<string, number> = {};
+  const defaultIds: string[] = [];
+  for (const row of rows) {
+    if (excluded.has(row.robotId)) continue;
+    if (row.hasTime) {
       if (scope === 'todos' && newTimes) {
-        const s = parse(perCurrent[r.id] ?? '', r.name);
-        if (s !== null) times[r.id] = s;
+        const s = secondsOf(perCurrent[row.robotId] ?? '');
+        if (s) times[row.robotId] = s;
       }
     } else if (mode === 'robo') {
-      const s = parse(perRobot[r.id] ?? '', r.name);
-      const final = s ?? equalSeconds;
-      if (final !== null) times[r.id] = final;
-    } else if (equalSeconds !== null) {
-      times[r.id] = equalSeconds;
-    }
+      const own = secondsOf(perRobot[row.robotId] ?? '');
+      if (own) times[row.robotId] = own;
+      else if (equalSeconds) {
+        times[row.robotId] = equalSeconds;
+        defaultIds.push(row.robotId);
+      }
+    } else if (equalSeconds) times[row.robotId] = equalSeconds;
   }
-  const workdayNumber = Number(workday.trim().replace(',', '.'));
-  const workdayOk = Number.isFinite(workdayNumber) && workdayNumber >= 1 && workdayNumber <= 24;
-  if (!workdayOk) problems.push('a jornada (de 1 a 24 horas)');
+  const workdayParsed = parseNum(workday, 24);
+  if ('error' in workdayParsed) errors.push(workdayParsed.error);
+  const workdayHours = 'error' in workdayParsed || workdayParsed.empty ? 7 : workdayParsed.value;
 
-  const request = useMemo(
-    () => ({ from: from || undefined, to: to || undefined, scope, base, times, excluded: [...excluded], workdayHours: workdayOk ? workdayNumber : 7 }),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [from, to, scope, base, JSON.stringify(times), [...excluded].sort().join(','), workdayNumber, workdayOk],
-  );
+  const request = { from: from || undefined, to: to || undefined, scope, base, times, excluded: [...excluded].sort(), workdayHours, unit, defaultIds };
   const key = JSON.stringify(request);
-  const stale = result !== null && key !== resultKey;
-  const canRun = problems.length === 0 && !busy;
+  const stale = result !== null && result.key !== key;
+  const canRun = errors.length === 0 && !busy;
+
+  function describe(): string {
+    const u = UNIT_AB[unit];
+    const per = base === 'exec' ? 'por execução' : 'por item';
+    let how: string;
+    if (mode === 'igual') how = `${equalSeconds ? `${nfx(equalSeconds / unitSec)} ${u}` : 'sem tempo'} ${per} para todos`;
+    else {
+      const informed = rows.filter((r) => !r.hasTime && !excluded.has(r.robotId) && (perRobot[r.robotId] ?? '').trim()).length;
+      how = `tempo por robô ${per} (${pl(informed, 'informado', 'informados')}${equalSeconds ? `, padrão ${nfx(equalSeconds / unitSec)} ${u}` : ''})`;
+    }
+    if (scope === 'sem') return `${how} · só os sem ganho`;
+    const news = rows.filter((r) => r.hasTime && !excluded.has(r.robotId) && newTimes && (perCurrent[r.robotId] ?? '').trim()).length;
+    return `${how} · ${news ? `somando os que já têm ganho, com novos tempos em ${pl(news, 'robô', 'robôs')}` : 'somando os que já têm ganho (tempos atuais)'}`;
+  }
 
   async function run() {
     if (!canRun) return;
@@ -145,8 +195,9 @@ export function GainSimulator({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(request),
       });
-      setResult(data);
-      setResultKey(key);
+      setResult({ data, desc: describe(), per: `execuções reais de ${pl(data.days, 'dia', 'dias')}`, key });
+      setConfirming(false);
+      window.setTimeout(() => resultRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 80);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Não foi possível simular.');
     } finally {
@@ -154,28 +205,47 @@ export function GainSimulator({
     }
   }
 
-  // "Usar estes tempos": só os robôs que hoje não têm tempo e que a simulação trata como "tempo informado".
-  const applicable = useMemo(
-    () => (result && !stale ? result.rows.filter((r) => !r.hasTime && r.source === 'informado') : []),
-    [result, stale],
-  );
+  function changeUnit(next: SimUnit) {
+    const conv = (m: Record<string, string>) => Object.fromEntries(Object.entries(m).map(([k, v]) => [k, convertUnit(v, unit, next)]));
+    setEqual(convertUnit(equal, unit, next));
+    setPerRobot(conv(perRobot));
+    setPerCurrent(conv(perCurrent));
+    setUnit(next);
+  }
+
+  const letter = LETTERS.find((l) => !scenarios.some((s) => s.letter === l));
+  const m = result?.data;
+  const applicable = m && !stale ? m.rows.filter((r) => (r.source === 'informado' && !r.hasTime) || r.source === 'novo') : [];
+
+  function saveScenario() {
+    if (!result || !m || stale || !letter) return;
+    setScenarios((prev) =>
+      [...prev, { letter, name: `Cenário ${letter}`, desc: result.desc, per: result.per, mais: m.extraMonth, lo: m.band.low.extraMonth, hi: m.band.high.extraMonth, tot: m.reportMonth + m.extraMonth, jh: m.workdayHours }].sort((a, b) =>
+        a.letter.localeCompare(b.letter),
+      ),
+    );
+    notify('Cenário guardado. Mude os tempos e simule de novo para comparar.');
+  }
+
   async function apply() {
-    if (!result) return;
+    if (!m) return;
     setApplying(true);
     let ok = 0;
     const failed: string[] = [];
     for (const row of applicable) {
-      const info = withoutGain.find((r) => r.robotId === row.robotId);
       const seconds = times[row.robotId];
       if (!seconds) continue;
+      const info = withoutGain.find((r) => r.robotId === row.robotId);
+      const hub = robotsById.get(row.robotId);
+      const novo = row.source === 'novo';
       try {
         await api(`/robots/${row.robotId}/time-savings`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             manualSecondsPerUnit: seconds,
-            unitLabel: base === 'exec' ? 'execução' : info?.unitLabel && info.unitLabel !== 'item' ? info.unitLabel : 'item',
-            unitMetricKey: base === 'exec' ? DEFAULT_METRIC_KEY : info?.metrics[0]?.key ?? DEFAULT_METRIC_KEY,
+            unitLabel: novo ? hub?.unitLabel || 'item' : base === 'exec' ? 'execução' : info?.unitLabel && info.unitLabel !== 'item' ? info.unitLabel : 'item',
+            unitMetricKey: novo ? info?.unitMetricKey ?? DEFAULT_METRIC_KEY : base === 'exec' ? DEFAULT_METRIC_KEY : info?.metrics[0]?.key ?? DEFAULT_METRIC_KEY,
           }),
         });
         ok += 1;
@@ -185,375 +255,448 @@ export function GainSimulator({
     }
     setApplying(false);
     setConfirming(false);
-    notify(failed.length ? `${ok} salvos; falhou em: ${failed.join(', ')}.` : `Tempos salvos em ${ok} ${ok === 1 ? 'robô' : 'robôs'}. Valem para as próximas execuções.`);
+    notify(failed.length ? `${ok} salvos; falhou em: ${failed.join(', ')}.` : `Tempos salvos em ${pl(ok, 'robô', 'robôs')}. Valem para as próximas execuções.`);
+    setResult(null);
     onApplied();
   }
 
-  const unitLabel = TIME_UNITS.find((u) => u.value === unit)?.label ?? 'minutos';
-  const freeLetter = LETTERS.find((l) => !scenarios.some((sc) => sc.letter === l));
-  function describe(): string {
-    const ab = unit === 'seconds' ? 's' : unit === 'minutes' ? 'min' : 'h';
-    const per = base === 'exec' ? 'por execução' : 'por item';
-    const informed = shown.filter((r) => !excluded.has(r.id) && !r.manualSecondsPerUnit && (perRobot[r.id] ?? '').trim()).length;
-    const how = mode === 'igual' ? `${equal.trim() ? `${equal.trim()} ${ab}` : 'sem tempo'} ${per} para todos` : `tempo por robô ${per} (${informed} ${informed === 1 ? 'informado' : 'informados'}${equal.trim() ? `, padrão ${equal.trim()} ${ab}` : ''})`;
-    const news = shown.filter((r) => !excluded.has(r.id) && r.manualSecondsPerUnit > 0 && (perCurrent[r.id] ?? '').trim()).length;
-    const who = scope === 'sem' ? 'só os sem ganho' : news && newTimes ? `somando os que já têm ganho, com novos tempos em ${news} ${news === 1 ? 'robô' : 'robôs'}` : 'somando os que já têm ganho (tempos atuais)';
-    return `${how} · ${who}`;
-  }
-  function saveScenario() {
-    if (!result || stale || !freeLetter) return;
-    const informedCount = result.rows.filter((r) => r.source === 'informado' || r.source === 'novo').length;
-    setScenarios((prev) =>
-      [
-        ...prev,
-        {
-          letter: freeLetter,
-          description: describe(),
-          extraMonth: result.extraMonth,
-          extraYear: result.extraYear,
-          peopleExtra: result.people.extra,
-          simulatedReport: result.reportMonth + result.extraMonth,
-          peopleTotal: result.people.total,
-          low: result.band.low.extraMonth,
-          high: result.band.high.extraMonth,
-          days: result.days,
-          informed: informedCount,
-        },
-      ].sort((a, b) => a.letter.localeCompare(b.letter)),
-    );
-    notify(`Cenário ${freeLetter} guardado. Ele fica só nesta tela, enquanto ela estiver aberta.`);
-  }
-  const toggleExcluded = (id: string) =>
-    setExcluded((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
+  const showEditable = mode === 'robo' || (scope === 'todos' && newTimes);
+  const modeHeader = showEditable ? 'Tempo estimado' : 'Tempo usado';
 
   return (
-    <section className="min-w-0 space-y-6">
-      <div className="space-y-1">
-        <h2 className="text-lg font-semibold tracking-tight text-slate-950 dark:text-white">Simular ganhos</h2>
-        <p className="max-w-3xl text-sm text-slate-500 dark:text-zinc-400">
-          Chute um tempo e veja quanto o relatório passaria a mostrar, usando as execuções reais do período escolhido. <strong>Nada é salvo</strong> enquanto você
-          não usar os tempos na configuração.
-        </p>
-      </div>
+    <div>
+      {/* ---------------- formulário ---------------- */}
+      <div className="card">
+        <h3>
+          Simular ganhos
+          <SgInfo label="Sobre: Simular ganhos">
+            <p>Para conversar sobre "e se": coloque tempos estimados de cabeça e veja quanto o tempo ganho subiria.</p>
+            <p>A conta usa as execuções reais do período escolhido no filtro lá em cima, levadas para um mês e um ano (cada robô pelos dias em que ele rodou no período).</p>
+            <p>Nada é salvo e o relatório não muda.</p>
+          </SgInfo>
+        </h3>
+        <p className="sub">Coloque tempos estimados, ajuste o que quiser e clique em Simular. Nada é salvo.</p>
 
-      <div className="space-y-4 rounded-2xl border border-slate-200 p-4 dark:border-[#27272a]">
-        <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
-          <div className="space-y-1">
-            <div className="text-xs font-medium text-slate-500 dark:text-zinc-400">Quais robôs</div>
-            <Seg label="Quais robôs" value={scope} onChange={setScope} items={[['sem', `Só os sem ganho (${without.length})`], ['todos', `Somando os que já têm ganho (${withTime.length})`]]} />
-          </div>
-          <div className="space-y-1">
-            <div className="text-xs font-medium text-slate-500 dark:text-zinc-400">Como informar</div>
-            <Seg label="Como informar" value={mode} onChange={setMode} items={[['igual', 'Igual para todos'], ['robo', 'Por robô']]} />
-          </div>
-          <div className="space-y-1">
-            <div className="text-xs font-medium text-slate-500 dark:text-zinc-400">O tempo vale</div>
-            <Seg label="O tempo vale" value={base} onChange={setBase} items={[['exec', 'Por execução'], ['item', 'Por item']]} />
-          </div>
-        </div>
+        <Frow label="Quais robôs">
+          <SgSeg label="Quais robôs" value={scope} onChange={setScope} items={[['sem', `Só os sem ganho (${without.length})`], ['todos', `Somar com os que já têm ganho (${hubRobots.length})`]]} />
+        </Frow>
+        {scope === 'todos' ? (
+          <Frow
+            label="Robôs que já têm ganho"
+            info={
+              <>
+                <p>Usar os tempos atuais: o simulador soma o que esses robôs já ganham, com o tempo cadastrado.</p>
+                <p>Simular novos tempos: dá para testar outro tempo por item em cada um (mesmo item e mesma métrica de hoje). O resultado mostra a diferença, para mais ou para menos.</p>
+              </>
+            }
+          >
+            <SgSeg label="Robôs que já têm ganho" value={newTimes ? 'novos' : 'manter'} onChange={(v) => setNewTimes(v === 'novos')} items={[['manter', 'Usar os tempos atuais'], ['novos', 'Simular novos tempos']]} />
+            {newTimes ? <span className="ro">preencha na tabela; em branco = mantém o atual</span> : null}
+          </Frow>
+        ) : null}
+        <Frow label="Como informar o tempo">
+          <SgSeg label="Como informar o tempo" value={mode} onChange={setMode} items={[['igual', 'Igual para todos'], ['robo', 'Por robô']]} />
+        </Frow>
+        <Frow
+          label="O tempo é"
+          info={
+            <>
+              <p>Por execução: quanto tempo uma pessoa levaria para fazer à mão o que o robô faz numa rodada. É o mais fácil de estimar de cabeça.</p>
+              <p>Por item: tempo de 1 nota, 1 empresa, 1 e-mail… multiplicado pelos itens que o robô informa (ou 1 por execução, se ele não informa). Execuções antigas, cujo log já foi apagado, usam a média de itens do robô. Cuidado com robôs que fazem centenas de itens por rodada.</p>
+              <p>Trocar a unidade converte os números já digitados.</p>
+            </>
+          }
+        >
+          <SgSeg label="Base do tempo" value={base} onChange={setBase} items={[['exec', 'por execução'], ['item', 'por item']]} />
+          <span className="ro">em</span>
+          <select className="inp" aria-label="Unidade de tempo" value={unit} onChange={(e) => changeUnit(e.target.value as SimUnit)}>
+            <option value="seconds">segundos</option>
+            <option value="minutes">minutos</option>
+            <option value="hours">horas</option>
+          </select>
+        </Frow>
+        <Frow
+          label="Jornada da pessoa"
+          info={
+            <>
+              <p>Usada para converter horas em "pessoas": horas por mês ÷ (horas por dia × 21 dias úteis).</p>
+              <p>Ex.: com 8 h por dia, 168 h por mês = 1 pessoa. Com 6 h por dia, 126 h por mês = 1 pessoa. Vazio = 7 h.</p>
+            </>
+          }
+        >
+          <NumField value={workday} onChange={setWorkday} max={24} width={80} label="Horas por dia da pessoa" />
+          <span className="ro">h por dia × 21 dias úteis no mês (padrão 7 h; de 1 a 24)</span>
+        </Frow>
+        <Frow label={mode === 'igual' ? 'Tempo para todos' : 'Tempo padrão'}>
+          <NumField value={equal} onChange={setEqual} max={maxInUnit} width={100} label={mode === 'igual' ? 'Tempo para todos' : 'Tempo padrão'} />
+          <span className="ro">
+            {UNIT_NAME[unit]} {base === 'exec' ? 'por execução' : 'por item'}
+          </span>
+          {mode === 'robo' ? <span className="ro">· vale para quem ficar em branco</span> : null}
+        </Frow>
 
-        <div className="flex flex-wrap items-end gap-4">
-          <label className="space-y-1">
-            <span className="block text-xs font-medium text-slate-500 dark:text-zinc-400">{mode === 'igual' ? 'Tempo manual' : 'Tempo padrão (robôs em branco)'}</span>
-            <span className="flex gap-2">
-              <Input aria-label="Tempo padrão" inputMode="decimal" className="w-28" value={equal} onChange={(e) => setEqual(e.target.value)} placeholder="5" />
-              <select
-                aria-label="Unidade de tempo"
-                value={unit}
-                onChange={(e) => setUnit(e.target.value as TimeUnit)}
-                className="h-10 rounded-xl border border-slate-300 bg-white px-3 text-sm text-slate-900 outline-none focus:border-sky-500 focus:ring-4 focus:ring-sky-500/15 dark:border-[#2b2b31] dark:bg-[#0f0f10] dark:text-zinc-100"
-              >
-                {TIME_UNITS.map((u) => (
-                  <option key={u.value} value={u.value}>
-                    {u.label}
-                  </option>
-                ))}
-              </select>
-            </span>
-          </label>
-          <label className="space-y-1">
-            <span className="block text-xs font-medium text-slate-500 dark:text-zinc-400">Jornada da pessoa (h por dia)</span>
-            <Input aria-label="Jornada em horas por dia" inputMode="decimal" className="w-24" value={workday} onChange={(e) => setWorkday(e.target.value)} />
-          </label>
-          {scope === 'todos' ? (
-            <label className="flex items-center gap-2 pb-2 text-sm text-slate-700 dark:text-zinc-200">
-              <input type="checkbox" checked={newTimes} onChange={(e) => setNewTimes(e.target.checked)} />
-              Simular novos tempos para quem já tem ganho
-            </label>
-          ) : null}
-        </div>
-
-        {mode === 'robo' || (scope === 'todos' && newTimes) ? (
-          <div className="overflow-x-auto rounded-xl border border-slate-200 dark:border-[#27272a]">
-            <table className="w-full min-w-[520px] text-sm">
+        {/* ---------------- tabela de robôs ---------------- */}
+        {rows.length === 0 && preview ? (
+          <div className="empty">Todos os robôs ativos do Hub já têm tempo manual. Escolha "Somar com os que já têm ganho" para simular novos tempos para eles.</div>
+        ) : null}
+        {rows.length > 0 ? (
+          <div className="tbl-wrap">
+            <table className="sim stack">
               <thead>
-                <tr className="text-left text-[11px] uppercase tracking-wider text-slate-500 dark:text-zinc-400">
-                  <th className="px-3 py-2">Incluir</th>
-                  <th className="px-3 py-2">Robô</th>
-                  <th className="px-3 py-2">Tempo ({unitLabel}{base === 'exec' ? ' por execução' : ' por item'})</th>
+                <tr>
+                  <th />
+                  <th>Robô</th>
+                  <th className="n">Execuções por mês</th>
+                  <th className="n">Ganho hoje por mês</th>
+                  <th className="n">{modeHeader}</th>
                 </tr>
               </thead>
               <tbody>
-                {shown.map((r) => {
-                  const has = r.manualSecondsPerUnit > 0;
-                  const off = excluded.has(r.id);
-                  const editable = has ? scope === 'todos' && newTimes : mode === 'robo';
+                {rows.map((r) => {
+                  const hub = robotsById.get(r.robotId);
+                  const seg = hub?.manualSecondsPerUnit ?? 0;
+                  const label = hub?.unitLabel || 'item';
+                  const sub: string[] = [];
+                  if (r.hasTime) sub.push(`hoje: ${perUnitTxt(seg, label)}`);
+                  if (base === 'item' && !r.hasTime) sub.push(r.metricKey ? `informa ${r.metricKey} (média ${nf(r.metricAvg ?? 0, (r.metricAvg ?? 0) < 10 ? 1 : 0)})` : 'não informa itens: 1 por execução');
+                  const off = excluded.has(r.robotId);
+                  let cell: ReactNode;
+                  if (r.hasTime && scope === 'todos' && newTimes) {
+                    const current = nfx(Math.round((seg / unitSec) * 100) / 100);
+                    cell = (
+                      <div className="tcell">
+                        <NumField value={perCurrent[r.robotId] ?? ''} onChange={(v) => setPerCurrent((p) => ({ ...p, [r.robotId]: v }))} max={maxInUnit} width={110} placeholder={`atual: ${current}`} label={`Novo tempo de ${r.name} (hoje ${current} ${UNIT_AB[unit]} por ${label})`} />
+                        <span className="ro un">
+                          {UNIT_AB[unit]} por {label}
+                        </span>
+                      </div>
+                    );
+                  } else if (mode === 'robo' && !r.hasTime) {
+                    cell = (
+                      <div className="tcell">
+                        <NumField value={perRobot[r.robotId] ?? ''} onChange={(v) => setPerRobot((p) => ({ ...p, [r.robotId]: v }))} max={maxInUnit} width={110} placeholder="padrão" label={`Tempo de ${r.name}`} />
+                        <span className="ro un">
+                          {UNIT_AB[unit]}
+                          {base === 'exec' ? ' por execução' : ' por item'}
+                        </span>
+                      </div>
+                    );
+                  } else cell = <span className="ro">{r.hasTime ? 'tempo atual' : 'tempo para todos'}</span>;
                   return (
-                    <tr key={r.id} className="border-t border-slate-100 dark:border-[#1f1f23]">
-                      <td className="px-3 py-1.5">
-                        <input type="checkbox" aria-label={`Incluir ${r.name}`} checked={!off} onChange={() => toggleExcluded(r.id)} />
+                    <tr key={r.robotId} className={off ? 'off' : ''}>
+                      <td className="cbc">
+                        <input
+                          type="checkbox"
+                          aria-label={`Incluir ${r.name}`}
+                          checked={!off}
+                          onChange={(e) =>
+                            setExcluded((prev) => {
+                              const next = new Set(prev);
+                              if (e.target.checked) next.delete(r.robotId);
+                              else next.add(r.robotId);
+                              return next;
+                            })
+                          }
+                        />
                       </td>
-                      <td className="px-3 py-1.5 text-slate-800 dark:text-zinc-100">
-                        {r.name}
-                        {has ? <span className="ml-2 text-xs text-slate-400">já tem {dur(r.manualSecondsPerUnit)} por item</span> : null}
+                      <td className="nomec">
+                        <div style={{ fontWeight: 500 }}>{r.name}</div>
+                        {sub.length ? <div className="ro">{sub.join(' · ')}</div> : null}
                       </td>
-                      <td className="px-3 py-1.5">
-                        {editable ? (
-                          <Input
-                            aria-label={`Tempo de ${r.name}`}
-                            inputMode="decimal"
-                            className="h-8 w-28"
-                            disabled={off}
-                            placeholder={has ? 'mantém' : equal || '—'}
-                            value={(has ? perCurrent[r.id] : perRobot[r.id]) ?? ''}
-                            onChange={(e) => (has ? setPerCurrent((p) => ({ ...p, [r.id]: e.target.value })) : setPerRobot((p) => ({ ...p, [r.id]: e.target.value })))}
-                          />
-                        ) : (
-                          <span className="text-xs text-slate-400">{has ? 'tempo atual' : 'tempo padrão'}</span>
-                        )}
-                      </td>
+                      <td className="n" data-label="Execuções por mês">{nf(r.executionsMonth, r.executionsMonth < 10 ? 1 : 0)}</td>
+                      <td className="n" data-label="Ganho hoje por mês">{r.currentMonth ? dur(r.currentMonth) : '0 h'}</td>
+                      <td className="n" data-label="Tempo">{cell}</td>
                     </tr>
                   );
                 })}
               </tbody>
             </table>
           </div>
-        ) : excluded.size > 0 ? (
-          <p className="text-xs text-slate-500 dark:text-zinc-400">{excluded.size} robô(s) excluído(s) da simulação. Escolha "Por robô" para ver a lista.</p>
         ) : null}
-
-        {problems.length ? (
-          <p role="alert" className="text-sm text-rose-600 dark:text-rose-400">
-            Corrija {problems.slice(0, 3).join(', ')}{problems.length > 3 ? ` e mais ${problems.length - 3}` : ''}: digite um número maior que zero (até 24 horas) para simular.
-          </p>
-        ) : null}
-        {error ? (
-          <p role="alert" className="text-sm text-rose-600 dark:text-rose-400">
-            {error}
-          </p>
-        ) : null}
-        <div className="flex items-center gap-3">
-          <Button onClick={run} disabled={!canRun}>
+        {error ? <div className="fe" role="alert">{error}</div> : null}
+        <div className="simgo">
+          <span className="note">
+            Base: {preview ? `execuções reais de ${pl(preview.days, 'dia', 'dias')}` : 'execuções reais do período escolhido'}, levadas para 1 mês do calendário (um mês inteiro vale 1; um pedaço vale a fração dos dias dele).
+            {errors.length ? (
+              <span className="fe" style={{ display: 'block' }}>
+                Corrija os campos marcados em vermelho para simular.
+              </span>
+            ) : null}
+          </span>
+          <button type="button" className="btn pri big" onClick={run} disabled={!canRun}>
             {busy ? 'Simulando...' : 'Simular'}
-          </Button>
-          {stale ? (
-            <span role="status" className="text-sm text-amber-700 dark:text-amber-300">
-              Os valores mudaram: clique em Simular para atualizar o resultado.
-            </span>
-          ) : null}
+          </button>
         </div>
       </div>
 
-      {result ? (
-        <div className={cn('space-y-6 transition-opacity', stale && 'opacity-50')} aria-busy={busy}>
-          <p className="text-xs text-slate-500 dark:text-zinc-400">
-            Base: execuções reais de {nf(result.days)} {result.days === 1 ? 'dia' : 'dias'}, levadas para 1 mês do calendário (um mês inteiro vale 1; um pedaço vale a fração dos dias dele). Jornada de {nf(result.workdayHours)} h por dia, 21 dias úteis.
-          </p>
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-            <Stat label="Ganho a mais por mês" value={signedDur(result.extraMonth)} hint={`${signedDur(result.extraYear)} por ano`} />
-            <Stat label="Pessoas a mais" value={peopleText(result.people.extra)} hint="trabalhando só nisso o mês todo" />
-            <Stat label="Relatório hoje" value={`${dur(result.reportMonth)} por mês`} hint={peopleText(result.people.current)} />
-            <Stat label="Relatório simulado" value={`${dur(result.reportMonth + result.extraMonth)} por mês`} hint={peopleText(result.people.total)} />
-          </div>
-
-          <div className="rounded-2xl border border-slate-200 p-4 dark:border-[#27272a]">
-            <h3 className="text-sm font-semibold text-slate-900 dark:text-zinc-100">Faixa de estimativa</h3>
-            <p className="mt-0.5 text-xs text-slate-500 dark:text-zinc-400">
-              Conservador = metade dos tempos informados, provável = os tempos informados, otimista = 1,5 vez. Os tempos de quem já tem ganho não variam.
+      {/* ---------------- resultado ---------------- */}
+      {result && m ? (
+        <div ref={resultRef} className={stale ? 'stale' : ''} style={{ marginTop: 18, scrollMarginTop: 16 }}>
+          {stale ? (
+            <div className="stale-msg" role="status">
+              Os valores mudaram: clique em Simular para atualizar o resultado.
+            </div>
+          ) : null}
+          <div className="card">
+            <h3>Resultado da simulação</h3>
+            <p className="sub">
+              {result.desc} · base: {result.per} · pessoa: {jornadaTxt(m.workdayHours)}
             </p>
-            <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-3">
-              {(
-                [
-                  ['Conservador', result.band.low],
-                  ['Provável', result.band.likely],
-                  ['Otimista', result.band.high],
-                ] as const
-              ).map(([label, b]) => (
-                <div key={label} className="rounded-xl bg-slate-50 p-3 text-center dark:bg-[#18181b]">
-                  <div className="text-xs text-slate-500 dark:text-zinc-400">{label}</div>
-                  <div className="text-lg font-semibold text-slate-950 dark:text-white">{signedDur(b.extraMonth)} por mês</div>
-                  <div className="text-xs text-slate-500 dark:text-zinc-400">{peopleText(b.people)}</div>
-                </div>
-              ))}
+            <div className="kpis" style={{ marginBottom: 8, gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', gap: '24px 28px' }}>
+              <Kpi title="Ganho a mais por mês" value={signed(m.extraMonth, hrs)} small="h" sub="sobre o que estes robôs somam hoje" />
+              <Kpi title="Ganho a mais por ano" value={signed(m.extraMonth * 12, (v) => nf(v / 3600))} small="h" sub="mês simulado × 12" />
+              <Kpi
+                title="Pessoas a mais"
+                value={peopleNum(m.extraMonth, m.workdayHours)}
+                small={peopleWord(m.extraMonth, m.workdayHours)}
+                sub={m.rows.some((r) => r.source === 'novo') ? `robôs sem tempo: ${peopleTxt(m.fromWithout, m.workdayHours)} · novos tempos: ${m.fromNewTimes > 0 ? '+' : ''}${peopleTxt(m.fromNewTimes, m.workdayHours)}` : 'só o ganho a mais dos robôs sem tempo'}
+              />
+              <Kpi title="Pessoas no total" value={peopleNum(m.reportMonth + m.extraMonth, m.workdayHours)} small={peopleWord(m.reportMonth + m.extraMonth, m.workdayHours)} sub={`todo o tempo ganho com a simulação (hoje: ${peopleTxt(m.reportMonth, m.workdayHours)})`} />
             </div>
           </div>
 
-          <div className="overflow-x-auto rounded-2xl border border-slate-200 dark:border-[#27272a]">
-            <table className="w-full min-w-[640px] text-sm">
-              <thead>
-                <tr className="text-left text-[11px] uppercase tracking-wider text-slate-500 dark:text-zinc-400">
-                  <th className="px-3 py-2">Robô</th>
-                  <th className="px-3 py-2 text-right">Execuções</th>
-                  <th className="px-3 py-2 text-right">Hoje por mês</th>
-                  <th className="px-3 py-2 text-right">Simulado por mês</th>
-                  <th className="px-3 py-2 text-right">Diferença</th>
-                  <th className="px-3 py-2">Como entrou</th>
-                </tr>
-              </thead>
-              <tbody>
-                {result.rows.map((r) => (
-                  <tr key={r.robotId} className="border-t border-slate-100 dark:border-[#1f1f23]">
-                    <td className="px-3 py-1.5 font-medium text-slate-900 dark:text-zinc-100">{r.name}</td>
-                    <td className="px-3 py-1.5 text-right tabular-nums">{nf(r.executions)}</td>
-                    <td className="px-3 py-1.5 text-right tabular-nums">{dur(r.currentMonth)}</td>
-                    <td className="px-3 py-1.5 text-right tabular-nums">{dur(r.simulatedMonth)}</td>
-                    <td className="px-3 py-1.5 text-right tabular-nums">{signedDur(r.simulatedMonth - r.currentMonth)}</td>
-                    <td className="px-3 py-1.5 text-xs text-slate-500 dark:text-zinc-400">
-                      {SOURCE_LABEL[r.source]}
-                      {r.perExecution !== null ? ` · ${dur(r.perExecution)} por execução` : ''}
-                      {r.estimated ? ` · ${nf(r.estimated)} estimadas` : ''}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+          <div className="card">
+            <h3>
+              Evolução mensal com a simulação
+              <SgInfo label="Sobre: Evolução mensal">
+                <p>Barras: tempo ganho total de cada mês. Cinza = o que já está cadastrado. Azul = o extra que os tempos simulados dariam, aplicados às execuções reais daquele mês.</p>
+                <p>"Todo o relatório" soma todos os robôs, como o relatório. "Só os simulados" mostra apenas os robôs da simulação, para o extra aparecer melhor quando o resto é muito maior.</p>
+                <p>Linha: variação do total sobre o mês anterior. O primeiro mês começa em 0%. O gráfico começa no primeiro mês completo de dados (um mês que começou no meio daria uma variação falsa).</p>
+                <p>O mês atual (*) ainda não terminou: a barra aparece mais clara e a linha até ele fica pontilhada; a variação dele é parcial (só os dias que já passaram). Verde = variação maior ou igual a 0; vermelho = menor que 0.</p>
+              </SgInfo>
+            </h3>
+            <GainMonthlyChart months={m.monthly.months} cut={m.monthly.cut} />
           </div>
 
-          {result.insights.length ? (
-            <div className="space-y-2">
-              <h3 className="text-sm font-semibold text-slate-900 dark:text-zinc-100">O que a simulação mostra</h3>
-              <ul className="space-y-1.5">
-                {result.insights.map((i, idx) => (
-                  <li
-                    key={idx}
-                    className={cn(
-                      'rounded-xl px-3 py-2 text-sm',
-                      i.kind === 'warn' ? 'bg-amber-50 text-amber-900 dark:bg-amber-950/30 dark:text-amber-100' : 'bg-slate-50 text-slate-700 dark:bg-[#18181b] dark:text-zinc-300',
-                    )}
-                  >
-                    <span aria-hidden="true" className="mr-2">{i.kind === 'warn' ? '⚠' : '•'}</span>
-                    {i.text}
-                  </li>
-                ))}
+          <div className="two" style={{ marginTop: 18 }}>
+            <div>
+              <div className="card" style={{ margin: 0 }}>
+                <ReportBars m={m} />
+              </div>
+              <div className="card" style={{ marginTop: 18 }}>
+                <RankingBars rows={m.rows} />
+              </div>
+            </div>
+            <div className="card" style={{ margin: 0, alignSelf: 'start' }}>
+              <h3>Insights</h3>
+              {m.insights.length ? (
+                <ul className="insl">
+                  {m.insights.map((i, idx) => (
+                    <li key={idx} className={i.kind === 'warn' ? 'warn' : ''}>
+                      <span className="ic" aria-hidden="true">{i.icon}</span>
+                      <span>{i.text}</span>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="sub">Nada a destacar.</p>
+              )}
+            </div>
+          </div>
+
+          <div className="simgo">
+            <span className="note">{letter ? 'Guarde o resultado para comparar com outra simulação.' : 'Limite de 4 cenários: remova um para guardar outro.'}</span>
+            <button type="button" className="btn" disabled={!letter || stale} onClick={saveScenario}>
+              Guardar como Cenário {letter ?? ''}
+            </button>
+            {isAdmin && applicable.length ? (
+              <button type="button" className="btn" disabled={stale} onClick={() => setConfirming(true)}>
+                Usar estes tempos na configuração ({pl(applicable.length, 'robô', 'robôs')})
+              </button>
+            ) : null}
+          </div>
+          {confirming && !stale && isAdmin ? (
+            <div className="warnbox" style={{ marginTop: 12 }}>
+              <div style={{ fontWeight: 650, marginBottom: 6 }}>Configurar {pl(applicable.length, 'robô', 'robôs')} com os tempos da simulação (provável)?</div>
+              <ul style={{ margin: '0 0 8px', paddingLeft: 18 }}>
+                {applicable.map((r) => {
+                  const hub = robotsById.get(r.robotId);
+                  const info = withoutGain.find((x) => x.robotId === r.robotId);
+                  const novo = r.source === 'novo';
+                  const unitName = novo ? hub?.unitLabel || 'item' : base === 'exec' ? 'execução' : info?.unitLabel && info.unitLabel !== 'item' ? info.unitLabel : 'item';
+                  return (
+                    <li key={r.robotId}>
+                      {r.name}: {hub?.manualSecondsPerUnit ? `${perUnitTxt(hub.manualSecondsPerUnit, hub.unitLabel || 'item')} → ` : ''}
+                      {perUnitTxt(times[r.robotId] ?? 0, unitName)}
+                    </li>
+                  );
+                })}
               </ul>
-            </div>
-          ) : null}
-
-          <div className="space-y-3 rounded-2xl border border-slate-200 p-4 dark:border-[#27272a]">
-            <h3 className="text-sm font-semibold text-slate-900 dark:text-zinc-100">Evolução mensal</h3>
-            <GainMonthlyChart months={result.monthly.months} cut={result.monthly.cut} />
-          </div>
-
-          <div className="space-y-3 rounded-2xl border border-slate-200 p-4 dark:border-[#27272a]">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div>
-                <h3 className="text-sm font-semibold text-slate-900 dark:text-zinc-100">Cenários</h3>
-                <p className="text-xs text-slate-500 dark:text-zinc-400">Guarde até 4 simulações para comparar lado a lado. Ficam só nesta tela, enquanto ela estiver aberta.</p>
+              <div>Vale só para as próximas execuções (os números já apresentados não mudam). Dá para revisar cada um depois na lista de robôs.</div>
+              <div className="acts" style={{ marginTop: 10, display: 'flex', gap: 8 }}>
+                <button type="button" className="btn" onClick={() => setConfirming(false)} disabled={applying}>
+                  Cancelar
+                </button>
+                <button type="button" className="btn pri" onClick={apply} disabled={applying}>
+                  {applying ? 'Salvando...' : 'Confirmar'}
+                </button>
               </div>
-              <Button size="sm" variant="outline" onClick={saveScenario} disabled={stale || !freeLetter}>
-                {freeLetter ? `Guardar como Cenário ${freeLetter}` : 'Limite de 4 cenários'}
-              </Button>
-            </div>
-            {scenarios.length === 0 ? (
-              <p className="text-sm text-slate-500 dark:text-zinc-400">Nenhum cenário guardado ainda.</p>
-            ) : (
-              <div className="overflow-x-auto rounded-xl border border-slate-200 dark:border-[#27272a]">
-                <table className="w-full min-w-[560px] text-sm">
-                  <thead>
-                    <tr className="text-left text-[11px] uppercase tracking-wider text-slate-500 dark:text-zinc-400">
-                      <th className="px-3 py-2"> </th>
-                      {scenarios.map((sc) => (
-                        <th key={sc.letter} className="px-3 py-2 align-top">
-                          <div className="flex items-center justify-between gap-2 normal-case">
-                            <span className="text-sm font-semibold tracking-normal text-slate-900 dark:text-zinc-100">Cenário {sc.letter}</span>
-                            <button type="button" onClick={() => setScenarios((prev) => prev.filter((x) => x.letter !== sc.letter))} aria-label={`Remover o cenário ${sc.letter}`} className="text-xs font-normal text-rose-600 hover:underline dark:text-rose-400">
-                              Remover
-                            </button>
-                          </div>
-                          <div className="mt-0.5 text-xs font-normal normal-case tracking-normal text-slate-500 dark:text-zinc-400">{sc.description}</div>
-                        </th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {(
-                      [
-                        ['Ganho a mais por mês', (sc: Scenario) => signedDur(sc.extraMonth), 'extraMonth'],
-                        ['Ganho a mais por ano', (sc: Scenario) => signedDur(sc.extraYear), 'extraYear'],
-                        ['Pessoas a mais', (sc: Scenario) => peopleText(sc.peopleExtra), 'peopleExtra'],
-                        ['Relatório simulado por mês', (sc: Scenario) => `${dur(sc.simulatedReport)} (${peopleText(sc.peopleTotal)})`, 'simulatedReport'],
-                        ['Faixa: conservador', (sc: Scenario) => signedDur(sc.low), 'low'],
-                        ['Faixa: otimista', (sc: Scenario) => signedDur(sc.high), 'high'],
-                        ['Robôs com tempo informado', (sc: Scenario) => nf(sc.informed), null],
-                        ['Base (dias de execuções)', (sc: Scenario) => nf(sc.days), null],
-                      ] as Array<[string, (sc: Scenario) => string, keyof Scenario | null]>
-                    ).map(([label, fmt, best]) => {
-                      const top = best && scenarios.length > 1 ? Math.max(...scenarios.map((sc) => Number(sc[best]))) : null;
-                      return (
-                        <tr key={label} className="border-t border-slate-100 dark:border-[#1f1f23]">
-                          <td className="px-3 py-1.5 text-xs text-slate-500 dark:text-zinc-400">{label}</td>
-                          {scenarios.map((sc) => (
-                            <td key={sc.letter} className={cn('px-3 py-1.5 tabular-nums', best && top !== null && Number(sc[best]) === top && 'font-semibold text-emerald-700 dark:text-emerald-400')}>
-                              {fmt(sc)}
-                            </td>
-                          ))}
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div>
-
-          {applicable.length > 0 ? (
-            <div className="rounded-2xl border border-slate-200 p-4 dark:border-[#27272a]">
-              <p className="text-sm text-slate-700 dark:text-zinc-300">
-                Gostou? Use estes tempos na configuração de {applicable.length} {applicable.length === 1 ? 'robô' : 'robôs'} sem ganho. Vale só para as próximas
-                execuções.
-              </p>
-              <Button className="mt-3" variant="outline" onClick={() => setConfirming(true)}>
-                Usar estes tempos na configuração
-              </Button>
             </div>
           ) : null}
         </div>
       ) : null}
 
-      {confirming ? (
-        <div className="fixed inset-0 z-50 grid place-items-center p-4">
-          <button type="button" aria-label="Fechar" className="absolute inset-0 bg-black/50" onClick={() => !applying && setConfirming(false)} />
-          <div role="dialog" aria-modal="true" aria-labelledby="sim-apply-title" className="relative w-full max-w-md rounded-2xl border border-slate-200 bg-white p-6 shadow-xl dark:border-[#27272a] dark:bg-[#111113]">
-            <h2 id="sim-apply-title" className="text-lg font-semibold text-slate-950 dark:text-white">
-              Salvar estes tempos?
-            </h2>
-            <p className="mt-2 text-sm text-slate-600 dark:text-zinc-300">
-              O tempo manual de {applicable.length} {applicable.length === 1 ? 'robô' : 'robôs'} será gravado no cadastro, {base === 'exec' ? 'por execução' : 'por item'}. As próximas
-              execuções passam a somar ganho; as que já aconteceram não mudam.
-            </p>
-            <ul className="mt-3 max-h-40 space-y-0.5 overflow-y-auto text-sm text-slate-700 dark:text-zinc-300">
-              {applicable.map((r) => (
-                <li key={r.robotId}>
-                  {r.name}: {dur(times[r.robotId] ?? 0)} {base === 'exec' ? 'por execução' : 'por item'}
-                </li>
-              ))}
-            </ul>
-            <div className="mt-5 flex justify-end gap-2">
-              <Button variant="outline" onClick={() => setConfirming(false)} disabled={applying}>
-                Cancelar
-              </Button>
-              <Button onClick={apply} disabled={applying}>
-                {applying ? 'Salvando...' : 'Salvar'}
-              </Button>
-            </div>
-          </div>
+      {/* ---------------- cenários ---------------- */}
+      {scenarios.length ? <ScenariosTable scenarios={scenarios} onRemove={(l) => setScenarios((prev) => prev.filter((s) => s.letter !== l))} /> : null}
+    </div>
+  );
+}
+
+/** "Tempo ganho do relatório, por mês": hoje × com a simulação, e a faixa conservador/provável/otimista. */
+function ReportBars({ m }: { m: SimulationResult }) {
+  const rel = m.reportMonth;
+  const sim = rel + m.extraMonth;
+  const mx = Math.max(rel, sim, 1);
+  const loses = m.extraMonth < 0;
+  const seg = (v: number, style: CSSProperties) => (v > 0 ? <span style={{ width: `${(v / mx) * 100}%`, ...style }} /> : null);
+  const bar = (label: string, parts: ReactNode, value: string) => (
+    <div className="cb">
+      <span className="lb">{label}</span>
+      <div className="track" role="img" aria-label={`${label}: ${value}`}>{parts}</div>
+      <span className="val">{value}</span>
+    </div>
+  );
+  const fx = (title: string, extra: number, note: string, mid?: boolean) => (
+    <div className={`pv${mid ? ' mid' : ''}`}>
+      <div className="t">{title}</div>
+      <div className="v">{signedDur(extra)}</div>
+      <div className="c">{note}</div>
+    </div>
+  );
+  return (
+    <>
+      <h3>
+        Tempo ganho do relatório, por mês
+        <SgInfo label="Sobre: Tempo ganho do relatório">
+          <p>"Hoje" é o tempo ganho de todos os robôs (Hub, externos e painéis) no período, levado para um mês.</p>
+          <p>"Com a simulação" soma a diferença simulada. Os outros robôs não mudam. Se a simulação reduz o ganho, a parte perdida aparece com contorno vermelho.</p>
+        </SgInfo>
+      </h3>
+      <div className="cmpbars">
+        {bar('Hoje', seg(rel, { background: 'var(--faint)' }), dur(rel))}
+        {bar(
+          'Com a simulação',
+          <>
+            {seg(Math.min(rel, sim), { background: 'var(--faint)' })}
+            {loses ? seg(-m.extraMonth, { background: 'transparent', border: '1.5px dashed var(--bad-ink)', boxSizing: 'border-box', borderRadius: 4 }) : seg(m.extraMonth, { background: 'var(--accent)' })}
+          </>,
+          dur(sim),
+        )}
+      </div>
+      <div className="legend">
+        <span><span className="sw" style={{ background: 'var(--faint)' }} />o que já existe</span>
+        {loses ? (
+          <span><span className="sw" style={{ border: '1.5px dashed var(--bad-ink)', boxSizing: 'border-box' }} />a menos na simulação</span>
+        ) : (
+          <span><span className="sw" style={{ background: 'var(--accent)' }} />a mais na simulação</span>
+        )}
+      </div>
+      <div style={{ marginTop: 20 }}>
+        <div style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--ink2)', marginBottom: 8, display: 'flex', gap: 5, alignItems: 'center' }}>
+          Faixa (ganho a mais por mês)
+          <SgInfo label="Sobre: Faixa">
+            <p>O tempo de cabeça raramente é exato. A faixa mostra o resultado com metade e com 1,5 vez os tempos estimados para os robôs sem tempo.</p>
+            <p>Não variam: os robôs que mantêm o tempo atual e os novos tempos escolhidos para eles.</p>
+          </SgInfo>
         </div>
-      ) : null}
-    </section>
+        <div className="faixa">
+          {fx('Conservador', m.band.low.extraMonth, 'metade dos tempos')}
+          {fx('Provável', m.band.likely.extraMonth, 'os tempos informados', true)}
+          {fx('Otimista', m.band.high.extraMonth, '1,5 vez os tempos')}
+        </div>
+      </div>
+    </>
+  );
+}
+
+/** "Quanto cada robô soma por mês": cinza = o que já soma; azul = o que a simulação acrescenta; contorno vermelho = o que um novo tempo menor tira. */
+function RankingBars({ rows }: { rows: SimRow[] }) {
+  const shown = rows.filter((r) => r.simulatedMonth > 0 || r.currentMonth > 0).sort((a, b) => b.simulatedMonth - a.simulatedMonth);
+  const rmx = Math.max(1, ...shown.map((r) => Math.max(r.simulatedMonth, r.currentMonth)));
+  const noRuns = rows.filter((r) => !r.executions).length;
+  const noTime = rows.filter((r) => r.executions && !(r.simulatedMonth > 0 || r.currentMonth > 0)).length;
+  const out = [noRuns ? pl(noRuns, 'robô sem execuções no período', 'robôs sem execuções no período') : '', noTime ? pl(noTime, 'robô sem tempo informado', 'robôs sem tempo informado') : ''].filter(Boolean);
+  return (
+    <>
+      <h3>Quanto cada robô soma por mês</h3>
+      <p className="sub">Cinza = o que o robô já soma hoje (tempo atual); azul = o que a simulação acrescenta; contorno vermelho = o que um novo tempo menor tira.</p>
+      <div className="rank">
+        {shown.map((r) => (
+          <div className="rk" key={r.robotId}>
+            <span className="nm" title={r.name}>{r.name}</span>
+            <div className="track" style={{ height: 16, borderRadius: 5, background: 'var(--line2)', display: 'flex', gap: 2, overflow: 'hidden' }}>
+              {r.currentMonth > 0 ? <span style={{ display: 'block', height: '100%', width: `${(Math.min(r.currentMonth, r.simulatedMonth) / rmx) * 100}%`, background: 'var(--faint)' }} /> : null}
+              {r.simulatedMonth > r.currentMonth ? <span style={{ display: 'block', height: '100%', width: `${((r.simulatedMonth - r.currentMonth) / rmx) * 100}%`, background: 'var(--accent)' }} /> : null}
+              {r.simulatedMonth < r.currentMonth ? <span style={{ display: 'block', height: '100%', boxSizing: 'border-box', border: '1.5px dashed var(--bad-ink)', borderRadius: 4, width: `${((r.currentMonth - r.simulatedMonth) / rmx) * 100}%` }} /> : null}
+            </div>
+            <span className="val">
+              <b>{dur(r.simulatedMonth)}</b>
+              {r.source === 'novo' ? (r.simulatedMonth < r.currentMonth ? ` (novo tempo, era ${dur(r.currentMonth)})` : ' (novo tempo)') : r.hasTime ? ' (tempo atual)' : ' (simulado)'}
+            </span>
+          </div>
+        ))}
+      </div>
+      {out.length ? <p className="ro" style={{ margin: '10px 0 0' }}>Não aparecem: {out.join(' e ')}.</p> : null}
+    </>
+  );
+}
+
+function ScenariosTable({ scenarios, onRemove }: { scenarios: Scenario[]; onRemove: (letter: string) => void }) {
+  const best = Math.max(...scenarios.map((c) => c.mais));
+  const mx = Math.max(1, ...scenarios.map((c) => Math.abs(c.hi)), ...scenarios.map((c) => Math.abs(c.mais)));
+  return (
+    <div className="card" style={{ marginTop: 18 }}>
+      <h3>Cenários guardados</h3>
+      <p className="sub">Lado a lado, para comparar. Somem ao recarregar a página.</p>
+      <div className="tbl-wrap">
+        <table className="sim stack cen">
+          <thead>
+            <tr>
+              <th>Cenário</th>
+              <th>Como foi simulado</th>
+              <th className="n">A mais por mês</th>
+              <th className="n">Por ano</th>
+              <th className="n">Pessoas a mais</th>
+              <th className="n">Pessoas no total</th>
+              <th>Faixa (conservador a otimista)</th>
+              <th />
+            </tr>
+          </thead>
+          <tbody>
+            {scenarios.map((c) => {
+              const lo = Math.max(0, Math.min(c.lo, c.hi));
+              const hi = Math.max(0, Math.max(c.lo, c.hi));
+              return (
+                <tr key={c.letter}>
+                  <td>
+                    <b>{c.name}</b>
+                    {c.mais === best && scenarios.length > 1 ? <span className="chip good" style={{ marginLeft: 6 }}>maior</span> : null}
+                  </td>
+                  <td>
+                    <div>{c.desc}</div>
+                    <div className="ro">base: {c.per} · pessoa: {nfx(c.jh)} h por dia</div>
+                  </td>
+                  <td className="n" data-label="A mais por mês"><b>{signedDur(c.mais)}</b></td>
+                  <td className="n" data-label="Por ano">{signed(c.mais * 12, (v) => `${nf(v / 3600)} h`)}</td>
+                  <td className="n" data-label="Pessoas a mais">{peopleNum(c.mais, c.jh)}</td>
+                  <td className="n" data-label="Pessoas no total">{peopleNum(c.tot, c.jh)}</td>
+                  <td style={{ minWidth: 150 }} data-label="Faixa">
+                    <div title={`de ${signedDur(c.lo)} a ${signedDur(c.hi)}`} aria-label={`Faixa de ${signedDur(c.lo)} a ${signedDur(c.hi)}`} role="img" style={{ position: 'relative', height: 14, background: 'var(--line2)', borderRadius: 5 }}>
+                      <span style={{ position: 'absolute', top: 0, bottom: 0, borderRadius: 5, background: 'var(--accent-soft)', left: `${(lo / mx) * 100}%`, width: `${((hi - lo) / mx) * 100}%` }} />
+                      <span style={{ position: 'absolute', top: -2, bottom: -2, width: 3, borderRadius: 2, background: 'var(--accent)', left: `calc(${(Math.max(0, c.mais) / mx) * 100}% - 1px)` }} />
+                    </div>
+                  </td>
+                  <td className="n">
+                    <button type="button" className="link" aria-label={`Remover ${c.name}`} onClick={() => onRemove(c.letter)}>
+                      Remover
+                    </button>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
   );
 }

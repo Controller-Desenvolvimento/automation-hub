@@ -68,7 +68,7 @@ export class ReportsController {
   async getRobotsWithoutGain(@Req() request: Request, @Query() query: RawQuery) {
     const user = await this.authService.requireUser(request);
     this.authService.ensureAdmin(user);
-    return this.reportsService.listRobotsWithoutGain({ from: query.from, to: query.to });
+    return this.reportsService.listRobotsWithoutGain({ from: query.from, to: query.to, all: query.all === 'true' });
   }
 
   // Simulador de ganhos (aba "Robôs sem ganho"): só administradores; não grava nada.
@@ -84,6 +84,9 @@ export class ReportsController {
       times: body.times && typeof body.times === 'object' ? (body.times as Record<string, unknown>) : undefined,
       excluded: body.excluded,
       workdayHours: body.workdayHours,
+      light: body.light === true,
+      unit: typeof body.unit === 'string' ? body.unit : undefined,
+      defaultIds: body.defaultIds,
     });
   }
 

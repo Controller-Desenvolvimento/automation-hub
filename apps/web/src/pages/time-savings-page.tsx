@@ -300,6 +300,8 @@ export function TimeSavingsPage() {
             setReloadKey((k) => k + 1);
             void refreshHub();
           }}
+          isAdmin={canConfigure}
+          reportSavedSeconds={report?.totals.savedSeconds ?? null}
           sub={searchParams.get('aba') === 'simular' ? 'sim' : 'lista'}
           onSub={(next) => updateParams((params) => (next === 'sim' ? params.set('aba', 'simular') : params.delete('aba')))}
         />

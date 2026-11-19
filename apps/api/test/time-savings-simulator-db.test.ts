@@ -172,3 +172,19 @@ test('período que termina no passado: os dias e a projeção usam o "Até", nã
   assert.ok(Math.abs(a.simulatedMonth - expected) < 1e-6, `${a.simulatedMonth} vs ${expected}`);
   assert.ok(Math.abs(r.months - calendarMonths(iso(day(29)), iso(day(10)))) < 1e-9);
 });
+
+test('modo leve (formulário): só as linhas por robô, com execuções por mês e a métrica que o robô informa', { skip }, async () => {
+  const r = await reports.simulateGains(admin, { ...range(), scope: 'sem', base: 'item', times: {}, light: true });
+  assert.deepEqual(Object.keys(r).sort(), ['days', 'months', 'rows']);
+  const a = mine(r.rows).find((x: any) => x.robotId === 'ss-a');
+  assert.ok(Math.abs(a.executionsMonth - a.executions / a.monthsCovered) < 1e-9);
+  assert.equal(a.metricKey, 'notas');
+  assert.equal(a.metricAvg, 20, 'média das 3 execuções que informaram (10, 20 e 30)');
+});
+
+test('frases do simulador trazem ícone e a unidade escolhida', { skip }, async () => {
+  const r = await reports.simulateGains(admin, { ...range(), scope: 'sem', base: 'exec', times: { 'ss-a': 300 }, unit: 'hours', defaultIds: ['ss-a'] });
+  assert.ok(r.insights.every((i: any) => i.icon));
+  assert.ok(r.insights.some((i: any) => i.icon === '±' && /Cada 1 h a mais/.test(i.text)));
+  assert.ok(r.insights.some((i: any) => i.icon === '=' && /tempo padrão/.test(i.text)));
+});

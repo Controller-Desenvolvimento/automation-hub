@@ -30,6 +30,9 @@ export type SimRobot = {
   firstAt: number | null;
   /** Média de itens por execução fora do período (usada quando o robô não rodou nele). */
   fallbackAvgItems: number | null;
+  /** Métrica que o robô mais informa (a que vale como "item") e a média por execução, para mostrar na tela. */
+  metricKey?: string | null;
+  metricAvg?: number | null;
 };
 
 export type SimInput = {
@@ -65,6 +68,12 @@ export type SimRow = {
   estimated: number;
   /** Dias de histórico do robô dentro do período. */
   days: number;
+  /** Meses do calendário que o robô cobre no período (o divisor da projeção). */
+  monthsCovered: number;
+  /** Execuções por mês (projetadas). */
+  executionsMonth: number;
+  metricKey: string | null;
+  metricAvg: number | null;
 };
 
 export type SimResult = {
@@ -214,6 +223,10 @@ export function simulate(input: SimInput, mult = 1): SimResult {
       avgItems,
       estimated,
       days: d,
+      monthsCovered: mr,
+      executionsMonth: list.length / mr,
+      metricKey: robot.metricKey ?? null,
+      metricAvg: robot.metricAvg ?? null,
     });
   }
 
@@ -239,7 +252,20 @@ export const peopleOf = (secondsPerMonth: number, workdayHours: number) => secon
 
 // ---------- insights ----------
 
-export type SimInsight = { kind: 'warn' | 'info'; text: string };
+export type SimInsight = { kind: 'warn' | 'info'; icon: string; text: string };
+
+export type SimInsightOptions = {
+  base: SimBase;
+  workdayHours: number;
+  /** Unidade escolhida na tela (só para a frase "cada 1 min a mais"). */
+  unit?: 'seconds' | 'minutes' | 'hours';
+  scope?: SimScope;
+  /** Robôs que usaram o tempo padrão (no modo "por robô"): quando há, avisa quantos. */
+  defaultIds?: string[];
+};
+
+const UNIT_SECONDS = { seconds: 1, minutes: 60, hours: 3600 } as const;
+const UNIT_AB = { seconds: 's', minutes: 'min', hours: 'h' } as const;
 
 const nf = (v: number, d = 0) => v.toLocaleString('pt-BR', { minimumFractionDigits: d, maximumFractionDigits: d });
 const pl = (n: number, one: string, many: string) => `${nf(n)} ${n === 1 ? one : many}`;
@@ -258,7 +284,7 @@ const peopleTxt = (secondsPerMonth: number, jh: number) => {
 };
 
 /** Frases sobre o resultado: avisos primeiro (o que conferir), depois o que vale saber. */
-export function simInsights(result: SimResult, input: Pick<SimInput, 'base' | 'workdayHours'>): SimInsight[] {
+export function simInsights(result: SimResult, input: SimInsightOptions): SimInsight[] {
   const { rows } = result;
   const jh = input.workdayHours;
   const warn: SimInsight[] = [];
@@ -270,39 +296,52 @@ export function simInsights(result: SimResult, input: Pick<SimInput, 'base' | 'w
     .sort((a, b) => b.d - a.d);
   const totalPos = without.reduce((a, x) => a + x.d, 0);
 
-  if (result.days < 14) warn.push({ kind: 'warn', text: `Projeção feita com só ${pl(result.days, 'dia', 'dias')} de execuções. Para uma média mais estável, escolha 30 ou 90 dias no período.` });
+  if (result.days < 14) warn.push({ kind: 'warn', icon: '!', text: `Projeção feita com só ${pl(result.days, 'dia', 'dias')} de execuções. Para uma média mais estável, escolha 30 ou 90 dias no período.` });
   const high = rows.filter((r) => r.perExecution !== null && r.perExecution > jh * 3600);
-  for (const r of high.slice(0, 3)) warn.push({ kind: 'warn', text: `Confira ${r.name}: ${dur(r.perExecution!)} por execução, mais que uma jornada de ${nf(jh)} h. O tempo por item pode estar alto demais.` });
-  if (high.length > 3) warn.push({ kind: 'warn', text: `Mais ${pl(high.length - 3, 'robô passa', 'robôs passam')} de uma jornada inteira por execução.` });
+  for (const r of high.slice(0, 3)) warn.push({ kind: 'warn', icon: '!', text: `Confira ${r.name}: ${dur(r.perExecution!)} por execução, mais que uma jornada de ${nf(jh)} h. O tempo por item pode estar alto demais.` });
+  if (high.length > 3) warn.push({ kind: 'warn', icon: '!', text: `Mais ${pl(high.length - 3, 'robô passa', 'robôs passam')} de uma jornada inteira por execução.` });
   const empty = rows.filter((r) => r.source === 'nenhum');
-  if (empty.length) warn.push({ kind: 'warn', text: `${pl(empty.length, 'robô ficou', 'robôs ficaram')} sem tempo informado e não ${empty.length === 1 ? 'soma' : 'somam'} nada: ${names(empty)}.` });
+  if (empty.length) warn.push({ kind: 'warn', icon: '!', text: `${pl(empty.length, 'robô ficou', 'robôs ficaram')} sem tempo informado e não ${empty.length === 1 ? 'soma' : 'somam'} nada: ${names(empty)}.` });
 
-  if (result.estimatedExecutions) out.push({ kind: 'info', text: `${pl(result.estimatedExecutions, 'execução antiga foi estimada', 'execuções antigas foram estimadas')} pela média de itens do robô: o log com a quantidade já foi apagado pela retenção.` });
+  if (result.estimatedExecutions) out.push({ kind: 'info', icon: '≈', text: `${pl(result.estimatedExecutions, 'execução antiga foi estimada', 'execuções antigas foram estimadas')} pela média de itens do robô: o log com a quantidade já foi apagado pela retenção.` });
   const short = rows.filter((r) => r.executions > 0 && r.source !== 'atual' && r.source !== 'nenhum' && r.days < 30);
-  if (short.length) out.push({ kind: 'info', text: `${names(short)} ${short.length === 1 ? 'tem' : 'têm'} menos de 30 dias de execuções no período: a projeção ${short.length === 1 ? 'dele' : 'deles'} é menos firme.` });
-  if (without.length > 1) out.push({ kind: 'info', text: `${without[0].r.name} responde por ${nf((without[0].d / totalPos) * 100)}% do ganho dos robôs sem tempo (${dur(without[0].d)} por mês).` });
+  if (short.length) out.push({ kind: 'info', icon: '⌛', text: `${names(short)} ${short.length === 1 ? 'tem' : 'têm'} menos de 30 dias de execuções no período: a projeção ${short.length === 1 ? 'dele' : 'deles'} é menos firme.` });
+  if (without.length > 1) out.push({ kind: 'info', icon: '1º', text: `${without[0].r.name} responde por ${nf((without[0].d / totalPos) * 100)}% do ganho dos robôs sem tempo (${dur(without[0].d)} por mês).` });
   if (without.length >= 5) {
     const top3 = without.slice(0, 3).reduce((a, x) => a + x.d, 0);
-    out.push({ kind: 'info', text: `Os 3 maiores somam ${nf((top3 / totalPos) * 100)}% desse ganho; os outros ${without.length - 3} pesam pouco.` });
+    out.push({ kind: 'info', icon: '3', text: `Os 3 maiores somam ${nf((top3 / totalPos) * 100)}% desse ganho; os outros ${without.length - 3} pesam pouco.` });
   }
   if (result.reportMonth > 0 && dur(Math.abs(result.extra)) !== dur(0)) {
-    out.push({ kind: 'info', text: `O tempo ganho do relatório passaria de ${dur(result.reportMonth)} para ${dur(result.reportMonth + result.extra)} por mês (${result.extra > 0 ? '+' : '−'}${nf(Math.abs(result.extra / result.reportMonth) * 100)}%).` });
+    out.push({ kind: 'info', icon: result.extra > 0 ? '↑' : '↓', text: `O tempo ganho do relatório passaria de ${dur(result.reportMonth)} para ${dur(result.reportMonth + result.extra)} por mês (${result.extra > 0 ? '+' : '−'}${nf(Math.abs(result.extra / result.reportMonth) * 100)}%).` });
   }
   const news = rows.filter((r) => r.source === 'novo');
-  if (news.length) out.push({ kind: 'info', text: `Novos tempos em ${pl(news.length, 'robô que já tem ganho', 'robôs que já têm ganho')}: ${result.fromNewTimes >= 0 ? '+' : '−'}${dur(Math.abs(result.fromNewTimes))} por mês em relação aos tempos atuais.${result.fromNewTimes < 0 ? ' Os tempos novos são menores que os cadastrados hoje.' : ''}` });
+  if (news.length) out.push({ kind: 'info', icon: '↻', text: `Novos tempos em ${pl(news.length, 'robô que já tem ganho', 'robôs que já têm ganho')}: ${result.fromNewTimes >= 0 ? '+' : '−'}${dur(Math.abs(result.fromNewTimes))} por mês em relação aos tempos atuais.${result.fromNewTimes < 0 ? ' Os tempos novos são menores que os cadastrados hoje.' : ''}` });
+  // sensibilidade: o robô em que cada unidade de tempo a mais pesa mais no mês é o que vale estimar com mais cuidado
+  const unitName = input.unit ?? 'minutes';
+  const sens = rows
+    .filter((r) => r.source === 'informado' && r.executions > 0)
+    .map((r) => ({ r, s: ((input.base === 'exec' ? r.executions : r.executions * (r.avgItems || 1)) * UNIT_SECONDS[unitName]) / r.monthsCovered }))
+    .sort((a, b) => b.s - a.s)[0];
+  if (sens) out.push({ kind: 'info', icon: '±', text: `Cada 1 ${UNIT_AB[unitName]} a mais em ${sens.r.name} soma ~${dur(sens.s)} por mês: é o tempo que vale estimar com mais cuidado.` });
   if (totalPos > 0) {
     const sched = without.reduce((a, x) => a + (x.r.executions ? (x.d * x.r.scheduled) / x.r.executions : 0), 0) / totalPos;
-    if (sched >= 0.5) out.push({ kind: 'info', text: `${nf(sched * 100)}% do ganho dos robôs sem tempo vem de execuções agendadas: o robô roda sozinho, sem ninguém precisar pedir.` });
+    if (sched >= 0.5) out.push({ kind: 'info', icon: '⏱', text: `${nf(sched * 100)}% do ganho dos robôs sem tempo vem de execuções agendadas: o robô roda sozinho, sem ninguém precisar pedir.` });
+  }
+  if (input.scope === 'todos' && result.simulatedMonth > 0) {
+    const without100 = rows.filter((r) => !r.hasTime).reduce((a, r) => a + r.simulatedMonth, 0);
+    out.push({ kind: 'info', icon: '%', text: `Os robôs que hoje não têm ganho representariam ${nf((without100 / result.simulatedMonth) * 100)}% do total simulado destes robôs.` });
   }
   const idle = rows.filter((r) => r.executions === 0 && r.source !== 'nenhum' && r.source !== 'atual');
-  if (idle.length) out.push({ kind: 'info', text: `${pl(idle.length, 'robô não rodou', 'robôs não rodaram')} no período (${names(idle)}): o tempo ${idle.length === 1 ? 'dele' : 'deles'} não muda o resultado.` });
+  if (idle.length) out.push({ kind: 'info', icon: '0', text: `${pl(idle.length, 'robô não rodou', 'robôs não rodaram')} no período (${names(idle)}): o tempo ${idle.length === 1 ? 'dele' : 'deles'} não muda o resultado.` });
+  const usedDefault = rows.filter((r) => (input.defaultIds ?? []).includes(r.robotId) && r.source === 'informado');
+  if (usedDefault.length) out.push({ kind: 'info', icon: '=', text: `${pl(usedDefault.length, 'robô usou', 'robôs usaram')} o tempo padrão (não informado um a um).` });
   if (dur(Math.abs(result.extra)) !== dur(0)) {
     out.push({
       kind: 'info',
+      icon: '👥',
       text: `${result.extra > 0 ? `O ganho a mais equivale a ${peopleTxt(result.extra, jh)} trabalhando só nisso o mês todo` : `A simulação reduz o ganho em ${peopleTxt(result.extra, jh)}`}; o tempo ganho total equivaleria a ${peopleTxt(result.reportMonth + result.extra, jh)} (jornada de ${nf(jh)} h por dia, ${BUSINESS_DAYS} dias úteis).`,
     });
   }
-  void input.base;
   return [...warn, ...out];
 }
 

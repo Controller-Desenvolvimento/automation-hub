@@ -1,4 +1,4 @@
-import { Settings2, X } from 'lucide-react';
+import { X } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useHub } from '../../contexts/hub-context';
 import { api } from '../../lib/api';
@@ -12,13 +12,13 @@ import {
   type RobotsWithoutGainResponse,
   type TimeUnit,
 } from '../../lib/robots-without-gain';
-import { formatDateTime, formatNumber } from '../../lib/time-savings-metrics';
+import { formatNumber } from '../../lib/time-savings-metrics';
+import { hrs, nf, pl } from '../../lib/gain-simulator';
 import { cn, formatSecondsToHuman } from '../../lib/utils';
-import { Badge } from '../ui/badge';
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../ui/table';
 import { GainSimulator } from './gain-simulator';
+import { SgInfo } from './sg-parts';
 
 const plural = (n: number, one: string, many: string) => (n === 1 ? one : many);
 const nf0 = (n: number) => n.toLocaleString('pt-BR', { maximumFractionDigits: 0 });
@@ -27,9 +27,10 @@ const nf0 = (n: number) => n.toLocaleString('pt-BR', { maximumFractionDigits: 0 
 
 function ConfigureDialog({ robot, onClose, onSaved }: { robot: RobotWithoutGain; onClose: () => void; onSaved: (message: string) => void | Promise<void> }) {
   const hasMetrics = robot.metrics.length > 0;
-  const [time, setTime] = useState('');
+  const hasTime = robot.manualSecondsPerUnit > 0;
+  const [time, setTime] = useState(hasTime ? String(Math.round((robot.manualSecondsPerUnit / 60) * 100) / 100).replace('.', ',') : '');
   const [unit, setUnit] = useState<TimeUnit>('minutes');
-  const [label, setLabel] = useState(robot.unitLabel && robot.unitLabel !== 'item' ? robot.unitLabel : '');
+  const [label, setLabel] = useState(hasTime || (robot.unitLabel && robot.unitLabel !== 'item') ? robot.unitLabel : '');
   const [mode, setMode] = useState<'execution' | 'metric'>(hasMetrics ? 'metric' : 'execution');
   const [metricKey, setMetricKey] = useState(hasMetrics ? robot.metrics[0].key : '');
   const [busy, setBusy] = useState(false);
@@ -226,6 +227,8 @@ function ConfigureDialog({ robot, onClose, onSaved }: { robot: RobotWithoutGain;
 
 // ---------- aba ----------
 
+const dmy = (iso: string) => new Date(iso).toLocaleDateString('pt-BR');
+
 export function RobotsWithoutGain({
   from,
   to,
@@ -234,6 +237,8 @@ export function RobotsWithoutGain({
   onChanged,
   sub,
   onSub,
+  isAdmin,
+  reportSavedSeconds,
 }: {
   from: string;
   to: string;
@@ -244,12 +249,16 @@ export function RobotsWithoutGain({
   /** Sub-aba: a lista ou o simulador de ganhos (vive na URL: `aba=simular`). */
   sub: 'lista' | 'sim';
   onSub: (sub: 'lista' | 'sim') => void;
+  isAdmin: boolean;
+  /** Tempo ganho do relatório no período (para o terceiro indicador). */
+  reportSavedSeconds: number | null;
 }) {
   const { hub } = useHub();
   const [data, setData] = useState<RobotsWithoutGainResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [editing, setEditing] = useState<RobotWithoutGain | null>(null);
+  const [show, setShow] = useState<'sem' | 'todos'>('sem');
   const seq = useRef(0);
   // O simulador guarda o resultado e os cenários na própria tela: depois de aberto, fica montado (só escondido) ao voltar para a Lista.
   const [simOpened, setSimOpened] = useState(sub === 'sim');
@@ -260,7 +269,7 @@ export function RobotsWithoutGain({
   const load = useCallback(() => {
     const id = ++seq.current;
     setLoading(true);
-    const query = new URLSearchParams();
+    const query = new URLSearchParams({ all: 'true' });
     if (from) query.set('from', from);
     if (to) query.set('to', to);
     return api<RobotsWithoutGainResponse>(`/reports/robots-without-gain?${query.toString()}`)
@@ -282,13 +291,10 @@ export function RobotsWithoutGain({
     void load();
   }, [load]);
 
-  const robots = data?.robots ?? [];
   const hubRobots = (hub?.robots ?? [])
     .filter((r) => r.isActive && !r.isExternal)
-    .map((r) => ({ id: r.id, name: r.name, manualSecondsPerUnit: r.manualSecondsPerUnit ?? 0 }))
+    .map((r) => ({ id: r.id, name: r.name, manualSecondsPerUnit: r.manualSecondsPerUnit ?? 0, unitLabel: r.unitLabel ?? null }))
     .sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'));
-  const totalRuns = robots.reduce((sum, r) => sum + r.executions, 0);
-  const withRuns = robots.filter((r) => r.executions > 0).length;
 
   if (error) {
     return (
@@ -305,135 +311,167 @@ export function RobotsWithoutGain({
     );
   }
 
+  const all = data.robots;
+  const without = all.filter((r) => !r.manualSecondsPerUnit);
+  const shown = (show === 'sem' ? without : all).slice().sort((a, b) => b.executions - a.executions || a.name.localeCompare(b.name, 'pt-BR'));
+  const runsWithout = without.reduce((sum, r) => sum + r.executions, 0);
+  const othersTotal = data.others.reduce((sum, o) => sum + o.zeroItems + o.beforeTime, 0);
+
   return (
-    <section aria-busy={loading} className={cn('min-w-0 space-y-5 transition-opacity', loading && 'opacity-60')}>
-      <div role="group" aria-label="Seção" className="inline-flex overflow-hidden rounded-xl border border-slate-300 dark:border-[#2b2b31]">
-        {(
-          [
-            ['lista', 'Lista'],
-            ['sim', 'Simular ganhos'],
-          ] as const
-        ).map(([id, label]) => (
-          <button
-            key={id}
-            type="button"
-            aria-pressed={sub === id}
-            onClick={() => onSub(id)}
-            className={cn(
-              'px-3 py-2 text-sm transition',
-              sub === id ? 'bg-slate-950 text-white dark:bg-white dark:text-slate-950' : 'bg-white text-slate-600 hover:bg-slate-50 dark:bg-[#0f0f10] dark:text-zinc-300 dark:hover:bg-[#18181b]',
-            )}
-          >
-            {label}
-          </button>
-        ))}
+    <div className={`sg${loading ? ' opacity-60' : ''}`} aria-busy={loading}>
+      <div className="kpis">
+        <div className="kpi">
+          <div className="t">
+            Robôs sem tempo manual
+            <SgInfo label="Sobre: Robôs sem tempo manual">
+              <p>Robôs ativos do Hub que ainda não têm "tempo manual por item" configurado. Toda execução deles entra no relatório com 0 h de ganho.</p>
+              <p>Robôs externos (que rodam fora do Hub) não entram: o sistema deles informa o tempo ganho de cada execução.</p>
+            </SgInfo>
+          </div>
+          <div className="v">
+            {nf(without.length)}
+            <small>de {nf(hubRobots.length)}</small>
+          </div>
+          <div className="s">robôs ativos do Hub</div>
+        </div>
+        <div className="kpi">
+          <div className="t">Execuções deles no período</div>
+          <div className="v">{nf(runsWithout)}</div>
+          <div className="s">todas somaram 0 h</div>
+        </div>
+        <div className="kpi">
+          <div className="t">Tempo ganho no período</div>
+          <div className="v">
+            {reportSavedSeconds === null ? '—' : hrs(reportSavedSeconds)}
+            <small>h</small>
+          </div>
+          <div className="s">total do relatório hoje</div>
+        </div>
+      </div>
+
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 18 }}>
+        <button type="button" className={`btn${sub === 'lista' ? ' on' : ''}`} aria-pressed={sub === 'lista'} onClick={() => onSub('lista')}>
+          Robôs sem tempo manual
+        </button>
+        <button type="button" className={`btn${sub === 'sim' ? ' on' : ''}`} aria-pressed={sub === 'sim'} onClick={() => onSub('sim')}>
+          Simular ganhos
+        </button>
       </div>
 
       {sub === 'sim' || simOpened ? (
         <div hidden={sub !== 'sim'}>
-        <GainSimulator
-          from={from}
-          to={to}
-          hubRobots={hubRobots}
-          withoutGain={robots}
-          notify={notify}
-          onApplied={async () => {
-            await load();
-            onChanged();
-          }}
-        />
+          <GainSimulator
+            from={from}
+            to={to}
+            hubRobots={hubRobots}
+            withoutGain={all}
+            isAdmin={isAdmin}
+            notify={notify}
+            onApplied={async () => {
+              await load();
+              onChanged();
+            }}
+          />
         </div>
       ) : null}
 
       {sub === 'lista' ? (
-      <>
-      <div className="space-y-1">
-        <h2 className="text-lg font-semibold tracking-tight text-slate-950 dark:text-white">Robôs sem ganho</h2>
-        <p className="max-w-3xl text-sm text-slate-500 dark:text-zinc-400">
-          Robôs ativos do Hub sem tempo manual configurado: toda execução deles entra no relatório com 0 h, e o relatório subestima o ganho.
-          Informe quanto tempo uma pessoa levaria à mão e como contar os itens. Vale só daqui para frente.
-        </p>
-      </div>
-
-      {robots.length === 0 ? (
-        <p className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-6 text-sm text-emerald-800 dark:border-emerald-500/30 dark:bg-emerald-950/30 dark:text-emerald-200">
-          Todos os robôs ativos do Hub têm tempo manual configurado.
-        </p>
-      ) : (
         <>
-          <p className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-500/30 dark:bg-amber-950/30 dark:text-amber-100">
-            <strong>
-              {robots.length} {plural(robots.length, 'robô ativo sem tempo manual', 'robôs ativos sem tempo manual')}.
-            </strong>
-            {totalRuns > 0
-              ? ` ${withRuns} ${plural(withRuns, 'rodou', 'rodaram')} ${nf0(totalRuns)} ${plural(totalRuns, 'vez', 'vezes')} no período e não somou nada.`
-              : ' Nenhum rodou com sucesso no período mostrado.'}
-          </p>
-
-          <div className="overflow-hidden rounded-2xl border border-slate-200 dark:border-[#27272a]">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Robô</TableHead>
-                  <TableHead>Departamentos</TableHead>
-                  <TableHead className="text-right">Execuções no período</TableHead>
-                  <TableHead>Última execução</TableHead>
-                  <TableHead>Métricas que o robô informa</TableHead>
-                  <TableHead className="relative text-right">
-                    <span className="sr-only">Ações</span>
-                  </TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {robots.map((robot) => (
-                  <TableRow key={robot.robotId}>
-                    <TableCell>
-                      <div className="font-medium text-slate-900 dark:text-zinc-100">{robot.name}</div>
-                      <div className="text-xs text-slate-400 dark:text-zinc-500">{robot.slug}</div>
-                    </TableCell>
-                    <TableCell className="text-slate-600 dark:text-zinc-300">
-                      {robot.departments.length ? robot.departments.map(departmentLabel).join(', ') : 'Todos'}
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums">
-                      {robot.executions > 0 ? nf0(robot.executions) : <span className="text-slate-400 dark:text-zinc-500">nenhuma</span>}
-                    </TableCell>
-                    <TableCell className="whitespace-nowrap text-slate-600 dark:text-zinc-300">
-                      {robot.lastExecutionAt ? formatDateTime(robot.lastExecutionAt) : '—'}
-                    </TableCell>
-                    <TableCell>
-                      {robot.metrics.length ? (
-                        <div className="flex flex-wrap gap-1">
-                          {robot.metrics.slice(0, 3).map((m) => (
-                            <Badge key={m.key} variant="muted" title={`${m.key}: informada em ${m.executions} ${plural(m.executions, 'execução', 'execuções')}, média de ${formatNumber(m.total / Math.max(1, m.executions), 1)} por execução`}>
-                              {m.key} · {formatNumber(m.total / Math.max(1, m.executions), 1)}/exec.
-                            </Badge>
-                          ))}
-                          {robot.metrics.length > 3 ? <span className="text-xs text-slate-400">+{robot.metrics.length - 3}</span> : null}
-                        </div>
-                      ) : (
-                        <span className="text-xs text-slate-400 dark:text-zinc-500">nenhuma (conta 1 item por execução)</span>
-                      )}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <Button size="sm" variant="outline" className="gap-1.5" onClick={() => setEditing(robot)} aria-label={`Configurar o tempo manual de ${robot.name}`}>
-                        <Settings2 className="h-3.5 w-3.5" aria-hidden="true" />
-                        Configurar
-                      </Button>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+          <div className="sechead">
+            <div>
+              <h2>Robôs sem tempo manual</h2>
+              <p>Configure aqui mesmo: o valor passa a valer para as próximas execuções. As que já aconteceram continuam como estão.</p>
+            </div>
+            <span className="seg" role="group" aria-label="Quais robôs mostrar">
+              <button type="button" aria-pressed={show === 'sem'} onClick={() => setShow('sem')}>
+                Sem tempo manual ({nf(without.length)})
+              </button>
+              <button type="button" aria-pressed={show === 'todos'} onClick={() => setShow('todos')}>
+                Todos ({nf(all.length)})
+              </button>
+            </span>
           </div>
-          <p className="text-xs text-slate-400 dark:text-zinc-500">
-            As métricas vêm dos logs das execuções do período, que o Hub apaga depois de alguns dias; execuções antigas podem não mostrar nenhuma. Robôs externos
-            não aparecem aqui: o sistema deles informa o tempo ganho de cada execução.
-          </p>
-        </>
-      )}
 
-      </>
+          {shown.length === 0 ? (
+            <div className="empty">Todos os robôs ativos do Hub têm tempo manual configurado.</div>
+          ) : (
+            <div className="list">
+              {shown.map((r) => {
+                const hasTime = r.manualSecondsPerUnit > 0;
+                const metric = r.metrics[0];
+                const avg = metric ? metric.total / Math.max(1, metric.executions) : 0;
+                const scheduled = r.executions > 0 && r.scheduledExecutions === r.executions ? 'todas agendadas' : r.scheduledExecutions > 0 ? `${nf(r.scheduledExecutions)} agendadas` : '';
+                return (
+                  <div className={`row${r.executions === 0 ? ' zero' : ''}`} key={r.robotId}>
+                    <div>
+                      <div className="nm">
+                        {r.name}
+                        {hasTime ? (
+                          <span className="chip good">
+                            tempo atual: {r.manualSecondsPerUnit % 60 === 0 && r.manualSecondsPerUnit >= 60 ? `${nf(r.manualSecondsPerUnit / 60)} min` : `${nf(r.manualSecondsPerUnit)} s`} por {r.unitLabel}
+                          </span>
+                        ) : (
+                          <span className="chip acc">sem tempo manual</span>
+                        )}
+                        {metric ? (
+                          <span className="chip">
+                            {metric.key}: média {nf(avg, avg < 10 ? 1 : 0)} por execução
+                          </span>
+                        ) : r.executions > 0 ? (
+                          <span className="chip warn">não informa itens: conta 1 por execução</span>
+                        ) : (
+                          <span className="chip">sem execuções recentes para ver a métrica</span>
+                        )}
+                      </div>
+                      <div className="meta">
+                        <span>{r.departments.length ? r.departments.map(departmentLabel).join(', ') : 'Todos os departamentos'}</span>
+                        <span>{r.lastExecutionAt ? `última execução ${dmy(r.lastExecutionAt)}` : 'nunca executou'}</span>
+                        {scheduled ? <span>{scheduled}</span> : null}
+                      </div>
+                    </div>
+                    <div className="side">
+                      <div className="num">
+                        <b>{nf(r.executions)}</b>
+                        <span>{r.executions === 1 ? 'execução' : 'execuções'} no período</span>
+                      </div>
+                      {isAdmin ? (
+                        <button type="button" className="btn" onClick={() => setEditing(r)} aria-label={`Configurar o tempo manual de ${r.name}`}>
+                          Configurar
+                        </button>
+                      ) : null}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {othersTotal > 0 ? (
+            <details className="list" style={{ marginTop: 16 }}>
+              <summary style={{ cursor: 'pointer', padding: '14px 18px', fontWeight: 600 }}>
+                Outras {pl(othersTotal, 'execução sem ganho', 'execuções sem ganho')} no período, de robôs que já têm tempo manual
+              </summary>
+              <div style={{ padding: '0 18px 14px', fontSize: 13.5 }}>
+                <p className="ro" style={{ whiteSpace: 'normal', margin: '0 0 8px' }}>
+                  Execuções de robôs que já têm tempo manual e mesmo assim somaram 0 h: ou o robô informou 0 itens (esperado, nada a fazer) ou a execução foi gravada antes de o robô ter tempo.
+                </p>
+                <ul style={{ margin: 0, paddingLeft: 18 }}>
+                  {data.others.map((o) => (
+                    <li key={o.robotId}>
+                      <b>{o.name}</b>:{' '}
+                      {[o.zeroItems ? `${nf(o.zeroItems)} com 0 itens (esperado)` : '', o.beforeTime ? pl(o.beforeTime, 'gravada com 0 h antes de o robô ter tempo', 'gravadas com 0 h antes de o robô ter tempo') : ''].filter(Boolean).join(' · ')}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            </details>
+          ) : null}
+        </>
       ) : null}
+
+      <div style={{ marginTop: 32, paddingTop: 16, borderTop: '1px dashed var(--line)', fontSize: 12.5, color: 'var(--muted)' }}>
+        Como o Hub calcula: tempo ganho de uma execução = tempo manual por item × itens que o robô informou (métrica <code>AH_METRIC</code>). Se o robô não informa, conta 1 item. O valor fica gravado na execução no momento em que ela termina.
+      </div>
 
       {editing ? (
         <ConfigureDialog
@@ -447,6 +485,6 @@ export function RobotsWithoutGain({
           }}
         />
       ) : null}
-    </section>
+    </div>
   );
 }
