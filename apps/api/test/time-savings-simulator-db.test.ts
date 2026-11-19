@@ -188,3 +188,61 @@ test('frases do simulador trazem ícone e a unidade escolhida', { skip }, async 
   assert.ok(r.insights.some((i: any) => i.icon === '±' && /Cada 1 h a mais/.test(i.text)));
   assert.ok(r.insights.some((i: any) => i.icon === '=' && /tempo padrão/.test(i.text)));
 });
+
+test('robôs externos: só entram se pedido (escopo "todos"), como quem já tem ganho; novo tempo simula sem gravar', { skip }, async () => {
+  await prisma.execution.deleteMany({ where: { robotId: 'ss-ext' } });
+  const when = day(2);
+  const addExt = (id: string, units: number | null, gain: number) =>
+    prisma.execution.create({
+      data: { id, robotId: 'ss-ext', userId: 'ss-user', status: 'success', createdAt: when, startedAt: when, finishedAt: new Date(when.getTime() + 1000), unitsProcessed: units, manualEstimatedSeconds: gain },
+    });
+  await addExt('ss-ex-e1', 3, 360);
+  await addExt('ss-ex-e2', 3, 360);
+  await addExt('ss-ex-e3', null, 120); // não informou a quantidade: 1 por execução
+  await addExt('ss-ex-e4', 0, 120); // informou 0: também conta 1 (o ganho já veio gravado)
+  // o externo começou há 2 dias: a projeção dele conta só desde o 1º dia (meses do calendário calculados à parte)
+  const months = calendarMonths(iso(day(2)), iso(new Date()));
+
+  // padrão: sem a opção, o externo nunca aparece (nem no escopo "todos")
+  const sem = await reports.simulateGains(admin, { ...range(), scope: 'todos', base: 'exec' });
+  assert.equal(mine(sem.rows).some((x: any) => x.robotId === 'ss-ext'), false);
+  // a opção só vale no escopo "todos"
+  const escopoSem = await reports.simulateGains(admin, { ...range(), scope: 'sem', base: 'exec', includeExternal: true });
+  assert.equal(mine(escopoSem.rows).some((x: any) => x.robotId === 'ss-ext'), false);
+
+  // com a opção: entra como quem já tem ganho, com o tempo atual (nada muda sem novo tempo)
+  const incl = await reports.simulateGains(admin, { ...range(), scope: 'todos', base: 'exec', includeExternal: true });
+  const ext = mine(incl.rows).find((x: any) => x.robotId === 'ss-ext');
+  assert.ok(ext, 'o externo aparece');
+  assert.equal(ext.external, true);
+  assert.equal(ext.hasTime, true);
+  assert.equal(ext.source, 'atual');
+  assert.equal(ext.executions, 4);
+  assert.ok(Math.abs(ext.currentMonth - 960 / months) < 1e-6, `${ext.currentMonth}`);
+  assert.ok(Math.abs(ext.simulatedMonth - ext.currentMonth) < 1e-6);
+  assert.ok(Math.abs(ext.currentPerUnit - 120) < 1e-9, `8 itens (3+3+1+1) para 960 s = 120 s por item: ${ext.currentPerUnit}`);
+  // os demais robôs não mudam por causa da opção
+  for (const id of ['ss-a', 'ss-b']) {
+    const antes = mine(sem.rows).find((x: any) => x.robotId === id);
+    const depois = mine(incl.rows).find((x: any) => x.robotId === id);
+    assert.equal(depois.currentMonth, antes.currentMonth);
+    assert.equal(depois.simulatedMonth, antes.simulatedMonth);
+  }
+
+  // novo tempo (180 s por item) no externo: 8 itens × 180 s = 1.440 s no período; extra = +480 s
+  const novo = await reports.simulateGains(admin, { ...range(), scope: 'todos', base: 'exec', includeExternal: true, times: { 'ss-ext': 180 } });
+  const e2 = mine(novo.rows).find((x: any) => x.robotId === 'ss-ext');
+  assert.equal(e2.source, 'novo');
+  assert.ok(Math.abs(e2.simulatedMonth - 1440 / months) < 1e-6);
+  assert.ok(Math.abs(novo.fromNewTimes - 480 / months) < 1e-6, `${novo.fromNewTimes}`);
+  assert.ok(novo.insights.some((i: any) => /robô externo/.test(i.text) && /não grava/.test(i.text)), 'avisa que o tempo vem do sistema dele');
+  // a evolução mensal também usa o externo
+  const mes = novo.monthly.months.find((m: any) => m.extra > 0);
+  assert.ok(mes, 'algum mês recebe o extra do externo');
+
+  // o modo leve (tabela do formulário) também respeita a opção
+  const leve = await reports.simulateGains(admin, { ...range(), scope: 'todos', base: 'exec', includeExternal: true, light: true });
+  assert.ok(mine(leve.rows).some((x: any) => x.robotId === 'ss-ext'));
+  const leveSem = await reports.simulateGains(admin, { ...range(), scope: 'todos', base: 'exec', light: true });
+  assert.equal(mine(leveSem.rows).some((x: any) => x.robotId === 'ss-ext'), false);
+});

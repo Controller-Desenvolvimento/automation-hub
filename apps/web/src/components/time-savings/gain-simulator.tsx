@@ -97,6 +97,8 @@ export function GainSimulator({
   const [equal, setEqual] = useState('5');
   const [perRobot, setPerRobot] = useState<Record<string, string>>({});
   const [newTimes, setNewTimes] = useState(false);
+  // robôs externos na simulação (só ao simular novos tempos: sem novo tempo eles não mudam nada)
+  const [includeExternal, setIncludeExternal] = useState(false);
   const [perCurrent, setPerCurrent] = useState<Record<string, string>>({});
   const [workday, setWorkday] = useState('7');
   const [excluded, setExcluded] = useState<Set<string>>(new Set());
@@ -114,6 +116,7 @@ export function GainSimulator({
   const exact = useRef<Record<string, number>>({ equal: 300 }); // o padrão inicial, 5 minutos
 
   const without = useMemo(() => hubRobots.filter((r) => !r.manualSecondsPerUnit), [hubRobots]);
+  const withExternal = scope === 'todos' && newTimes && includeExternal;
   const unitSec = UNIT_SECONDS[unit];
   const maxInUnit = MAX_SECONDS / unitSec;
   // o menor tempo que vale é 1 segundo (menos que isso arredondava para 0 e o campo era ignorado sem avisar)
@@ -127,7 +130,7 @@ export function GainSimulator({
       api<SimPreview>('/reports/robots-without-gain/simulate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ from: from || undefined, to: to || undefined, scope, base, times: {}, light: true }),
+        body: JSON.stringify({ from: from || undefined, to: to || undefined, scope, base, times: {}, light: true, includeExternal: withExternal }),
       })
         .then((data) => alive && setPreview(data))
         .catch(() => alive && setPreview(null));
@@ -136,7 +139,7 @@ export function GainSimulator({
       alive = false;
       window.clearTimeout(t);
     };
-  }, [from, to, scope, base]);
+  }, [from, to, scope, base, withExternal]);
 
   const robotsById = useMemo(() => new Map(hubRobots.map((r) => [r.id, r])), [hubRobots]);
   const rows: SimRow[] = useMemo(() => (preview ? [...preview.rows].sort((a, b) => (a.hasTime ? 1 : 0) - (b.hasTime ? 1 : 0) || a.name.localeCompare(b.name, 'pt-BR')) : []), [preview]);
@@ -174,7 +177,7 @@ export function GainSimulator({
   if ('error' in workdayParsed) errors.push(workdayParsed.error);
   const workdayHours = 'error' in workdayParsed || workdayParsed.empty ? 7 : workdayParsed.value;
 
-  const request = { from: from || undefined, to: to || undefined, scope, base, times, excluded: [...excluded].sort(), workdayHours, unit, defaultIds };
+  const request = { from: from || undefined, to: to || undefined, scope, base, times, excluded: [...excluded].sort(), workdayHours, unit, defaultIds, includeExternal: withExternal };
   const key = JSON.stringify(request);
   const stale = result !== null && result.key !== key;
   const canRun = errors.length === 0 && !busy;
@@ -230,7 +233,9 @@ export function GainSimulator({
 
   const letter = LETTERS.find((l) => !scenarios.some((s) => s.letter === l));
   const m = result?.data;
-  const applicable = m && !stale ? m.rows.filter((r) => (r.source === 'informado' && !r.hasTime) || r.source === 'novo') : [];
+  // robô externo não é gravado: o tempo dele vem do próprio sistema (a rota de configuração também o recusa)
+  const applicable = m && !stale ? m.rows.filter((r) => !r.external && ((r.source === 'informado' && !r.hasTime) || r.source === 'novo')) : [];
+  const externalNew = m && !stale ? m.rows.filter((r) => r.external && r.source === 'novo') : [];
 
   function saveScenario() {
     if (!result || !m || stale || !letter) return;
@@ -312,6 +317,23 @@ export function GainSimulator({
             {newTimes ? <span className="ro">preencha na tabela; em branco = mantém o atual</span> : null}
           </Frow>
         ) : null}
+        {scope === 'todos' && newTimes ? (
+          <Frow
+            label="Robôs externos"
+            info={
+              <>
+                <p>Robôs externos são os que rodam fora do Hub (chats de painéis, extrações...) e só avisam o Hub do tempo que ganharam em cada execução.</p>
+                <p>Ligando, eles entram na tabela com o ganho de hoje (a média por item ou por execução que eles informaram) e dá para simular outro tempo. O novo tempo vale só na simulação: não é gravado neles.</p>
+              </>
+            }
+          >
+            <label className="ro" style={{ display: 'inline-flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+              <input type="checkbox" checked={includeExternal} onChange={(e) => setIncludeExternal(e.target.checked)} />
+              Incluir os robôs externos na tabela
+            </label>
+            {includeExternal ? <span className="ro">o ganho deles vem do próprio sistema; o novo tempo só simula</span> : null}
+          </Frow>
+        ) : null}
         <Frow label="Como informar o tempo">
           <SgSeg label="Como informar o tempo" value={mode} onChange={setMode} items={[['igual', 'Igual para todos'], ['robo', 'Por robô']]} />
         </Frow>
@@ -383,10 +405,12 @@ export function GainSimulator({
               <tbody>
                 {rows.map((r) => {
                   const hub = robotsById.get(r.robotId);
-                  const seg = hub?.manualSecondsPerUnit ?? 0;
-                  const label = hub?.unitLabel || 'item';
+                  // externo: o "tempo de hoje" é a média informada pelo sistema dele, por item (ou por execução, se não informa a quantidade)
+                  const seg = r.external ? Math.round(r.currentPerUnit ?? 0) : hub?.manualSecondsPerUnit ?? 0;
+                  const label = r.external ? ((r.avgItems ?? 1) > 1.05 ? 'item' : 'execução') : hub?.unitLabel || 'item';
                   const sub: string[] = [];
-                  if (r.hasTime) sub.push(`hoje: ${perUnitTxt(seg, label)}`);
+                  if (r.external) sub.push(`externo: hoje ${perUnitTxt(seg, label)} em média (informado pelo próprio sistema)`);
+                  else if (r.hasTime) sub.push(`hoje: ${perUnitTxt(seg, label)}`);
                   if (base === 'item' && !r.hasTime) sub.push(r.metricKey ? `informa ${r.metricKey} (média ${nf(r.metricAvg ?? 0, (r.metricAvg ?? 0) < 10 ? 1 : 0)})` : 'não informa itens: 1 por execução');
                   const off = excluded.has(r.robotId);
                   let cell: ReactNode;
@@ -552,6 +576,7 @@ export function GainSimulator({
                 })}
               </ul>
               <div>Vale só para as próximas execuções (os números já apresentados não mudam). Dá para revisar cada um depois na lista de robôs.</div>
+              {externalNew.length ? <div style={{ marginTop: 6 }}>{pl(externalNew.length, 'robô externo fica de fora', 'robôs externos ficam de fora')} (o tempo {externalNew.length === 1 ? 'dele' : 'deles'} vem do próprio sistema): só entra na simulação.</div> : null}
               <div className="acts" style={{ marginTop: 10, display: 'flex', gap: 8 }}>
                 <button type="button" className="btn" onClick={() => setConfirming(false)} disabled={applying}>
                   Cancelar
@@ -660,7 +685,7 @@ function RankingBars({ rows }: { rows: SimRow[] }) {
             </div>
             <span className="val">
               <b>{dur(r.simulatedMonth)}</b>
-              {r.source === 'novo' ? (r.simulatedMonth < r.currentMonth ? ` (novo tempo, era ${dur(r.currentMonth)})` : ' (novo tempo)') : r.hasTime ? ' (tempo atual)' : ' (simulado)'}
+              {r.source === 'novo' ? (r.simulatedMonth < r.currentMonth ? ` (novo tempo, era ${dur(r.currentMonth)})` : ' (novo tempo)') : r.hasTime ? ' (tempo atual)' : ' (simulado)'}{r.external ? ' · externo' : ''}
             </span>
           </div>
         ))}

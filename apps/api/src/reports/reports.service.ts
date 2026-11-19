@@ -230,7 +230,9 @@ export class ReportsService {
   /**
    * Simulador de ganhos: projeta as execuções REAIS do período para 1 mês com os tempos que a pessoa escolheu. Nada é gravado.
    * `times` = segundos por item (ou por execução) de cada robô; robô sem tempo informado não soma (ou mantém o atual, se já tem).
-   * Robôs externos ficam de fora (o sistema deles informa o tempo de cada execução). Só administradores (a rota confere).
+   * Robôs externos ficam de fora, a não ser que `includeExternal` esteja ligado (só no escopo "todos"): o sistema deles informa o
+   * tempo de cada execução, então entram como robôs que já têm ganho (tempo atual; dá para simular outro tempo por execução ou item).
+   * Só administradores (a rota confere).
    */
   async simulateGains(
     user: User,
@@ -246,6 +248,7 @@ export class ReportsService {
       light?: boolean;
       unit?: string;
       defaultIds?: unknown;
+      includeExternal?: boolean;
     },
   ) {
     const from = input.from && isDayString(input.from) ? input.from : null;
@@ -261,9 +264,11 @@ export class ReportsService {
     }
     const excluded = new Set(Array.isArray(input.excluded) ? input.excluded.filter((x): x is string => typeof x === 'string') : []);
 
+    // Robôs externos só entram se a pessoa pediu e no escopo "todos" (eles nunca estão "sem ganho": informam o próprio tempo).
+    const withExternal = scope === 'todos' && input.includeExternal === true;
     const robotRows = await this.prisma.robot.findMany({
-      where: { isActive: true, isExternal: false, ...(scope === 'sem' ? { manualSecondsPerUnit: 0 } : {}) },
-      select: { id: true, name: true, manualSecondsPerUnit: true },
+      where: withExternal ? { isActive: true } : { isActive: true, isExternal: false, ...(scope === 'sem' ? { manualSecondsPerUnit: 0 } : {}) },
+      select: { id: true, name: true, manualSecondsPerUnit: true, isExternal: true },
       orderBy: { name: 'asc' },
     });
     const robots = robotRows.filter((r) => !excluded.has(r.id));
@@ -284,7 +289,7 @@ export class ReportsService {
       status: ExecutionStatus.success,
       finishedAt: loadFrom === null ? { not: null } : { gte: new Date(loadFrom) },
     };
-    const withoutTimeIds = robots.filter((r) => r.manualSecondsPerUnit === 0).map((r) => r.id);
+    const withoutTimeIds = robots.filter((r) => !r.isExternal && r.manualSecondsPerUnit === 0).map((r) => r.id);
     const executions = ids.length
       ? await this.prisma.execution.findMany({
           where: success,
@@ -319,7 +324,8 @@ export class ReportsService {
 
     const buildRobots = (keep: (finishedAt: number) => boolean): SimRobot[] =>
       robots.map((robot) => {
-        const hasTime = robot.manualSecondsPerUnit > 0;
+        // Externo: o ganho vem gravado em cada execução, pelo sistema dele; conta como "já tem ganho" mesmo com tempo manual 0.
+        const hasTime = robot.isExternal || robot.manualSecondsPerUnit > 0;
         const rows = logsBy.get(robot.id) ?? [];
         // Sem tempo configurado, "item" = a métrica que o robô mais informa (a mesma que a janela Configurar sugere).
         const key = hasTime ? null : summarizeMetricLogs(rows)[0]?.key ?? null;
@@ -331,6 +337,7 @@ export class ReportsService {
           robotId: robot.id,
           name: robot.name,
           hasTime,
+          external: robot.isExternal,
           firstAt: firstBy.get(robot.id) ?? null,
           fallbackAvgItems: null,
           metricKey: key,
@@ -342,7 +349,8 @@ export class ReportsService {
                 finishedAt: e.finishedAt!.getTime(),
                 scheduled: e.scheduledTaskId !== null,
                 storedGain: e.manualEstimatedSeconds ?? robot.manualSecondsPerUnit * Math.max(0, e.unitsProcessed ?? 1),
-                units: hasTime ? e.unitsProcessed : key ? perExecution?.get(e.id)?.get(key) ?? null : null,
+                // externo que não informou a quantidade (ou informou 0) conta 1 por execução: o ganho dele já veio gravado
+                units: robot.isExternal ? (e.unitsProcessed && e.unitsProcessed > 0 ? e.unitsProcessed : null) : hasTime ? e.unitsProcessed : key ? perExecution?.get(e.id)?.get(key) ?? null : null,
               }),
             ),
         };

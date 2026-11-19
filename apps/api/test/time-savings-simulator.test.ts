@@ -234,3 +234,20 @@ test('insights: "pessoa" no singular de 0,1 a 1,9 e "pessoas" em 0 e a partir de
   assert.match(text(2.4), /equivale a 2,4 pessoas trabalhando/, '2,4 pessoas (plural)');
   assert.match(text(12), /equivale a 12 pessoas trabalhando/, '12 pessoas (plural)');
 });
+
+test('robô externo: conta como quem já tem ganho (tempo atual) e o novo tempo é por item/execução; sem frase de "sem tempo"', () => {
+  const ext = robot('x', 4, { hasTime: true, external: true }, { storedGain: 120, units: null });
+  const r = simulate(input([ext], { times: { x: 180 } }));
+  const row = r.rows[0];
+  assert.equal(row.external, true);
+  assert.equal(row.source, 'novo');
+  assert.equal(row.currentPerUnit, 120);
+  assert.ok(Math.abs(row.simulatedMonth - (180 * 4) / MONTHS) < 1e-6);
+  const texts = simInsights(r, { base: 'exec', workdayHours: 7 }).map((i) => i.text).join(' | ');
+  assert.match(texts, /robô externo/);
+  assert.doesNotMatch(texts, /sem tempo/);
+  const sem = simulate(input([ext]));
+  assert.equal(sem.rows[0].source, 'atual');
+  assert.equal(sem.extra, 0);
+  assert.equal(sem.rows[0].currentPerUnit, 120);
+});
