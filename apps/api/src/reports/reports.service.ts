@@ -29,7 +29,7 @@ import {
   type TimeSavingsConfig,
 } from './time-savings-metrics';
 import { metricsByExecution, summarizeMetricLogs } from './robots-without-gain';
-import { MAX_SIM_SECONDS, peopleOf, simInsights, simulate, type SimBase, type SimInput, type SimRobot, type SimScope } from './time-savings-simulator';
+import { MAX_SIM_SECONDS, peopleOf, simInsights, simulate, simulateMonthly, type SimBase, type SimExecution, type SimInput, type SimRobot, type SimScope } from './time-savings-simulator';
 
 const EXTERNAL_SOURCE_PREFIX = 'ext:';
 const PAGE_SIZE = 1000;
@@ -233,13 +233,20 @@ export class ReportsService {
     const robots = robotRows.filter((r) => !excluded.has(r.id));
     const ids = robots.map((r) => r.id);
 
-    const finishedAt: Prisma.DateTimeFilter = {};
-    if (from) finishedAt.gte = dayStart(from);
-    if (to) finishedAt.lte = dayEnd(to);
+    const now = this.clock();
+    const nowDay = toReportDay(now);
+    // 12 meses contando o corrente: começa no dia 1 do mês de 11 meses atrás (conta em UTC para não depender do fuso do servidor)
+    const first = new Date(Date.UTC(Number(nowDay.slice(0, 4)), Number(nowDay.slice(5, 7)) - 1 - 11, 1));
+    const windowStartDay = `${first.getUTCFullYear()}-${String(first.getUTCMonth() + 1).padStart(2, '0')}-01`;
+    const windowStart = dayStart(windowStartDay).getTime();
+    const periodFrom = from ? dayStart(from).getTime() : null;
+    const periodTo = to ? dayEnd(to).getTime() : Infinity;
+    // Carrega do mais antigo entre o período e a janela dos 12 meses; o resto é separado em memória.
+    const loadFrom = periodFrom === null ? null : Math.min(periodFrom, windowStart);
     const success: Prisma.ExecutionWhereInput = {
       robotId: { in: ids },
       status: ExecutionStatus.success,
-      ...(Object.keys(finishedAt).length ? { finishedAt } : { finishedAt: { not: null } }),
+      finishedAt: loadFrom === null ? { not: null } : { gte: new Date(loadFrom) },
     };
     const withoutTimeIds = robots.filter((r) => r.manualSecondsPerUnit === 0).map((r) => r.id);
     const executions = ids.length
@@ -261,6 +268,7 @@ export class ReportsService {
           })
         : [];
     const report = await this.getTimeSavingsReport(user, { from: from ?? undefined, to: to ?? undefined });
+    const monthlyReport = await this.getTimeSavingsReport(user, { from: windowStartDay, granularity: 'month' });
 
     const firstBy = new Map(firsts.map((f) => [f.robotId, f._min.finishedAt?.getTime() ?? null]));
     const logsBy = new Map<string, Array<{ executionId: string; message: string }>>();
@@ -272,26 +280,33 @@ export class ReportsService {
     const execBy = new Map<string, typeof executions>();
     for (const e of executions) execBy.set(e.robotId, [...(execBy.get(e.robotId) ?? []), e]);
 
-    const simRobots: SimRobot[] = robots.map((robot) => {
-      const hasTime = robot.manualSecondsPerUnit > 0;
-      const rows = logsBy.get(robot.id) ?? [];
-      // Sem tempo configurado, "item" = a métrica que o robô mais informa (a mesma que a janela Configurar sugere).
-      const key = hasTime ? null : summarizeMetricLogs(rows)[0]?.key ?? null;
-      const perExecution = hasTime || !key ? null : metricsByExecution(rows);
-      return {
-        robotId: robot.id,
-        name: robot.name,
-        hasTime,
-        firstAt: firstBy.get(robot.id) ?? null,
-        fallbackAvgItems: null,
-        executions: (execBy.get(robot.id) ?? []).map((e) => ({
-          finishedAt: e.finishedAt!.getTime(),
-          scheduled: e.scheduledTaskId !== null,
-          storedGain: e.manualEstimatedSeconds ?? robot.manualSecondsPerUnit * Math.max(0, e.unitsProcessed ?? 1),
-          units: hasTime ? e.unitsProcessed : key ? perExecution?.get(e.id)?.get(key) ?? null : null,
-        })),
-      };
-    });
+    const buildRobots = (keep: (finishedAt: number) => boolean): SimRobot[] =>
+      robots.map((robot) => {
+        const hasTime = robot.manualSecondsPerUnit > 0;
+        const rows = logsBy.get(robot.id) ?? [];
+        // Sem tempo configurado, "item" = a métrica que o robô mais informa (a mesma que a janela Configurar sugere).
+        const key = hasTime ? null : summarizeMetricLogs(rows)[0]?.key ?? null;
+        const perExecution = hasTime || !key ? null : metricsByExecution(rows);
+        return {
+          robotId: robot.id,
+          name: robot.name,
+          hasTime,
+          firstAt: firstBy.get(robot.id) ?? null,
+          fallbackAvgItems: null,
+          executions: (execBy.get(robot.id) ?? [])
+            .filter((e) => keep(e.finishedAt!.getTime()))
+            .map(
+              (e): SimExecution => ({
+                finishedAt: e.finishedAt!.getTime(),
+                scheduled: e.scheduledTaskId !== null,
+                storedGain: e.manualEstimatedSeconds ?? robot.manualSecondsPerUnit * Math.max(0, e.unitsProcessed ?? 1),
+                units: hasTime ? e.unitsProcessed : key ? perExecution?.get(e.id)?.get(key) ?? null : null,
+              }),
+            ),
+        };
+      });
+    const simRobots = buildRobots((t) => (periodFrom === null || t >= periodFrom) && t <= periodTo);
+    const windowRobots = buildRobots((t) => t >= windowStart);
 
     const simInput: SimInput = {
       robots: simRobots,
@@ -299,14 +314,34 @@ export class ReportsService {
       times,
       workdayHours,
       from: from ? dayStart(from).getTime() : null,
-      now: this.clock().getTime(),
+      now: now.getTime(),
       reportSavedSeconds: report.totals.savedSeconds,
     };
     const main = simulate(simInput, 1);
     const low = simulate(simInput, 0.5);
     const high = simulate(simInput, 1.5);
     const people = (seconds: number) => peopleOf(seconds, workdayHours);
+
+    // Evolução mensal: ganho do relatório (todos os robôs e fontes) + extra simulado, nos últimos 12 meses.
+    const currentByMonth: Record<string, number> = {};
+    let firstReportMonthAt: number | null = null;
+    for (const bucket of monthlyReport.series) {
+      currentByMonth[bucket.key] = bucket.savedSeconds;
+      if (bucket.savedSeconds > 0 && firstReportMonthAt === null) firstReportMonthAt = dayStart(bucket.from).getTime();
+    }
+    const firsts2 = [...firstBy.values(), firstReportMonthAt].filter((v): v is number => typeof v === 'number');
+    const monthly = simulateMonthly({
+      robots: windowRobots,
+      base,
+      times,
+      workdayHours,
+      now: now.getTime(),
+      windowMonths: 12,
+      currentByMonth,
+      firstDataAt: firsts2.length ? Math.min(...firsts2) : null,
+    });
     return {
+      monthly,
       scope,
       base,
       workdayHours,

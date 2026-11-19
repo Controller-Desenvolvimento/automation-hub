@@ -95,6 +95,15 @@ test('simular por execução: só robôs sem tempo, projeção mensal, faixa e f
   assert.ok(r.band.low.extraMonth < r.band.likely.extraMonth && r.band.likely.extraMonth < r.band.high.extraMonth);
   assert.ok(Array.isArray(r.insights) && r.insights.every((i: any) => ['warn', 'info'].includes(i.kind) && i.text));
   assert.ok(typeof r.people.extra === 'number');
+  // evolução mensal (12 meses, independente do período): o mês corrente é incompleto e o extra simulado aparece nele
+  assert.ok(r.monthly.months.length >= 1 && r.monthly.months.length <= 12);
+  const last = r.monthly.months[r.monthly.months.length - 1];
+  assert.equal(last.partial, true);
+  assert.ok(last.extra > 0, 'as execuções do mês corrente trazem extra simulado');
+  assert.ok(r.monthly.months.every((m: any) => /^\d{4}-\d{2}$/.test(m.key) && typeof m.current === 'number' && typeof m.currentSim === 'number'));
+  const total = r.monthly.months.reduce((acc: number, m: any) => acc + m.extra, 0);
+  // meses anteriores ao 1º mês completo de dados não aparecem: o total fica entre o do mês corrente e o das 10 execuções (300 s cada)
+  assert.ok(total >= last.extra - 1e-6 && total <= 300 * 10 + 1e-6, String(total));
 });
 
 test('simular por item: usa a métrica que o robô mais informa e estima as execuções sem ela pela média', { skip }, async () => {

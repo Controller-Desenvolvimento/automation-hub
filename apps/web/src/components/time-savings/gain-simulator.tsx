@@ -5,8 +5,26 @@ import { DEFAULT_METRIC_KEY, TIME_UNITS, toSeconds, type RobotWithoutGain, type 
 import { cn } from '../../lib/utils';
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
+import { GainMonthlyChart } from './gain-monthly-chart';
 
 type HubRobot = { id: string; name: string; manualSecondsPerUnit: number };
+
+/** Um cenário guardado (só nesta tela, enquanto ela estiver aberta): o resultado e como ele foi simulado. */
+type Scenario = {
+  letter: string;
+  description: string;
+  extraMonth: number;
+  extraYear: number;
+  peopleExtra: number;
+  simulatedReport: number;
+  peopleTotal: number;
+  low: number;
+  high: number;
+  days: number;
+  informed: number;
+};
+
+const LETTERS = ['A', 'B', 'C', 'D'];
 
 const MAX_SECONDS = 86_400;
 
@@ -70,6 +88,7 @@ export function GainSimulator({
   const [error, setError] = useState<string | null>(null);
   const [confirming, setConfirming] = useState(false);
   const [applying, setApplying] = useState(false);
+  const [scenarios, setScenarios] = useState<Scenario[]>([]);
 
   const without = useMemo(() => hubRobots.filter((r) => !r.manualSecondsPerUnit), [hubRobots]);
   const withTime = useMemo(() => hubRobots.filter((r) => r.manualSecondsPerUnit > 0), [hubRobots]);
@@ -171,6 +190,39 @@ export function GainSimulator({
   }
 
   const unitLabel = TIME_UNITS.find((u) => u.value === unit)?.label ?? 'minutos';
+  const freeLetter = LETTERS.find((l) => !scenarios.some((sc) => sc.letter === l));
+  function describe(): string {
+    const ab = unit === 'seconds' ? 's' : unit === 'minutes' ? 'min' : 'h';
+    const per = base === 'exec' ? 'por execução' : 'por item';
+    const informed = shown.filter((r) => !excluded.has(r.id) && !r.manualSecondsPerUnit && (perRobot[r.id] ?? '').trim()).length;
+    const how = mode === 'igual' ? `${equal.trim() ? `${equal.trim()} ${ab}` : 'sem tempo'} ${per} para todos` : `tempo por robô ${per} (${informed} ${informed === 1 ? 'informado' : 'informados'}${equal.trim() ? `, padrão ${equal.trim()} ${ab}` : ''})`;
+    const news = shown.filter((r) => !excluded.has(r.id) && r.manualSecondsPerUnit > 0 && (perCurrent[r.id] ?? '').trim()).length;
+    const who = scope === 'sem' ? 'só os sem ganho' : news && newTimes ? `somando os que já têm ganho, com novos tempos em ${news} ${news === 1 ? 'robô' : 'robôs'}` : 'somando os que já têm ganho (tempos atuais)';
+    return `${how} · ${who}`;
+  }
+  function saveScenario() {
+    if (!result || stale || !freeLetter) return;
+    const informedCount = result.rows.filter((r) => r.source === 'informado' || r.source === 'novo').length;
+    setScenarios((prev) =>
+      [
+        ...prev,
+        {
+          letter: freeLetter,
+          description: describe(),
+          extraMonth: result.extraMonth,
+          extraYear: result.extraYear,
+          peopleExtra: result.people.extra,
+          simulatedReport: result.reportMonth + result.extraMonth,
+          peopleTotal: result.people.total,
+          low: result.band.low.extraMonth,
+          high: result.band.high.extraMonth,
+          days: result.days,
+          informed: informedCount,
+        },
+      ].sort((a, b) => a.letter.localeCompare(b.letter)),
+    );
+    notify(`Cenário ${freeLetter} guardado. Ele fica só nesta tela, enquanto ela estiver aberta.`);
+  }
   const toggleExcluded = (id: string) =>
     setExcluded((prev) => {
       const next = new Set(prev);
@@ -391,6 +443,73 @@ export function GainSimulator({
               </ul>
             </div>
           ) : null}
+
+          <div className="space-y-3 rounded-2xl border border-slate-200 p-4 dark:border-[#27272a]">
+            <h3 className="text-sm font-semibold text-slate-900 dark:text-zinc-100">Evolução mensal</h3>
+            <GainMonthlyChart months={result.monthly.months} cut={result.monthly.cut} />
+          </div>
+
+          <div className="space-y-3 rounded-2xl border border-slate-200 p-4 dark:border-[#27272a]">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <h3 className="text-sm font-semibold text-slate-900 dark:text-zinc-100">Cenários</h3>
+                <p className="text-xs text-slate-500 dark:text-zinc-400">Guarde até 4 simulações para comparar lado a lado. Ficam só nesta tela, enquanto ela estiver aberta.</p>
+              </div>
+              <Button size="sm" variant="outline" onClick={saveScenario} disabled={stale || !freeLetter}>
+                {freeLetter ? `Guardar como Cenário ${freeLetter}` : 'Limite de 4 cenários'}
+              </Button>
+            </div>
+            {scenarios.length === 0 ? (
+              <p className="text-sm text-slate-500 dark:text-zinc-400">Nenhum cenário guardado ainda.</p>
+            ) : (
+              <div className="overflow-x-auto rounded-xl border border-slate-200 dark:border-[#27272a]">
+                <table className="w-full min-w-[560px] text-sm">
+                  <thead>
+                    <tr className="text-left text-[11px] uppercase tracking-wider text-slate-500 dark:text-zinc-400">
+                      <th className="px-3 py-2"> </th>
+                      {scenarios.map((sc) => (
+                        <th key={sc.letter} className="px-3 py-2 align-top">
+                          <div className="flex items-center justify-between gap-2 normal-case">
+                            <span className="text-sm font-semibold tracking-normal text-slate-900 dark:text-zinc-100">Cenário {sc.letter}</span>
+                            <button type="button" onClick={() => setScenarios((prev) => prev.filter((x) => x.letter !== sc.letter))} aria-label={`Remover o cenário ${sc.letter}`} className="text-xs font-normal text-rose-600 hover:underline dark:text-rose-400">
+                              Remover
+                            </button>
+                          </div>
+                          <div className="mt-0.5 text-xs font-normal normal-case tracking-normal text-slate-500 dark:text-zinc-400">{sc.description}</div>
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(
+                      [
+                        ['Ganho a mais por mês', (sc: Scenario) => signedDur(sc.extraMonth), 'extraMonth'],
+                        ['Ganho a mais por ano', (sc: Scenario) => signedDur(sc.extraYear), 'extraYear'],
+                        ['Pessoas a mais', (sc: Scenario) => peopleText(sc.peopleExtra), 'peopleExtra'],
+                        ['Relatório simulado por mês', (sc: Scenario) => `${dur(sc.simulatedReport)} (${peopleText(sc.peopleTotal)})`, 'simulatedReport'],
+                        ['Faixa: conservador', (sc: Scenario) => signedDur(sc.low), 'low'],
+                        ['Faixa: otimista', (sc: Scenario) => signedDur(sc.high), 'high'],
+                        ['Robôs com tempo informado', (sc: Scenario) => nf(sc.informed), null],
+                        ['Base (dias de execuções)', (sc: Scenario) => nf(sc.days), null],
+                      ] as Array<[string, (sc: Scenario) => string, keyof Scenario | null]>
+                    ).map(([label, fmt, best]) => {
+                      const top = best && scenarios.length > 1 ? Math.max(...scenarios.map((sc) => Number(sc[best]))) : null;
+                      return (
+                        <tr key={label} className="border-t border-slate-100 dark:border-[#1f1f23]">
+                          <td className="px-3 py-1.5 text-xs text-slate-500 dark:text-zinc-400">{label}</td>
+                          {scenarios.map((sc) => (
+                            <td key={sc.letter} className={cn('px-3 py-1.5 tabular-nums', best && top !== null && Number(sc[best]) === top && 'font-semibold text-emerald-700 dark:text-emerald-400')}>
+                              {fmt(sc)}
+                            </td>
+                          ))}
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
 
           {applicable.length > 0 ? (
             <div className="rounded-2xl border border-slate-200 p-4 dark:border-[#27272a]">

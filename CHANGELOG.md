@@ -3,6 +3,19 @@
 Mudanças do Automation Hub por data. Este arquivo é **público**: descreve o que mudou no produto, no banco e na
 configuração, sem dados de infraestrutura. O desenho detalhado de cada funcionalidade está no `CLAUDE.md`.
 
+## 2026-11-19 — Tempo ganho: evolução mensal e cenários no simulador (etapa 3b de "Robôs sem ganho")
+
+### Adicionado (só administradores e Inovação; sem mudança no banco; a simulação continua não gravando nada)
+- **Evolução mensal** no resultado da simulação (últimos 12 meses, independente do período escolhido): barras com o ganho atual do
+  relatório + o **extra simulado** aplicado às execuções reais de cada mês, e uma faixa de cima com a **variação sobre o mês
+  anterior**. Começa no 1º mês **completo** de dados; o mês em andamento aparece pontilhado e sem projeção (a variação dele é
+  parcial). "Todo o relatório" ou "Só os simulados" (tira o ganho dos demais robôs), dica ao passar o mouse e "Ver os números em
+  tabela".
+- **Cenários A–D:** "Guardar como Cenário X" guarda o resultado (e como foi simulado) e compara até 4 lado a lado (ganho por mês
+  e por ano, pessoas, relatório simulado, faixa conservador/otimista, robôs com tempo, base), com o maior destacado. Remover libera
+  a letra. Os cenários ficam só na tela aberta (não são gravados); guardar só vale com o resultado atualizado.
+- API: a resposta de `POST /api/reports/robots-without-gain/simulate` traz `monthly` (`months` e `cut`).
+
 ## 2026-11-19 — Tempo ganho: simulador de ganhos (etapa 3a de "Robôs sem ganho")
 
 ### Adicionado (só administradores e Inovação; sem mudança no banco; a simulação não grava nada)
