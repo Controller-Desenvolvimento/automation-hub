@@ -251,3 +251,17 @@ test('robô externo: conta como quem já tem ganho (tempo atual) e o novo tempo 
   assert.equal(sem.extra, 0);
   assert.equal(sem.rows[0].currentPerUnit, 120);
 });
+
+test('robô externo: frase no plural ("que os executa") e externo sem execuções não tem média de hoje', () => {
+  const a = robot('x', 4, { hasTime: true, external: true }, { storedGain: 120, units: null });
+  const b = robot('y', 3, { hasTime: true, external: true }, { storedGain: 60, units: null });
+  const parado = robot('z', 0, { hasTime: true, external: true });
+  const r = simulate(input([a, b, parado], { times: { x: 150, y: 90 } }));
+  const texts = simInsights(r, { base: 'exec', workdayHours: 7 }).map((i) => i.text).join(' | ');
+  assert.match(texts, /são robôs externos/);
+  assert.match(texts, /que os executa/);
+  assert.match(texts, /ganho deles/);
+  assert.equal(r.rows.find((x) => x.robotId === 'z')!.currentPerUnit, null, 'sem execuções no período não há média');
+  const um = simInsights(simulate(input([a], { times: { x: 150 } })), { base: 'exec', workdayHours: 7 }).map((i) => i.text).join(' | ');
+  assert.match(um, /que o executa/);
+});
