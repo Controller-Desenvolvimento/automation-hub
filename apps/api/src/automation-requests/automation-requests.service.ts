@@ -59,12 +59,18 @@ export class AutomationRequestsService {
     private readonly notificationsService: NotificationsService,
   ) {}
 
-  async listForUser(user: Pick<User, 'id' | 'role' | 'departments'>) {
-    return this.prisma.automationRequest.findMany({
-      where: isAdmin(user) ? undefined : { requesterUserId: user.id },
+  /**
+   * Administradores veem todos os pedidos; `mine` (tela "Meus pedidos") e quem não é administrador veem só os próprios.
+   * As observações internas (`adminNotes`) nunca vão para quem pediu.
+   */
+  async listForUser(user: Pick<User, 'id' | 'role' | 'departments'>, mine = false) {
+    const seeAll = isAdmin(user) && !mine;
+    const rows = await this.prisma.automationRequest.findMany({
+      where: seeAll ? undefined : { requesterUserId: user.id },
       orderBy: { createdAt: 'desc' },
       select: automationRequestSelect,
     });
+    return seeAll ? rows : rows.map(({ adminNotes: _internal, ...rest }) => rest);
   }
 
   /** Número do selo do menu "Quadro": pedidos que ainda esperam a primeira triagem (só administradores). */
@@ -130,11 +136,6 @@ export class AutomationRequestsService {
     const nextStatus = input.status !== undefined ? parseStatus(input.status) : existing.status;
     const statusChanged = nextStatus !== existing.status;
     const note = cleanTextOrNull(input.statusNote)?.slice(0, STATUS_NOTE_MAX) ?? null;
-
-    // Recusar sem dizer o motivo deixa quem pediu sem resposta: o motivo é obrigatório.
-    if (statusChanged && nextStatus === AutomationRequestStatus.rejected && !note) {
-      throw new BadRequestException('Informe o motivo da recusa.');
-    }
 
     const updated = await this.prisma.automationRequest.update({
       where: { id },

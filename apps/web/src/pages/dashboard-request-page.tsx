@@ -66,7 +66,7 @@ export function DashboardRequestPage() {
       });
 
       setDraft({ title: '', audience: '', dataSource: '', metrics: '', notes: '' });
-      notify('Solicitação de dashboard enviada. Depois acompanhe as notificações para ver o andamento.');
+      notify('Solicitação de dashboard enviada. Acompanhe o andamento em "Meus pedidos".');
     } catch (error) {
       notify(error instanceof Error ? error.message : 'Não foi possível enviar a solicitação.');
     } finally {

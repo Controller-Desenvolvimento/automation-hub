@@ -36,7 +36,7 @@ test('toda página do menu está nas instruções do João (página nova no menu
   const adminPrompt = systemPromptFor(u(UserRole.admin));
   for (const route of admin) assert.ok(adminPrompt.includes(`"${route}"`), `falta "${route}" para administradores`);
   // Páginas fora do menu lateral que o João também indica.
-  for (const route of ['/support/new', '/executions/:id', '/automation-requests', '/dashboard-requests', '/notifications', '/profile']) {
+  for (const route of ['/support/new', '/executions/:id', '/automation-requests', '/dashboard-requests', '/my-requests', '/notifications', '/profile']) {
     assert.ok(SYSTEM_PROMPT_BASE.includes(`"${route}"`), `falta "${route}"`);
   }
 });

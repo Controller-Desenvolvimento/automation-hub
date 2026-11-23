@@ -171,7 +171,7 @@ export function AppShell() {
 
   // Bloco destacado no pé do menu: pedir algo novo ou pedir ajuda.
   const helpItems = [
-    { to: '/automation-requests', label: 'Solicitar', icon: MessageSquarePlus, badge: 0, also: ['/dashboard-requests'] },
+    { to: '/automation-requests', label: 'Solicitar', icon: MessageSquarePlus, badge: 0, also: ['/dashboard-requests', '/my-requests'] },
     { to: '/support', label: 'Suporte', icon: LifeBuoy, badge: supportUnread, also: [] as string[] },
   ];
 
@@ -648,6 +648,10 @@ function NotifPanelItem({
     }
     if (notification.type === 'automation_request_new') {
       void navigate('/admin/quadro');
+      return;
+    }
+    if (notification.type === 'automation_request_status') {
+      void navigate('/my-requests');
       return;
     }
     if (notification.executionId) {

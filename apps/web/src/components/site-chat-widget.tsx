@@ -201,7 +201,7 @@ const ROUTE_HINTS: { match: (path: string) => boolean; messages: string[] }[] = 
     messages: ['Dúvida sobre como abrir ou acompanhar um chamado? Pergunta pro João'],
   },
   {
-    match: (p) => p.startsWith('/automation-requests') || p.startsWith('/dashboard-requests'),
+    match: (p) => p.startsWith('/automation-requests') || p.startsWith('/dashboard-requests') || p.startsWith('/my-requests'),
     messages: ['Quer que o João já registre esse pedido? Só me contar o que precisa'],
   },
 ];
