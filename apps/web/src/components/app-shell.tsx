@@ -134,7 +134,7 @@ export function AppShell() {
   }
 
   // Grupo sem título (label vazio) = item solto no topo, como o "Visão Geral" de outros apps.
-  const navGroups = [
+  const navGroups: { label: string; items: { to: string; label: string; icon: typeof LifeBuoy; badge?: number }[] }[] = [
     {
       label: '',
       items: [{ to: '/', label: 'Dashboard', icon: LayoutDashboard }],
@@ -153,7 +153,6 @@ export function AppShell() {
         { to: '/history', label: 'Histórico', icon: History },
         { to: '/results', label: 'Resultados', icon: Download },
         { to: '/time-savings', label: 'Tempo ganho', icon: BarChart3 },
-        { to: '/support', label: 'Suporte', icon: LifeBuoy, badge: supportUnread },
       ],
     },
     ...(canViewBoard
@@ -168,6 +167,12 @@ export function AppShell() {
           },
         ]
       : []),
+  ];
+
+  // Bloco destacado no pé do menu: pedir algo novo ou pedir ajuda.
+  const helpItems = [
+    { to: '/automation-requests', label: 'Solicitar', icon: MessageSquarePlus, badge: 0, also: ['/dashboard-requests'] },
+    { to: '/support', label: 'Suporte', icon: LifeBuoy, badge: supportUnread, also: [] as string[] },
   ];
 
   return (
@@ -235,25 +240,12 @@ export function AppShell() {
 
             <div className="px-4 pb-4">
               <div className="mb-3 px-3 text-[11px] font-semibold uppercase tracking-[0.18em] text-sky-500 dark:text-sky-400">
-                Solicitação
+                Ajuda
               </div>
               <div className="space-y-2">
-                <Link
-                  to="/automation-requests"
-                  onClick={() => setMobileNavOpen(false)}
-                  className="flex items-center gap-3 rounded-2xl border border-sky-200 bg-sky-50 px-3 py-3 text-sm font-medium text-sky-800 transition hover:bg-sky-100 dark:border-sky-500/25 dark:bg-sky-950/20 dark:text-sky-100 dark:hover:bg-sky-950/35"
-                >
-                  <MessageSquarePlus className="h-4 w-4 shrink-0 text-sky-500 dark:text-sky-300" />
-                  Solicitar automação
-                </Link>
-                <Link
-                  to="/dashboard-requests"
-                  onClick={() => setMobileNavOpen(false)}
-                  className="flex items-center gap-3 rounded-2xl border border-sky-200 bg-sky-50 px-3 py-3 text-sm font-medium text-sky-800 transition hover:bg-sky-100 dark:border-sky-500/25 dark:bg-sky-950/20 dark:text-sky-100 dark:hover:bg-sky-950/35"
-                >
-                  <LayoutDashboard className="h-4 w-4 shrink-0 text-sky-500 dark:text-sky-300" />
-                  Solicitar dashboard
-                </Link>
+                {helpItems.map((item) => (
+                  <HelpLink key={item.to} {...item} onNavigate={() => setMobileNavOpen(false)} />
+                ))}
               </div>
             </div>
           </aside>
@@ -352,32 +344,13 @@ export function AppShell() {
           <div className={cn('pb-4', sidebarCollapsed ? 'px-3' : 'px-4')}>
             {!sidebarCollapsed ? (
               <div className="mb-3 px-3 text-[11px] font-semibold uppercase tracking-[0.18em] text-sky-500 dark:text-sky-400">
-                Solicitação
+                Ajuda
               </div>
             ) : null}
             <div className="space-y-2">
-              <Link
-                to="/automation-requests"
-                title={sidebarCollapsed ? 'Solicitar automação' : undefined}
-                className={cn(
-                  'flex items-center gap-3 rounded-2xl border border-sky-200 bg-sky-50 py-3 text-sm font-medium text-sky-800 transition hover:bg-sky-100 dark:border-sky-500/25 dark:bg-sky-950/20 dark:text-sky-100 dark:hover:bg-sky-950/35',
-                  sidebarCollapsed ? 'justify-center px-0' : 'px-3',
-                )}
-              >
-                <MessageSquarePlus className="h-4 w-4 shrink-0 text-sky-500 dark:text-sky-300" />
-                {!sidebarCollapsed ? 'Solicitar automação' : null}
-              </Link>
-              <Link
-                to="/dashboard-requests"
-                title={sidebarCollapsed ? 'Solicitar dashboard' : undefined}
-                className={cn(
-                  'flex items-center gap-3 rounded-2xl border border-sky-200 bg-sky-50 py-3 text-sm font-medium text-sky-800 transition hover:bg-sky-100 dark:border-sky-500/25 dark:bg-sky-950/20 dark:text-sky-100 dark:hover:bg-sky-950/35',
-                  sidebarCollapsed ? 'justify-center px-0' : 'px-3',
-                )}
-              >
-                <LayoutDashboard className="h-4 w-4 shrink-0 text-sky-500 dark:text-sky-300" />
-                {!sidebarCollapsed ? 'Solicitar dashboard' : null}
-              </Link>
+              {helpItems.map((item) => (
+                <HelpLink key={item.to} {...item} collapsed={sidebarCollapsed} />
+              ))}
             </div>
           </div>
 
@@ -720,6 +693,49 @@ function NotifPanelItem({
 }
 
 /** Número de novidades ao lado de um item do menu (some quando é zero). */
+function HelpLink({
+  to,
+  label,
+  icon: Icon,
+  badge,
+  also,
+  collapsed,
+  onNavigate,
+}: {
+  to: string;
+  label: string;
+  icon: typeof LifeBuoy;
+  badge: number;
+  also: string[];
+  collapsed?: boolean;
+  onNavigate?: () => void;
+}) {
+  const { pathname } = useLocation();
+  const active = [to, ...also].some((path) => pathname === path || pathname.startsWith(`${path}/`));
+  return (
+    <Link
+      to={to}
+      onClick={onNavigate}
+      aria-label={collapsed ? label : undefined}
+      title={collapsed ? (badge ? `${label} (${badge} novidade${badge === 1 ? '' : 's'})` : label) : undefined}
+      className={cn(
+        'flex items-center gap-3 rounded-2xl border py-3 text-sm font-medium transition',
+        active
+          ? 'border-sky-300 bg-sky-100 text-sky-900 dark:border-sky-500/50 dark:bg-sky-950/50 dark:text-white'
+          : 'border-sky-200 bg-sky-50 text-sky-800 hover:bg-sky-100 dark:border-sky-500/25 dark:bg-sky-950/20 dark:text-sky-100 dark:hover:bg-sky-950/35',
+        collapsed ? 'justify-center px-0' : 'px-3',
+      )}
+    >
+      <span className="relative flex shrink-0">
+        <Icon className="h-4 w-4 shrink-0 text-sky-500 dark:text-sky-300" />
+        {collapsed && badge ? <span className="absolute -right-1 -top-1 h-2 w-2 rounded-full bg-sky-500" /> : null}
+      </span>
+      {!collapsed ? label : null}
+      {!collapsed ? <NavBadge count={badge} /> : null}
+    </Link>
+  );
+}
+
 function NavBadge({ count }: { count?: number }) {
   if (!count) return null;
   return (

@@ -4,6 +4,7 @@ import {
   Get,
   Param,
   Post,
+  Query,
   Req,
   UploadedFiles,
   UseInterceptors,
@@ -16,6 +17,7 @@ import { isAdmin } from '../shared/access';
 import { diskUploadLimits } from '../shared/upload';
 import { ExecutionRunnerService } from './execution-runner.service';
 import { ExecutionsService } from './executions.service';
+import { parseHistoryQuery } from './history-query';
 
 type UploadedFile = {
   originalname?: string;
@@ -39,6 +41,13 @@ export class ExecutionsController {
   async listExecutions(@Req() request: Request) {
     const user = await this.authService.requireUser(request);
     return this.executionsService.listExecutions(user);
+  }
+
+  // Histórico paginado e filtrado no servidor (rota antes de ':id').
+  @Get('history')
+  async listHistory(@Req() request: Request, @Query() query: Record<string, unknown>) {
+    const user = await this.authService.requireUser(request);
+    return this.executionsService.listHistory(user, parseHistoryQuery(query));
   }
 
   @Get('results')

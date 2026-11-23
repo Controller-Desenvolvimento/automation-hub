@@ -2,6 +2,7 @@ import { Send } from 'lucide-react';
 import { useState, type FormEvent } from 'react';
 import { Field } from '../components/field';
 import { PageHeader } from '../components/page-header';
+import { RequestTypeSwitch } from '../components/request-type-switch';
 import { Button } from '../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { Input } from '../components/ui/input';
@@ -76,7 +77,6 @@ export function DashboardRequestPage() {
   return (
     <div className="grid grid-cols-1 gap-5">
       <PageHeader
-        eyebrow="Solicitação"
         title={
           <>
             Solicitar <span className="text-sky-600 dark:text-sky-400">dashboard</span>
@@ -84,6 +84,8 @@ export function DashboardRequestPage() {
         }
         description="Envie um resumo rápido do dashboard que você precisa. Depois a gente entra em contato para entender os indicadores e a origem dos dados."
       />
+
+      <RequestTypeSwitch current="dashboard" />
 
       <div className="grid grid-cols-1 gap-5 xl:grid-cols-[1.15fr_0.85fr]">
         <Card className="rounded-3xl">

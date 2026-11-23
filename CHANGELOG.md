@@ -3,6 +3,19 @@
 Mudanças do Automation Hub por data. Este arquivo é **público**: descreve o que mudou no produto, no banco e na
 configuração, sem dados de infraestrutura. O desenho detalhado de cada funcionalidade está no `CLAUDE.md`.
 
+## 2026-11-23 — Histórico completo, menu com bloco "Ajuda" e cabeçalhos padronizados
+
+### Corrigido
+- **Histórico de execuções:** só mostrava as 200 execuções mais recentes (e filtrava no navegador), então execuções mais antigas —
+  como as falhas que a Saúde dos robôs conta — não apareciam. Agora a lista é paginada e filtrada no servidor (`GET /api/executions/history`:
+  página, status, origem, robô, busca e período), com as mesmas regras de acesso de antes, e os contadores das abas e do status mostram o total real.
+
+### Alterado
+- **Menu lateral:** o bloco do pé passou a se chamar "Ajuda" e traz **Solicitar** e **Suporte** (com o número de novidades). "Solicitar automação" e
+  "Solicitar dashboard" viraram um só botão; o tipo se escolhe no topo da página (Automação | Dashboard). As rotas antigas continuam valendo.
+- **Cabeçalhos:** Saúde dos robôs, Suporte (lista e "Abrir chamado"), Solicitar automação/dashboard e Quadro seguem o padrão das outras telas
+  (título com a parte azul, sem o subtítulo em cima).
+
 ## 2026-11-23 — O João conhece as novidades do Hub
 
 ### Alterado

@@ -162,8 +162,7 @@ export function SupportNewPage() {
   return (
     <div className="space-y-6">
       <PageHeader
-        eyebrow="Suporte"
-        title="Abrir chamado"
+        title={<>Abrir <span className="text-sky-600 dark:text-sky-400">chamado</span></>}
         description="Conte o que está acontecendo. Quanto mais claro, mais rápido a Inovação consegue ajudar. Você acompanha tudo na aba Suporte."
       />
 

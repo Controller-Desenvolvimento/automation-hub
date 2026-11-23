@@ -142,8 +142,13 @@ export function SupportPage() {
   return (
     <div className="space-y-6">
       <PageHeader
-        eyebrow="Suporte"
-        title={isAdmin ? 'Chamados' : 'Meus chamados'}
+        title={
+          isAdmin ? (
+            <>Chamados de <span className="text-sky-600 dark:text-sky-400">suporte</span></>
+          ) : (
+            <>Meus <span className="text-sky-600 dark:text-sky-400">chamados</span></>
+          )
+        }
         description={
           isAdmin
             ? 'Todos os chamados abertos pelas pessoas. Responda, mude o status e junte os que são o mesmo problema.'
