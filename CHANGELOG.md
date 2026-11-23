@@ -3,6 +3,11 @@
 Mudanças do Automation Hub por data. Este arquivo é **público**: descreve o que mudou no produto, no banco e na
 configuração, sem dados de infraestrutura. O desenho detalhado de cada funcionalidade está no `CLAUDE.md`.
 
+## 2026-11-23 — Saúde dos robôs: margem do topo
+
+### Corrigido
+- **Saúde dos robôs:** removida a margem extra acima do título (o svg invisível dos gráficos, no topo da página, empurrava o cabeçalho). O título agora fica na mesma altura das outras telas.
+
 ## 2026-11-23 — Meus pedidos e motivo da recusa opcional
 
 ### Adicionado
