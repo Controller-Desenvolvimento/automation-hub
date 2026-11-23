@@ -1,4 +1,4 @@
-import { ChevronRight, ExternalLink, Search, Send, X } from 'lucide-react';
+import { ChevronRight, ExternalLink, Search, Send, Trash2, X } from 'lucide-react';
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { useLocation } from 'react-router-dom';
 import { Field } from '../components/field';
@@ -96,7 +96,7 @@ function statusTone(status: AutomationRequestStatus) {
 
 export function AutomationRequestsPage() {
   const { user } = useAuth();
-  const { notify } = useHub();
+  const { notify, refreshRequestsPending } = useHub();
   const location = useLocation();
   const [requests, setRequests] = useState<AutomationRequest[]>([]);
   const [loading, setLoading] = useState(true);
@@ -105,6 +105,10 @@ export function AutomationRequestsPage() {
   const [query, setQuery] = useState('');
   const [draft, setDraft] = useState<Draft>(emptyDraft());
   const [selectedRequest, setSelectedRequest] = useState<AutomationRequest | null>(null);
+  // Arrastar entre colunas: pedido sendo arrastado, coluna sob o mouse e pedido esperando o motivo da recusa.
+  const [dragId, setDragId] = useState<string | null>(null);
+  const [overStatus, setOverStatus] = useState<AutomationRequestStatus | null>(null);
+  const [rejectTarget, setRejectTarget] = useState<AutomationRequest | null>(null);
 
   const isBoardView = location.pathname === '/admin/quadro';
   const canManageRequests = user?.role === 'admin' || user?.departments.includes('inovacao') === true;
@@ -140,15 +144,15 @@ export function AutomationRequestsPage() {
     [filteredRequests],
   );
 
-  async function loadRequests() {
+  async function loadRequests(silent = false) {
     try {
-      setLoading(true);
+      if (!silent) setLoading(true);
       const data = await api<AutomationRequest[]>('/automation-requests');
       setRequests(data);
     } catch (error) {
       notify(error instanceof Error ? error.message : 'Nao foi possivel carregar os pedidos.');
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }
 
@@ -177,7 +181,7 @@ export function AutomationRequestsPage() {
     }
   }
 
-  async function saveRequest(id: string, payload: { status: AutomationRequestStatus; adminNotes: string }) {
+  async function saveRequest(id: string, payload: { status: AutomationRequestStatus; statusNote?: string }) {
     try {
       setSavingId(id);
       await api(`/automation-requests/${id}`, {
@@ -186,10 +190,63 @@ export function AutomationRequestsPage() {
         body: JSON.stringify(payload),
       });
       notify('Pedido atualizado.');
-      await loadRequests();
+      await loadRequests(true);
+      void refreshRequestsPending();
       return true;
     } catch (error) {
-      notify(error instanceof Error ? error.message : 'Nao foi possivel atualizar o pedido.');
+      notify(error instanceof Error ? error.message : 'Não foi possível atualizar o pedido.');
+      return false;
+    } finally {
+      setSavingId(null);
+    }
+  }
+
+  // Solta o card numa coluna: o card troca de lugar na hora e volta se o servidor recusar.
+  async function moveRequest(request: AutomationRequest, status: AutomationRequestStatus, statusNote?: string) {
+    if (request.status === status) return true;
+    const previous = requests;
+    setRequests((current) =>
+      current.map((item) => (item.id === request.id ? { ...item, status, statusNote: statusNote ?? null } : item)),
+    );
+    try {
+      await api(`/automation-requests/${request.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status, ...(statusNote ? { statusNote } : {}) }),
+      });
+      void loadRequests(true);
+      void refreshRequestsPending();
+      return true;
+    } catch (error) {
+      setRequests(previous);
+      notify(error instanceof Error ? error.message : 'Não foi possível mover o pedido.');
+      return false;
+    }
+  }
+
+  function dropOn(status: AutomationRequestStatus) {
+    const request = requests.find((item) => item.id === dragId);
+    setDragId(null);
+    setOverStatus(null);
+    if (!request || request.status === status) return;
+    // Recusar exige o motivo: o card so se move depois que ele e informado.
+    if (status === 'rejected') {
+      setRejectTarget(request);
+      return;
+    }
+    void moveRequest(request, status);
+  }
+
+  async function deleteRequest(id: string) {
+    try {
+      setSavingId(id);
+      await api(`/automation-requests/${id}`, { method: 'DELETE' });
+      notify('Pedido excluído.');
+      setRequests((current) => current.filter((item) => item.id !== id));
+      void refreshRequestsPending();
+      return true;
+    } catch (error) {
+      notify(error instanceof Error ? error.message : 'Não foi possível excluir o pedido.');
       return false;
     } finally {
       setSavingId(null);
@@ -350,7 +407,7 @@ export function AutomationRequestsPage() {
             <div>
               <CardTitle>Quadro de pedidos</CardTitle>
               <p className="text-sm text-slate-500 dark:text-zinc-400">
-                Os pedidos aparecem em colunas, no estilo de um board, para facilitar a triagem visual.
+                Arraste os pedidos entre as colunas para mudar a situação. Quem pediu é avisado a cada mudança.
               </p>
             </div>
 
@@ -388,7 +445,24 @@ export function AutomationRequestsPage() {
                   {boardColumns.map((column) => (
                     <section
                       key={column.status}
-                      className="flex min-h-[22rem] w-full flex-col rounded-[24px] border border-slate-200/80 bg-white p-2.5 dark:border-white/10 dark:bg-[#0f0f10]"
+                      onDragOver={(event) => {
+                        if (!dragId) return;
+                        event.preventDefault();
+                        setOverStatus(column.status);
+                      }}
+                      onDragLeave={(event) => {
+                        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setOverStatus(null);
+                      }}
+                      onDrop={(event) => {
+                        event.preventDefault();
+                        dropOn(column.status);
+                      }}
+                      className={cn(
+                        'flex min-h-[22rem] w-full flex-col rounded-[24px] border bg-white p-2.5 transition dark:bg-[#0f0f10]',
+                        dragId && overStatus === column.status
+                          ? 'border-sky-400 bg-sky-50/60 dark:border-sky-500/60 dark:bg-sky-950/20'
+                          : 'border-slate-200/80 dark:border-white/10',
+                      )}
                     >
                       <div className="mb-3 flex items-center justify-between gap-3">
                         <div className="min-w-0">
@@ -406,6 +480,12 @@ export function AutomationRequestsPage() {
                             key={request.id}
                             request={request}
                             onOpen={() => setSelectedRequest(request)}
+                            dragging={dragId === request.id}
+                            onDragStart={() => setDragId(request.id)}
+                            onDragEnd={() => {
+                              setDragId(null);
+                              setOverStatus(null);
+                            }}
                             compact
                           />
                         ))}
@@ -437,6 +517,24 @@ export function AutomationRequestsPage() {
               setSelectedRequest(null);
             }
           }}
+          onDelete={async () => {
+            const deleted = await deleteRequest(selectedRequest.id);
+            if (deleted) {
+              setSelectedRequest(null);
+            }
+          }}
+        />
+      ) : null}
+
+      {isBoardView && rejectTarget ? (
+        <RejectDialog
+          request={rejectTarget}
+          onCancel={() => setRejectTarget(null)}
+          onConfirm={async (reason) => {
+            const target = rejectTarget;
+            setRejectTarget(null);
+            await moveRequest(target, 'rejected', reason);
+          }}
         />
       ) : null}
     </div>
@@ -446,17 +544,32 @@ export function AutomationRequestsPage() {
 function AutomationRequestCard({
   request,
   onOpen,
+  onDragStart,
+  onDragEnd,
+  dragging = false,
   compact = false,
 }: {
   request: AutomationRequest;
   onOpen: () => void;
+  onDragStart: () => void;
+  onDragEnd: () => void;
+  dragging?: boolean;
   compact?: boolean;
 }) {
   return (
     <Card
+      draggable
+      onDragStart={(event) => {
+        // O Firefox so inicia o arrasto se houver algum dado no dataTransfer.
+        event.dataTransfer.setData('text/plain', request.id);
+        event.dataTransfer.effectAllowed = 'move';
+        onDragStart();
+      }}
+      onDragEnd={onDragEnd}
       className={cn(
-        'overflow-hidden rounded-[12px] border-slate-200/80 bg-white shadow-none transition hover:border-slate-300 dark:border-white/10 dark:bg-[#111113] dark:hover:border-white/20',
+        'cursor-grab overflow-hidden rounded-[12px] border-slate-200/80 bg-white shadow-none transition hover:border-slate-300 active:cursor-grabbing dark:border-white/10 dark:bg-[#111113] dark:hover:border-white/20',
         compact && 'bg-white dark:bg-[#111113]',
+        dragging && 'opacity-40',
       )}
     >
       <button
@@ -484,17 +597,26 @@ function AutomationRequestModal({
   saving,
   onClose,
   onSave,
+  onDelete,
 }: {
   request: AutomationRequest;
   canManageRequests: boolean;
   saving: boolean;
   onClose: () => void;
-  onSave: (payload: { status: AutomationRequestStatus; adminNotes: string }) => void;
+  onSave: (payload: { status: AutomationRequestStatus; statusNote?: string }) => void;
+  onDelete: () => void;
 }) {
   const [status, setStatus] = useState<AutomationRequestStatus>(request.status);
+  const [note, setNote] = useState('');
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const changed = status !== request.status;
+  const needsReason = changed && status === 'rejected';
+  const canSave = changed && (!needsReason || note.trim().length > 0);
 
   useEffect(() => {
     setStatus(request.status);
+    setNote('');
+    setConfirmingDelete(false);
   }, [request.id, request.status]);
 
   useEffect(() => {
@@ -570,6 +692,15 @@ function AutomationRequestModal({
               </div>
             </section>
 
+            {request.statusNote ? (
+              <section className="rounded-[8px] border border-slate-200 bg-slate-50 p-4 dark:border-white/10 dark:bg-white/[0.03]">
+                <div className="mb-2 text-xs font-semibold uppercase tracking-[0.18em] text-slate-500 dark:text-zinc-400">
+                  {request.status === 'rejected' ? 'Motivo da recusa' : 'Mensagem para quem pediu'}
+                </div>
+                <p className="whitespace-pre-wrap text-sm leading-6 text-slate-700 dark:text-zinc-200">{request.statusNote}</p>
+              </section>
+            ) : null}
+
             <section className="rounded-[8px] border border-slate-200 bg-white p-4 dark:border-white/10 dark:bg-[#111113]">
               <div className="mb-3 text-xs font-semibold uppercase tracking-[0.18em] text-slate-500 dark:text-zinc-400">
                 O que ja sabemos
@@ -620,14 +751,123 @@ function AutomationRequestModal({
                   ))}
                 </select>
 
-                <Button size="sm" className="w-full" onClick={() => onSave({ status, adminNotes: '' })} disabled={saving}>
+                {changed ? (
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-medium text-slate-700 dark:text-zinc-200" htmlFor="request-status-note">
+                      {needsReason ? 'Motivo da recusa (obrigatório)' : 'Mensagem para quem pediu (opcional)'}
+                    </label>
+                    <Textarea
+                      id="request-status-note"
+                      className="min-h-24"
+                      maxLength={500}
+                      value={note}
+                      onChange={(event) => setNote(event.target.value)}
+                      placeholder={
+                        needsReason
+                          ? 'Explique por que o pedido foi recusado. Quem pediu vai ver na notificação.'
+                          : 'Ex.: previsão, o que ainda precisamos de você...'
+                      }
+                    />
+                  </div>
+                ) : null}
+
+                <Button
+                  size="sm"
+                  className="w-full"
+                  onClick={() => onSave({ status, ...(note.trim() ? { statusNote: note.trim() } : {}) })}
+                  disabled={saving || !canSave}
+                >
                   {saving ? 'Salvando...' : 'Salvar status'}
                 </Button>
+
+                <div className="border-t border-slate-200 pt-3 dark:border-white/10">
+                  {confirmingDelete ? (
+                    <div className="space-y-2">
+                      <p className="text-xs text-slate-500 dark:text-zinc-400">
+                        Excluir apaga o pedido de vez e não dá para desfazer. Quem pediu não é avisado.
+                      </p>
+                      <div className="flex gap-2">
+                        <Button size="sm" variant="danger" className="flex-1" onClick={onDelete} disabled={saving}>
+                          Excluir
+                        </Button>
+                        <Button size="sm" variant="outline" className="flex-1" onClick={() => setConfirmingDelete(false)} disabled={saving}>
+                          Cancelar
+                        </Button>
+                      </div>
+                    </div>
+                  ) : (
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="w-full text-rose-600 hover:text-rose-700 dark:text-rose-400"
+                      onClick={() => setConfirmingDelete(true)}
+                    >
+                      <Trash2 className="mr-2 h-3.5 w-3.5" />
+                      Excluir pedido
+                    </Button>
+                  )}
+                </div>
               </div>
             ) : (
               <p className="text-sm text-slate-500 dark:text-zinc-400">Sem permissao para alterar o status.</p>
             )}
           </aside>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function RejectDialog({
+  request,
+  onCancel,
+  onConfirm,
+}: {
+  request: AutomationRequest;
+  onCancel: () => void;
+  onConfirm: (reason: string) => void | Promise<void>;
+}) {
+  const [reason, setReason] = useState('');
+
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape') onCancel();
+    }
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [onCancel]);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center px-4 py-6">
+      <button type="button" aria-label="Cancelar" className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={onCancel} />
+      <div className="relative z-10 w-full max-w-md space-y-4 rounded-[10px] border border-slate-200 bg-white p-5 shadow-2xl dark:border-white/10 dark:bg-[#0f0f10]">
+        <div>
+          <h3 className="text-lg font-semibold text-slate-950 dark:text-white">Recusar pedido</h3>
+          <p className="mt-1 text-sm text-slate-500 dark:text-zinc-400">
+            {request.title} - {request.requesterName}
+          </p>
+        </div>
+        <div className="space-y-1.5">
+          <label className="text-sm font-medium text-slate-700 dark:text-zinc-200" htmlFor="reject-reason">
+            Motivo da recusa
+          </label>
+          <Textarea
+            id="reject-reason"
+            autoFocus
+            className="min-h-28"
+            maxLength={500}
+            value={reason}
+            onChange={(event) => setReason(event.target.value)}
+            placeholder="Explique por que o pedido foi recusado. Quem pediu vai ver na notificação."
+          />
+        </div>
+        <div className="flex justify-end gap-2">
+          <Button variant="outline" onClick={onCancel}>
+            Cancelar
+          </Button>
+          <Button variant="danger" disabled={!reason.trim()} onClick={() => void onConfirm(reason.trim())}>
+            Recusar pedido
+          </Button>
         </div>
       </div>
     </div>

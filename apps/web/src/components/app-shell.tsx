@@ -46,7 +46,7 @@ export function AppShell() {
   const navigate = useNavigate();
   const { user, logout } = useAuth();
   const { theme, toggleTheme } = useTheme();
-  const { hub, unreadNotifications, refreshUnreadCount, supportUnread } = useHub();
+  const { hub, unreadNotifications, refreshUnreadCount, supportUnread, requestsPending } = useHub();
   const [search, setSearch] = useState('');
   const [profileOpen, setProfileOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
@@ -162,7 +162,7 @@ export function AppShell() {
             items: [
               ...(user?.role === 'admin' ? [{ to: '/settings', label: 'Configurações', icon: Settings }, { to: '/docs', label: 'Dev Docs', icon: BookOpen }] : []),
               { to: '/robot-health', label: 'Saúde dos robôs', icon: HeartPulse },
-              { to: '/admin/quadro', label: 'Quadro', icon: CheckCheck },
+              { to: '/admin/quadro', label: 'Quadro', icon: CheckCheck, badge: requestsPending },
             ],
           },
         ]
@@ -647,7 +647,7 @@ function NotifPanelItem({
       return;
     }
     if (notification.type === 'automation_request_new') {
-      void navigate('/automation-requests');
+      void navigate('/admin/quadro');
       return;
     }
     if (notification.executionId) {

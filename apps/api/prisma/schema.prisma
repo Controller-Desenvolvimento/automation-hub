@@ -98,6 +98,8 @@ model AutomationRequest {
   requiresCaptcha   Boolean                   @default(false)
   status            AutomationRequestStatus   @default(pending)
   adminNotes        String?
+  // Mensagem da Inovação sobre a situação atual (motivo da recusa é obrigatório); quem pediu vê na notificação.
+  statusNote        String?
   createdAt         DateTime                  @default(now())
   updatedAt         DateTime                  @updatedAt
 

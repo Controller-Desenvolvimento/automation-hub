@@ -571,6 +571,8 @@ export type AutomationRequest = {
   requiresCaptcha: boolean;
   status: AutomationRequestStatus;
   adminNotes?: string | null;
+  /** Mensagem da Inovação sobre a situação atual (motivo, se recusado). */
+  statusNote?: string | null;
   createdAt: string;
   updatedAt: string;
 };

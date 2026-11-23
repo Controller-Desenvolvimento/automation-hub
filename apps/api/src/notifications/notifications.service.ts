@@ -113,6 +113,7 @@ export class NotificationsService {
     requesterName: string;
     title: string;
     status: AutomationRequestStatus;
+    note?: string | null;
   }) {
     const statusLabel = automationRequestStatusLabel(params.status);
 
@@ -121,7 +122,11 @@ export class NotificationsService {
         userId: params.requesterUserId,
         type: 'automation_request_status',
         title: `Atualização no pedido: ${params.title}`,
-        body: `${params.requesterName}, seu pedido foi movido para ${statusLabel}. Fique de olho nas notificações para acompanhar as próximas etapas.`,
+        body: params.note
+          ? `${params.requesterName}, seu pedido foi movido para ${statusLabel}. ${
+              params.status === AutomationRequestStatus.rejected ? 'Motivo' : 'Mensagem da Inovação'
+            }: ${params.note}`
+          : `${params.requesterName}, seu pedido foi movido para ${statusLabel}. Fique de olho nas notificações para acompanhar as próximas etapas.`,
       },
     });
   }

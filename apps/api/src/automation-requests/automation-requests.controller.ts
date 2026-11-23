@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Patch, Post, Req } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Patch, Post, Req } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import type { Request } from 'express';
 import { AuthService } from '../auth/auth.service';
@@ -19,6 +19,13 @@ export class AutomationRequestsController {
     return this.automationRequestsService.listForUser(user);
   }
 
+  // Rota fixa ANTES das de ":id".
+  @Get('summary')
+  async summary(@Req() request: Request) {
+    const user = await this.authService.requireUser(request);
+    return this.automationRequestsService.summary(user);
+  }
+
   @Post()
   async create(@Req() request: Request, @Body() body: Record<string, unknown>) {
     const user = await this.authService.requireUser(request);
@@ -33,5 +40,11 @@ export class AutomationRequestsController {
   ) {
     const user = await this.authService.requireUser(request);
     return this.automationRequestsService.update(id, user, body);
+  }
+
+  @Delete(':id')
+  async remove(@Param('id') id: string, @Req() request: Request) {
+    const user = await this.authService.requireUser(request);
+    return this.automationRequestsService.remove(id, user);
   }
 }
