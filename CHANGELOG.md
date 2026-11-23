@@ -3,6 +3,19 @@
 Mudanças do Automation Hub por data. Este arquivo é **público**: descreve o que mudou no produto, no banco e na
 configuração, sem dados de infraestrutura. O desenho detalhado de cada funcionalidade está no `CLAUDE.md`.
 
+## 2026-11-23 — O João conhece as novidades do Hub
+
+### Alterado
+- O João (chat do Hub) passou a saber do **Suporte** (como abrir e acompanhar um chamado, o que quer dizer cada situação, que não há
+  prazo definido e que pedido de automação/painel novo vai em "Solicitar"), do botão **Reportar problema**, do cartão **Parâmetros**
+  (quem vê as senhas), do **Rodar novamente** (com as mesmas entradas ou com a planilha final) e do **painel em tela cheia**. Quando não
+  sabe resolver, indica o caminho exato do Suporte em vez de "fale com o suporte".
+- Para **administradores e Inovação**, ele também explica a **Saúde dos robôs**, a aba **Robôs sem ganho** e o simulador, o Suporte do
+  lado da Inovação (notas internas, juntar chamados), a verificação T0/T1/T2, as dependências entre agendamentos, os **e-mails de alerta**
+  e o botão "Reiniciar" dos painéis. Para os demais, ele só diz que essas páginas existem e são de administradores.
+- Ele diz com clareza o que **não** consegue fazer pelo chat (abrir chamado, rodar execução, ver senha, mudar configuração).
+- Dica do João na página do Suporte.
+
 ## 2026-11-19 — Auditoria do sino dos ligados e dos robôs externos no simulador
 
 ### Corrigido

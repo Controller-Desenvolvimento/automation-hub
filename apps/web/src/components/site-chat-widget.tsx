@@ -197,6 +197,10 @@ const ROUTE_HINTS: { match: (path: string) => boolean; messages: string[] }[] = 
     messages: ['Quer saber quanto tempo já foi economizado? Pergunta pro João'],
   },
   {
+    match: (p) => p.startsWith('/support'),
+    messages: ['Dúvida sobre como abrir ou acompanhar um chamado? Pergunta pro João'],
+  },
+  {
     match: (p) => p.startsWith('/automation-requests') || p.startsWith('/dashboard-requests'),
     messages: ['Quer que o João já registre esse pedido? Só me contar o que precisa'],
   },
