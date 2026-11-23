@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { useLocation } from 'react-router-dom';
 import { Field } from '../components/field';
 import { PageHeader } from '../components/page-header';
+import { RequestTypeSwitch } from '../components/request-type-switch';
 import { Badge } from '../components/ui/badge';
 import { Button } from '../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
@@ -198,7 +199,6 @@ export function AutomationRequestsPage() {
   return (
     <div className="grid grid-cols-1 gap-5">
       <PageHeader
-        eyebrow={isBoardView ? 'Administração' : 'Fila interna'}
         title={
           isBoardView ? (
             <>
@@ -216,6 +216,8 @@ export function AutomationRequestsPage() {
             : 'Isso aqui e um pre-pedido rapido. Escreva o basico e depois a gente entra em contato para entender melhor o fluxo e, se fizer sentido, pedir video, prints ou acesso.'
         }
       />
+
+      {!isBoardView ? <RequestTypeSwitch current="automation" /> : null}
 
       {!isBoardView ? (
         <div className="grid grid-cols-1 gap-5 xl:grid-cols-[1.15fr_0.85fr]">

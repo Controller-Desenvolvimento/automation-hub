@@ -16,13 +16,17 @@ const read = (path: string) => readFileSync(join(WEB, path), 'utf8');
 // Rotas do menu lateral, separadas entre o grupo "Administração" e o resto.
 function menuRoutes() {
   const shell = read('components/app-shell.tsx');
-  const start = shell.indexOf('const navGroups = [');
+  const start = shell.indexOf('const navGroups');
   const end = shell.indexOf('];', shell.indexOf("label: 'Administração'"));
   assert.ok(start > 0 && end > start, 'não achei o menu (navGroups) em app-shell.tsx');
   const block = shell.slice(start, end);
   const adminAt = block.indexOf("label: 'Administração'");
   const routes = (text: string) => [...text.matchAll(/to: '(\/[^']*)'/g)].map((m) => m[1]);
-  return { everyone: routes(block.slice(0, adminAt)), admin: routes(block.slice(adminAt)) };
+  // Bloco "Ajuda" no pé do menu (Solicitar e Suporte).
+  const helpStart = shell.indexOf('const helpItems = [');
+  const helpBlock = shell.slice(helpStart, shell.indexOf('];', helpStart));
+  assert.ok(helpStart > 0, 'não achei o bloco "Ajuda" (helpItems) em app-shell.tsx');
+  return { everyone: [...routes(block.slice(0, adminAt)), ...routes(helpBlock)], admin: routes(block.slice(adminAt)) };
 }
 
 test('toda página do menu está nas instruções do João (página nova no menu = ensinar o João)', () => {

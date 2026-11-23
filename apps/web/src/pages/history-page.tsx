@@ -18,65 +18,51 @@ const STATUS_OPTIONS: Execution['status'][] = ['running', 'queued', 'success', '
 
 type View = 'all' | 'manual' | 'scheduled' | 'bi';
 
+type HistoryResponse = {
+  items: Execution[];
+  total: number;
+  page: number;
+  totalPages: number;
+  counts: { all: number; manual: number; scheduled: number };
+  statusCounts: Partial<Record<Execution['status'], number>>;
+};
+
+const EMPTY_HISTORY: HistoryResponse = {
+  items: [],
+  total: 0,
+  page: 1,
+  totalPages: 1,
+  counts: { all: 0, manual: 0, scheduled: 0 },
+  statusCounts: {},
+};
+
 export function HistoryPage() {
-  const { hub, executions, refreshHub, notify } = useHub();
+  const { hub, notify } = useHub();
   const [view, setView] = useState<View>('all');
   // Filtro por automação via link: /history?robotId=<id> (botão "Ver histórico" da página do robô)
   const [searchParams, setSearchParams] = useSearchParams();
   const robotFilterId = searchParams.get('robotId');
   const robotFilterName = useMemo(
-    () =>
-      robotFilterId
-        ? hub?.robots.find((r) => r.id === robotFilterId)?.name ??
-          executions.find((e) => e.robotId === robotFilterId)?.robot?.name ??
-          null
-        : null,
-    [hub, executions, robotFilterId],
+    () => (robotFilterId ? hub?.robots.find((r) => r.id === robotFilterId)?.name ?? null : null),
+    [hub, robotFilterId],
   );
   const [userFilter, setUserFilter] = useState('');
+  const [debouncedFilter, setDebouncedFilter] = useState('');
   const [statusMenuOpen, setStatusMenuOpen] = useState(false);
   const [statusFilter, setStatusFilter] = useState<Execution['status'][]>([]);
   const [page, setPage] = useState(1);
   const [rowsPerPage, setRowsPerPage] = useState(10);
   const [logs, setLogs] = useState<PowerBIRefreshLog[]>([]);
   const [logsLoading, setLogsLoading] = useState(false);
+  const [data, setData] = useState<HistoryResponse>(EMPTY_HISTORY);
 
-  const scheduledCount = useMemo(() => executions.filter((e) => e.scheduledTaskId).length, [executions]);
-  const manualCount    = useMemo(() => executions.filter((e) => !e.scheduledTaskId).length, [executions]);
-
-  const filteredExecutions = useMemo(() => {
-    const term = userFilter.trim().toLowerCase();
-
-    return executions.filter((execution) => {
-      const name = execution.requestedByName?.toLowerCase() ?? '';
-      const email = execution.requestedByEmail?.toLowerCase() ?? '';
-      const robot = execution.robot?.name?.toLowerCase() ?? '';
-      const step = execution.currentStep?.toLowerCase() ?? '';
-      const matchesTerm =
-        !term ||
-        name.includes(term) ||
-        email.includes(term) ||
-        robot.includes(term) ||
-        step.includes(term);
-      const matchesStatus = statusFilter.length === 0 || statusFilter.includes(execution.status);
-      const matchesRobot = !robotFilterId || execution.robotId === robotFilterId;
-      const matchesOrigin =
-        view !== 'scheduled' && view !== 'manual' ||
-        (view === 'scheduled' && Boolean(execution.scheduledTaskId)) ||
-        (view === 'manual' && !execution.scheduledTaskId);
-      return matchesTerm && matchesStatus && matchesOrigin && matchesRobot;
-    });
-  }, [executions, view, statusFilter, userFilter, robotFilterId]);
-
-  const totalPages = Math.max(1, Math.ceil(filteredExecutions.length / rowsPerPage));
-  const currentPage = Math.min(page, totalPages);
-  const pageStart = filteredExecutions.length === 0 ? 0 : (currentPage - 1) * rowsPerPage + 1;
-  const pageEnd = Math.min(filteredExecutions.length, currentPage * rowsPerPage);
-
-  const pageExecutions = useMemo(() => {
-    const start = (currentPage - 1) * rowsPerPage;
-    return filteredExecutions.slice(start, start + rowsPerPage);
-  }, [currentPage, filteredExecutions, rowsPerPage]);
+  // Filtros e páginas são resolvidos no servidor (a lista inteira não cabe mais numa única resposta).
+  const { counts, statusCounts } = data;
+  const pageExecutions = data.items;
+  const currentPage = data.page;
+  const totalPages = data.totalPages;
+  const pageStart = data.total === 0 ? 0 : (currentPage - 1) * rowsPerPage + 1;
+  const pageEnd = Math.min(data.total, currentPage * rowsPerPage);
 
   const toggleStatus = (status: Execution['status']) => {
     setPage(1);
@@ -86,23 +72,39 @@ export function HistoryPage() {
   };
 
   useEffect(() => {
-    setPage(1);
-  }, [rowsPerPage, userFilter, statusFilter, view, robotFilterId]);
+    const timer = window.setTimeout(() => setDebouncedFilter(userFilter.trim()), 300);
+    return () => window.clearTimeout(timer);
+  }, [userFilter]);
 
   useEffect(() => {
+    setPage(1);
+  }, [rowsPerPage, debouncedFilter, statusFilter, view, robotFilterId]);
+
+  useEffect(() => {
+    if (view === 'bi') return;
     let cancelled = false;
     let timer: number | undefined;
+    const params = new URLSearchParams({ page: String(page), pageSize: String(rowsPerPage) });
+    if (view !== 'all') params.set('origin', view);
+    if (statusFilter.length > 0) params.set('status', statusFilter.join(','));
+    if (robotFilterId) params.set('robotId', robotFilterId);
+    if (debouncedFilter) params.set('q', debouncedFilter);
+
     const poll = async () => {
-      await refreshHub();
-      if (cancelled) return;
-      timer = window.setTimeout(poll, 2500);
+      try {
+        const result = await api<HistoryResponse>(`/executions/history?${params.toString()}`);
+        if (!cancelled) setData(result);
+      } catch {
+        /* falha passageira: mantém a lista atual e tenta de novo */
+      }
+      if (!cancelled) timer = window.setTimeout(poll, 2500);
     };
     void poll();
     return () => {
       cancelled = true;
       if (timer) window.clearTimeout(timer);
     };
-  }, [refreshHub]);
+  }, [view, page, rowsPerPage, statusFilter, robotFilterId, debouncedFilter]);
 
   useEffect(() => {
     if (view === 'bi') {
@@ -132,9 +134,9 @@ export function HistoryPage() {
       <div className="flex gap-1 rounded-2xl border border-slate-200 bg-slate-50 p-1 dark:border-[#27272a] dark:bg-[#111113]">
         {(
           [
-            { key: 'all', label: 'Todas', count: executions.length },
-            { key: 'manual', label: 'Manuais', count: manualCount },
-            { key: 'scheduled', label: 'Agendamentos', count: scheduledCount },
+            { key: 'all', label: 'Todas', count: counts.all },
+            { key: 'manual', label: 'Manuais', count: counts.manual },
+            { key: 'scheduled', label: 'Agendamentos', count: counts.scheduled },
           ] as const
         ).map(({ key, label, count }) => (
           <button
@@ -240,7 +242,7 @@ export function HistoryPage() {
                             {statusLabel(status)}
                           </span>
                           <span className="text-xs text-slate-400">
-                            {executions.filter((execution) => execution.status === status).length}
+                            {statusCounts[status] ?? 0}
                           </span>
                         </button>
                       );
@@ -322,7 +324,7 @@ export function HistoryPage() {
                     <option value={20}>20</option>
                   </select>
                   <span>
-                    {pageStart}-{pageEnd} de {filteredExecutions.length}
+                    {pageStart}-{pageEnd} de {data.total}
                   </span>
                 </div>
 

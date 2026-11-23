@@ -10,6 +10,7 @@ import AdmZip from 'adm-zip';
 import { access, copyFile, readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import { extname, join, relative } from 'node:path';
 import { PrismaService } from '../prisma/prisma.service';
+import { type HistoryQuery, historyBaseWhere, historyOriginWhere } from './history-query';
 import { INTERRUPTED_PREFIX } from './interrupted';
 import { checkConfigFromTask } from '../scheduled-tasks/schedule-checks';
 import type { ExecSnap } from '../scheduled-tasks/schedule-dependency';
@@ -390,6 +391,70 @@ export class ExecutionsService {
           canAccessExecution(user, execution) && canAccessRobot(user, execution.robot),
       )
       .map(withoutParameters);
+  }
+
+  /**
+   * Histórico paginado e filtrado NO SERVIDOR (a lista de `listExecutions` traz só as 200 mais recentes: execuções
+   * mais antigas, como as da Saúde dos robôs, ficavam inalcançáveis). Mesma regra de acesso da lista antiga.
+   */
+  async listHistory(user: User, query: HistoryQuery) {
+    const robots = await this.prisma.robot.findMany({
+      select: { id: true, allowedDepartments: true, allowedUserIds: true },
+    });
+    const robotIds = robots.filter((robot) => canAccessRobot(user, robot)).map((robot) => robot.id);
+
+    const base: Prisma.ExecutionWhereInput = {
+      AND: [buildExecutionScope(user) ?? {}, { robotId: { in: robotIds } }, historyBaseWhere(query)],
+    };
+    const withStatus = (extra: Prisma.ExecutionWhereInput): Prisma.ExecutionWhereInput => ({
+      AND: [base, extra, query.statuses.length > 0 ? { status: { in: query.statuses } } : {}],
+    });
+
+    const [all, manual, scheduled, byStatus] = await Promise.all([
+      this.prisma.execution.count({ where: withStatus({}) }),
+      this.prisma.execution.count({ where: withStatus(historyOriginWhere('manual')) }),
+      this.prisma.execution.count({ where: withStatus(historyOriginWhere('scheduled')) }),
+      this.prisma.execution.groupBy({
+        by: ['status'],
+        where: { AND: [base, historyOriginWhere(query.origin)] },
+        _count: { _all: true },
+      }),
+    ]);
+
+    const total = query.origin === 'manual' ? manual : query.origin === 'scheduled' ? scheduled : all;
+    const totalPages = Math.max(1, Math.ceil(total / query.pageSize));
+    const page = Math.min(query.page, totalPages);
+
+    const rows = await this.prisma.execution.findMany({
+      where: withStatus(historyOriginWhere(query.origin)),
+      orderBy: { createdAt: 'desc' },
+      skip: (page - 1) * query.pageSize,
+      take: query.pageSize,
+      select: {
+        id: true,
+        robotId: true,
+        status: true,
+        progress: true,
+        currentStep: true,
+        requestedByName: true,
+        requestedByEmail: true,
+        scheduledTaskId: true,
+        createdAt: true,
+        startedAt: true,
+        finishedAt: true,
+        robot: { select: { id: true, name: true, slug: true, summary: true, icon: true } },
+      },
+    });
+
+    return {
+      items: rows,
+      total,
+      page,
+      pageSize: query.pageSize,
+      totalPages,
+      counts: { all, manual, scheduled },
+      statusCounts: Object.fromEntries(byStatus.map((row) => [row.status, row._count._all])),
+    };
   }
 
   async listResults(user: User) {
