@@ -27,6 +27,9 @@ type HubContextValue = {
   /** Novidades do Suporte (número ao lado do menu): chamados esperando a Inovação e respostas novas aos seus chamados. */
   supportUnread: number;
   refreshSupportUnread: () => Promise<void>;
+  /** Pedidos de automação/dashboard ainda sem triagem (só administradores; selo do menu "Quadro"). */
+  requestsPending: number;
+  refreshRequestsPending: () => Promise<void>;
 };
 
 const HubContext = createContext<HubContextValue | null>(null);
@@ -40,6 +43,7 @@ export function HubProvider({ children }: PropsWithChildren) {
   const [toast, setToast] = useState<string | null>(null);
   const [unreadNotifications, setUnreadNotifications] = useState(0);
   const [supportUnread, setSupportUnread] = useState(0);
+  const [requestsPending, setRequestsPending] = useState(0);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const refreshUnreadCount = useCallback(async () => {
@@ -60,24 +64,41 @@ export function HubProvider({ children }: PropsWithChildren) {
     }
   }, []);
 
+  const canViewBoard = user?.role === 'admin' || user?.departments.includes('inovacao') === true;
+
+  const refreshRequestsPending = useCallback(async () => {
+    if (!canViewBoard) {
+      setRequestsPending(0);
+      return;
+    }
+    try {
+      const data = await api<{ pending: number }>('/automation-requests/summary');
+      setRequestsPending(data.pending);
+    } catch {
+      // silent
+    }
+  }, [canViewBoard]);
+
   useEffect(() => {
     // Só faz polling autenticado: na tela de login isso geraria 401 a cada 30s
     if (!user) {
       setUnreadNotifications(0);
       setSupportUnread(0);
+      setRequestsPending(0);
       return;
     }
 
     const tick = () => {
       void refreshUnreadCount();
       void refreshSupportUnread();
+      void refreshRequestsPending();
     };
     tick();
     pollRef.current = setInterval(tick, 30_000);
     return () => {
       if (pollRef.current) clearInterval(pollRef.current);
     };
-  }, [refreshUnreadCount, refreshSupportUnread, user]);
+  }, [refreshUnreadCount, refreshSupportUnread, refreshRequestsPending, user]);
 
   const refreshDepartments = useCallback(async () => {
     try {
@@ -111,8 +132,8 @@ export function HubProvider({ children }: PropsWithChildren) {
   const clearToast = useCallback(() => setToast(null), []);
 
   const value = useMemo(
-    () => ({ hub, hubError, executions, departments, refreshDepartments, toast, notify, clearToast, refreshHub, unreadNotifications, refreshUnreadCount, supportUnread, refreshSupportUnread }),
-    [clearToast, departments, executions, hub, hubError, notify, refreshDepartments, refreshHub, toast, unreadNotifications, refreshUnreadCount, supportUnread, refreshSupportUnread],
+    () => ({ hub, hubError, executions, departments, refreshDepartments, toast, notify, clearToast, refreshHub, unreadNotifications, refreshUnreadCount, supportUnread, refreshSupportUnread, requestsPending, refreshRequestsPending }),
+    [clearToast, departments, executions, hub, hubError, notify, refreshDepartments, refreshHub, toast, unreadNotifications, refreshUnreadCount, supportUnread, refreshSupportUnread, requestsPending, refreshRequestsPending],
   );
 
   return <HubContext.Provider value={value}>{children}</HubContext.Provider>;

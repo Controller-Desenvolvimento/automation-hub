@@ -26,7 +26,10 @@ type AutomationRequestCreateInput = {
 type AutomationRequestUpdateInput = {
   status?: unknown;
   adminNotes?: unknown;
+  statusNote?: unknown;
 };
+
+const STATUS_NOTE_MAX = 500;
 
 const automationRequestSelect = {
   id: true,
@@ -44,6 +47,7 @@ const automationRequestSelect = {
   requiresCaptcha: true,
   status: true,
   adminNotes: true,
+  statusNote: true,
   createdAt: true,
   updatedAt: true,
 } as const;
@@ -61,6 +65,12 @@ export class AutomationRequestsService {
       orderBy: { createdAt: 'desc' },
       select: automationRequestSelect,
     });
+  }
+
+  /** Número do selo do menu "Quadro": pedidos que ainda esperam a primeira triagem (só administradores). */
+  async summary(user: Pick<User, 'id' | 'role' | 'departments'>) {
+    if (!isAdmin(user)) return { pending: 0 };
+    return { pending: await this.prisma.automationRequest.count({ where: { status: AutomationRequestStatus.pending } }) };
   }
 
   async create(user: Pick<User, 'id' | 'name' | 'email'>, input: AutomationRequestCreateInput) {
@@ -117,22 +127,34 @@ export class AutomationRequestsService {
       throw new NotFoundException('Pedido não encontrado.');
     }
 
+    const nextStatus = input.status !== undefined ? parseStatus(input.status) : existing.status;
+    const statusChanged = nextStatus !== existing.status;
+    const note = cleanTextOrNull(input.statusNote)?.slice(0, STATUS_NOTE_MAX) ?? null;
+
+    // Recusar sem dizer o motivo deixa quem pediu sem resposta: o motivo é obrigatório.
+    if (statusChanged && nextStatus === AutomationRequestStatus.rejected && !note) {
+      throw new BadRequestException('Informe o motivo da recusa.');
+    }
+
     const updated = await this.prisma.automationRequest.update({
       where: { id },
       data: {
-        ...(input.status !== undefined ? { status: parseStatus(input.status) } : {}),
+        ...(statusChanged ? { status: nextStatus } : {}),
         ...(input.adminNotes !== undefined ? { adminNotes: cleanTextOrNull(input.adminNotes) } : {}),
+        // A mensagem pertence à mudança de situação: ao mudar sem mensagem, a anterior (de outra situação) sai.
+        ...(statusChanged || input.statusNote !== undefined ? { statusNote: note } : {}),
       },
       select: automationRequestSelect,
     });
 
-    if (input.status !== undefined && updated.status !== existing.status) {
+    if (statusChanged) {
       try {
         await this.notificationsService.createForAutomationRequestStatusChange({
           requesterUserId: updated.requesterUserId,
           requesterName: updated.requesterName,
           title: updated.title,
           status: updated.status,
+          note: updated.statusNote,
         });
       } catch {
         // A atualização do pedido não deve falhar se a notificação não puder ser criada.
@@ -140,6 +162,18 @@ export class AutomationRequestsService {
     }
 
     return updated;
+  }
+
+  async remove(id: string, user: Pick<User, 'id' | 'role' | 'departments'>) {
+    if (!isAdmin(user)) {
+      throw new ForbiddenException();
+    }
+    const existing = await this.prisma.automationRequest.findUnique({ where: { id }, select: { id: true } });
+    if (!existing) {
+      throw new NotFoundException('Pedido não encontrado.');
+    }
+    await this.prisma.automationRequest.delete({ where: { id } });
+    return { ok: true };
   }
 }
 

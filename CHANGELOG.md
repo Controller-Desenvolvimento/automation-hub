@@ -3,6 +3,20 @@
 Mudanças do Automation Hub por data. Este arquivo é **público**: descreve o que mudou no produto, no banco e na
 configuração, sem dados de infraestrutura. O desenho detalhado de cada funcionalidade está no `CLAUDE.md`.
 
+## 2026-11-23 — Quadro de pedidos: arrastar, excluir, motivo da recusa e selo no menu
+
+### Adicionado
+- **Quadro (Administração):** os cards se **arrastam entre as colunas** como num Trello (a mudança é imediata e volta sozinha se o servidor recusar);
+  o select do pedido continua valendo. Há também **Excluir pedido** (só administradores, com confirmação; não avisa quem pediu).
+- **Motivo da recusa obrigatório:** recusar (arrastando para "Recusados" ou pelo pedido) pede o motivo, que aparece na notificação de quem pediu
+  e no pedido. Nas outras mudanças há um campo opcional "Mensagem para quem pediu", que também vai na notificação.
+- **Selo no menu "Quadro"** com o número de pedidos ainda em "Pendente" (só administradores/Inovação; `GET /api/automation-requests/summary`).
+- Banco: coluna `AutomationRequest.statusNote` (migração só adiciona, compatível com a versão anterior).
+
+### Corrigido
+- Salvar a situação de um pedido apagava as observações internas (`adminNotes`); agora só envia o que mudou.
+- O aviso "Novo pedido" no sino levava ao formulário de solicitação; agora abre o Quadro.
+
 ## 2026-11-23 — Histórico completo, menu com bloco "Ajuda" e cabeçalhos padronizados
 
 ### Corrigido
