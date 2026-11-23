@@ -3,6 +3,16 @@
 Mudanças do Automation Hub por data. Este arquivo é **público**: descreve o que mudou no produto, no banco e na
 configuração, sem dados de infraestrutura. O desenho detalhado de cada funcionalidade está no `CLAUDE.md`.
 
+## 2026-11-23 — Meus pedidos e motivo da recusa opcional
+
+### Adicionado
+- **Meus pedidos** (`/my-requests`, terceira opção ao lado de Automação e Dashboard em "Solicitar"): lista os pedidos de automação e de dashboard
+  da própria pessoa, com a situação, a data e o recado da Inovação (ou o motivo da recusa). Atualiza sozinha a cada 30 s. A notificação de mudança
+  de situação agora abre essa tela. As observações internas dos administradores nunca aparecem para quem pediu.
+
+### Alterado
+- **O motivo da recusa passou a ser opcional** (antes era obrigatório): a janela de recusa e o pedido têm o campo "Motivo da recusa (opcional)".
+
 ## 2026-11-23 — Quadro de pedidos: arrastar, excluir, motivo da recusa e selo no menu
 
 ### Adicionado

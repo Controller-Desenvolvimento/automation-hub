@@ -172,7 +172,7 @@ export function AutomationRequestsPage() {
         body: JSON.stringify(draft),
       });
       setDraft(emptyDraft());
-      notify('Pedido enviado. Voce ja pode acompanhar o status na lista abaixo.');
+      notify('Pedido enviado. Acompanhe o andamento em "Meus pedidos".');
       await loadRequests();
     } catch (error) {
       notify(error instanceof Error ? error.message : 'Nao foi possivel enviar o pedido.');
@@ -229,7 +229,7 @@ export function AutomationRequestsPage() {
     setDragId(null);
     setOverStatus(null);
     if (!request || request.status === status) return;
-    // Recusar exige o motivo: o card so se move depois que ele e informado.
+    // Recusar abre a janela do motivo (opcional): o card só se move depois que ela é confirmada.
     if (status === 'rejected') {
       setRejectTarget(request);
       return;
@@ -610,8 +610,7 @@ function AutomationRequestModal({
   const [note, setNote] = useState('');
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const changed = status !== request.status;
-  const needsReason = changed && status === 'rejected';
-  const canSave = changed && (!needsReason || note.trim().length > 0);
+  const rejecting = changed && status === 'rejected';
 
   useEffect(() => {
     setStatus(request.status);
@@ -754,7 +753,7 @@ function AutomationRequestModal({
                 {changed ? (
                   <div className="space-y-1.5">
                     <label className="text-xs font-medium text-slate-700 dark:text-zinc-200" htmlFor="request-status-note">
-                      {needsReason ? 'Motivo da recusa (obrigatório)' : 'Mensagem para quem pediu (opcional)'}
+                      {rejecting ? 'Motivo da recusa (opcional)' : 'Mensagem para quem pediu (opcional)'}
                     </label>
                     <Textarea
                       id="request-status-note"
@@ -763,8 +762,8 @@ function AutomationRequestModal({
                       value={note}
                       onChange={(event) => setNote(event.target.value)}
                       placeholder={
-                        needsReason
-                          ? 'Explique por que o pedido foi recusado. Quem pediu vai ver na notificação.'
+                        rejecting
+                          ? 'Se quiser, explique por que o pedido foi recusado. Quem pediu vai ver na notificação.'
                           : 'Ex.: previsão, o que ainda precisamos de você...'
                       }
                     />
@@ -775,7 +774,7 @@ function AutomationRequestModal({
                   size="sm"
                   className="w-full"
                   onClick={() => onSave({ status, ...(note.trim() ? { statusNote: note.trim() } : {}) })}
-                  disabled={saving || !canSave}
+                  disabled={saving || !changed}
                 >
                   {saving ? 'Salvando...' : 'Salvar status'}
                 </Button>
@@ -849,7 +848,7 @@ function RejectDialog({
         </div>
         <div className="space-y-1.5">
           <label className="text-sm font-medium text-slate-700 dark:text-zinc-200" htmlFor="reject-reason">
-            Motivo da recusa
+            Motivo da recusa (opcional)
           </label>
           <Textarea
             id="reject-reason"
@@ -858,14 +857,14 @@ function RejectDialog({
             maxLength={500}
             value={reason}
             onChange={(event) => setReason(event.target.value)}
-            placeholder="Explique por que o pedido foi recusado. Quem pediu vai ver na notificação."
+            placeholder="Se quiser, explique por que o pedido foi recusado. Quem pediu vai ver na notificação."
           />
         </div>
         <div className="flex justify-end gap-2">
           <Button variant="outline" onClick={onCancel}>
             Cancelar
           </Button>
-          <Button variant="danger" disabled={!reason.trim()} onClick={() => void onConfirm(reason.trim())}>
+          <Button variant="danger" onClick={() => void onConfirm(reason.trim())}>
             Recusar pedido
           </Button>
         </div>

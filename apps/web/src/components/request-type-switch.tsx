@@ -1,14 +1,15 @@
-import { LayoutDashboard, MessageSquarePlus } from 'lucide-react';
+import { Inbox, LayoutDashboard, MessageSquarePlus } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { cn } from '../lib/utils';
 
 const OPTIONS = [
   { key: 'automation', to: '/automation-requests', label: 'Automação', icon: MessageSquarePlus },
   { key: 'dashboard', to: '/dashboard-requests', label: 'Dashboard', icon: LayoutDashboard },
+  { key: 'mine', to: '/my-requests', label: 'Meus pedidos', icon: Inbox },
 ] as const;
 
-/** Escolha do que se quer solicitar: o menu lateral tem um só "Solicitar" e a pessoa troca o tipo aqui. */
-export function RequestTypeSwitch({ current }: { current: 'automation' | 'dashboard' }) {
+/** Escolha do que se quer solicitar (ou ver os próprios pedidos): o menu lateral tem um só "Solicitar" e a pessoa troca aqui. */
+export function RequestTypeSwitch({ current }: { current: 'automation' | 'dashboard' | 'mine' }) {
   return (
     <div className="flex w-fit gap-1 rounded-2xl border border-slate-200 bg-slate-50 p-1 dark:border-[#27272a] dark:bg-[#111113]">
       {OPTIONS.map(({ key, to, label, icon: Icon }) => (

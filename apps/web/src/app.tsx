@@ -15,6 +15,7 @@ const HistoryPage = lazy(() => import('./pages/history-page').then(m => ({ defau
 const NotificationsPage = lazy(() => import('./pages/notifications-page').then(m => ({ default: m.NotificationsPage })));
 const AutomationRequestsPage = lazy(() => import('./pages/automation-requests-page').then(m => ({ default: m.AutomationRequestsPage })));
 const DashboardRequestPage = lazy(() => import('./pages/dashboard-request-page').then(m => ({ default: m.DashboardRequestPage })));
+const MyRequestsPage = lazy(() => import('./pages/my-requests-page').then(m => ({ default: m.MyRequestsPage })));
 const ResultsPage = lazy(() => import('./pages/results-page').then(m => ({ default: m.ResultsPage })));
 const RobotDetailPage = lazy(() => import('./pages/robot-detail-page').then(m => ({ default: m.RobotDetailPage })));
 const RobotsPage = lazy(() => import('./pages/robots-page').then(m => ({ default: m.RobotsPage })));
@@ -75,6 +76,7 @@ function AppRoutes() {
         <Route path="/robots" element={<Suspense fallback={null}><RobotsPage /></Suspense>} />
         <Route path="/automation-requests" element={<Suspense fallback={null}><AutomationRequestsPage /></Suspense>} />
         <Route path="/dashboard-requests" element={<Suspense fallback={null}><DashboardRequestPage /></Suspense>} />
+        <Route path="/my-requests" element={<Suspense fallback={null}><MyRequestsPage /></Suspense>} />
         <Route
           path="/admin/quadro"
           element={canViewBoard ? <Suspense fallback={null}><AutomationRequestsPage /></Suspense> : <Navigate to="/" replace />}

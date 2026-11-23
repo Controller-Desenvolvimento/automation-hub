@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, Req } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Patch, Post, Query, Req } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import type { Request } from 'express';
 import { AuthService } from '../auth/auth.service';
@@ -14,9 +14,9 @@ export class AutomationRequestsController {
   ) {}
 
   @Get()
-  async list(@Req() request: Request) {
+  async list(@Req() request: Request, @Query('mine') mine?: string) {
     const user = await this.authService.requireUser(request);
-    return this.automationRequestsService.listForUser(user);
+    return this.automationRequestsService.listForUser(user, mine === 'true');
   }
 
   // Rota fixa ANTES das de ":id".
