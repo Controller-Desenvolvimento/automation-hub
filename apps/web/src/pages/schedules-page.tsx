@@ -1,6 +1,6 @@
-import { Calendar, Clock, Pencil, Plus, Search, Trash2, Upload, Users, X } from 'lucide-react';
+import { Calendar, CircleAlert, CircleCheck, Clock, LoaderCircle, Pencil, Play, Plus, Search, Trash2, Upload, Users, X } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { Field } from '../components/field';
 import { PageHeader } from '../components/page-header';
 import { Badge } from '../components/ui/badge';
@@ -16,7 +16,7 @@ import { WEEKDAY_OPTIONS } from '../lib/constants';
 
 import { api } from '../lib/api';
 import type { Department, ManagedUser, RobotSchemaField, ScheduledTask } from '../lib/types';
-import { departmentLabel, formatDate } from '../lib/utils';
+import { cn, departmentLabel, formatDate } from '../lib/utils';
 
 type Draft = {
   id?: string;
@@ -58,6 +58,9 @@ export function SchedulesPage() {
   const [isSaving, setIsSaving] = useState(false);
   const [allUsers, setAllUsers] = useState<ManagedUser[]>([]);
   const [query, setQuery] = useState('');
+  const [confirmRunTaskId, setConfirmRunTaskId] = useState<string | null>(null);
+  const [isRunning, setIsRunning] = useState(false);
+  const navigate = useNavigate();
 
   const robots = useMemo(() => hub?.robots ?? [], [hub?.robots]);
   const selectedRobot = robots.find((robot) => robot.id === draft.robotId) ?? null;
@@ -146,6 +149,21 @@ export function SchedulesPage() {
           : robots[0]?.id || '',
     }));
     setTemplateFiles({});
+  }
+
+  // "Rodar agora": cria uma execução manual com os dados salvos do agendamento e abre o acompanhamento dela.
+  async function handleRunNow(task: ScheduledTask) {
+    setIsRunning(true);
+    try {
+      const { executionId } = await api<{ executionId: string }>(`/scheduled-tasks/${task.id}/run-now`, { method: 'POST' });
+      setConfirmRunTaskId(null);
+      notify(`"${task.name}" foi para a fila.`);
+      void navigate(`/executions/${executionId}`);
+    } catch (error) {
+      notify(error instanceof Error ? error.message : 'Não foi possível rodar o agendamento agora.');
+    } finally {
+      setIsRunning(false);
+    }
   }
 
   async function handleDeleteTask(taskId: string, taskName: string) {
@@ -325,7 +343,12 @@ export function SchedulesPage() {
                 >
                   {/* status dot */}
                   <div className="mt-[5px] flex-shrink-0">
-                    <span className={`block h-2 w-2 rounded-full ${task.isActive ? 'bg-emerald-500' : 'bg-amber-400'}`} />
+                    <span
+                      role="img"
+                      aria-label={taskDot(task).label}
+                      title={taskDot(task).label}
+                      className={`block h-2 w-2 rounded-full ${taskDot(task).color}`}
+                    />
                   </div>
 
                   {/* name + robot + countdown */}
@@ -343,6 +366,7 @@ export function SchedulesPage() {
                     </span>
                     <span className="block text-xs text-slate-400 dark:text-zinc-500">
                       {task.robot.name}{!task.isActive ? ' · Pausado' : ''}
+                      {taskHasFailed(task) ? <span className="font-medium text-rose-500 dark:text-rose-400"> · Erro na última execução</span> : null}
                     </span>
                     <CountdownLabel task={task} />
                   </button>
@@ -400,6 +424,20 @@ export function SchedulesPage() {
         <div className="grid grid-cols-1 gap-6">
           {isEditorOpen ? (
           <>
+          {selectedTask && !isCreatingNew ? (
+            <TaskSummary
+              task={selectedTask}
+              allTasks={tasks}
+              departmentsLabel={selectedTask.user.departments.map((d) => departmentLabel(d, departments)).join(', ')}
+              canRun={user?.role === 'admin' || user?.departments.includes('inovacao') === true || selectedTask.userId === user?.id}
+              confirming={confirmRunTaskId === selectedTask.id}
+              running={isRunning}
+              onAskRun={() => setConfirmRunTaskId(selectedTask.id)}
+              onCancelRun={() => setConfirmRunTaskId(null)}
+              onRun={() => void handleRunNow(selectedTask)}
+            />
+          ) : null}
+
           <div className="flex flex-wrap items-center gap-2 text-sm text-slate-500 dark:text-zinc-400">
             <Badge className="border-slate-300 bg-slate-100 text-slate-700 dark:border-slate-500/35 dark:bg-slate-800 dark:text-zinc-200">
               Robô: {selectedRobot?.name ?? 'Selecione'}
@@ -928,28 +966,6 @@ export function SchedulesPage() {
             </CardContent>
           </Card>
 
-          {selectedTask ? (
-            <Card className="rounded-3xl">
-              <CardHeader>
-                <CardTitle>Resumo do agendamento</CardTitle>
-                <CardDescription>Visão rápida da próxima execução e do histórico recente.</CardDescription>
-              </CardHeader>
-              <CardContent className="grid grid-cols-1 gap-4">
-                <InfoRow label="Solicitante" value={`${selectedTask.user.name} (${selectedTask.user.email})`} />
-                <InfoRow label="Departamentos" value={selectedTask.user.departments.map((d) => departmentLabel(d, departments)).join(', ')} />
-                <InfoRow label="Próxima execução" value={formatDate(selectedTask.nextRunAt)} />
-                <InfoRow label="Última execução" value={selectedTask.lastRunAt ? formatDate(selectedTask.lastRunAt) : 'Ainda não executou'} />
-                <InfoRow label="Último erro" value={selectedTask.lastError || 'Nenhum'} />
-                <InfoRow label="Verificação por tempo" value={describeChecks(selectedTask)} />
-                <InfoRow label="Depende de" value={describeDependency(selectedTask, tasks)} />
-                {selectedTask.lastExecutionId ? (
-                  <Button asChild variant="outline" size="sm" className="justify-center">
-                    <Link to={`/executions/${selectedTask.lastExecutionId}`}>Abrir última execução</Link>
-                  </Button>
-                ) : null}
-              </CardContent>
-            </Card>
-          ) : null}
           </>
           ) : (
             <Card className="rounded-3xl">
@@ -1074,11 +1090,189 @@ function FieldRenderer({
   );
 }
 
-function InfoRow({ label, value }: { label: string; value: string }) {
+/** A última execução deste agendamento deu erro (ou o disparo falhou): é o que pinta a bolinha de vermelho. */
+function taskHasFailed(task: ScheduledTask): boolean {
+  return task.lastExecutionStatus === 'error' || Boolean(task.lastError);
+}
+
+function taskDot(task: ScheduledTask): { color: string; label: string } {
+  if (taskHasFailed(task)) return { color: 'bg-rose-500', label: 'A última execução deu erro' };
+  if (!task.isActive) return { color: 'bg-amber-400', label: 'Agendamento pausado' };
+  return { color: 'bg-emerald-500', label: 'Agendamento ativo' };
+}
+
+function formatRunDuration(startedAt?: string | null, finishedAt?: string | null): string | null {
+  if (!startedAt || !finishedAt) return null;
+  const total = Math.max(0, Math.round((new Date(finishedAt).getTime() - new Date(startedAt).getTime()) / 1000));
+  if (total < 60) return `${total} s`;
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  const seconds = total % 60;
+  if (hours > 0) return `${hours} h ${minutes} min`;
+  return seconds > 0 ? `${minutes} min ${seconds} s` : `${minutes} min`;
+}
+
+function timeAgo(value?: string | null): string {
+  if (!value) return '';
+  const diff = Date.now() - new Date(value).getTime();
+  if (diff < 0) return '';
+  const minutes = Math.floor(diff / 60000);
+  if (minutes < 1) return 'agora há pouco';
+  if (minutes < 60) return `há ${minutes} min`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `há ${hours} h`;
+  const days = Math.floor(hours / 24);
+  return `há ${days} dia${days === 1 ? '' : 's'}`;
+}
+
+function shortChecks(task: ScheduledTask): string {
+  const { verifyT0Minutes: a, verifyT1Minutes: b, verifyT2Minutes: c } = task;
+  if (a == null || b == null || c == null) {
+    return task.maxRuntimeMinutes != null ? `Sem verificação · teto de ${task.maxRuntimeMinutes} min` : 'Sem verificação';
+  }
+  return `T0 ${a} min · T1 +${b} · T2 +${c}`;
+}
+
+const SUMMARY_TONES = {
+  error: { box: 'border-rose-200 bg-rose-50/60 dark:border-rose-500/30 dark:bg-rose-950/20', icon: 'bg-rose-100 text-rose-600 dark:bg-rose-950 dark:text-rose-300', title: 'text-rose-700 dark:text-rose-300' },
+  running: { box: 'border-sky-200 bg-sky-50/60 dark:border-sky-500/30 dark:bg-sky-950/20', icon: 'bg-sky-100 text-sky-600 dark:bg-sky-950 dark:text-sky-300', title: 'text-sky-700 dark:text-sky-300' },
+  ok: { box: 'border-emerald-200 bg-emerald-50/50 dark:border-emerald-500/25 dark:bg-emerald-950/15', icon: 'bg-emerald-100 text-emerald-600 dark:bg-emerald-950 dark:text-emerald-300', title: 'text-emerald-700 dark:text-emerald-300' },
+  idle: { box: 'border-slate-200 dark:border-slate-800', icon: 'bg-slate-100 text-slate-500 dark:bg-[#18181b] dark:text-zinc-400', title: 'text-slate-700 dark:text-zinc-200' },
+} as const;
+
+/** Resumo no topo do agendamento aberto: como foi a última execução (com o erro, se houve), próximos passos e o botão "Rodar agora". */
+function TaskSummary({
+  task,
+  allTasks,
+  departmentsLabel,
+  canRun,
+  confirming,
+  running,
+  onAskRun,
+  onCancelRun,
+  onRun,
+}: {
+  task: ScheduledTask;
+  allTasks: ScheduledTask[];
+  departmentsLabel: string;
+  canRun: boolean;
+  confirming: boolean;
+  running: boolean;
+  onAskRun: () => void;
+  onCancelRun: () => void;
+  onRun: () => void;
+}) {
+  const last = task.lastExecution ?? null;
+  const status = last?.status ?? task.lastExecutionStatus ?? null;
+  const failed = taskHasFailed(task);
+  const busy = status === 'queued' || status === 'running';
+
+  const view = failed
+    ? { tone: 'error' as const, Icon: CircleAlert, title: status === 'error' ? 'Última execução com erro' : 'Problema no último disparo' }
+    : status === 'running'
+      ? { tone: 'running' as const, Icon: LoaderCircle, title: 'Rodando agora' }
+      : status === 'queued'
+        ? { tone: 'running' as const, Icon: Clock, title: 'Na fila para rodar' }
+        : status === 'success'
+          ? { tone: 'ok' as const, Icon: CircleCheck, title: 'Última execução concluída' }
+          : status === 'canceled'
+            ? { tone: 'idle' as const, Icon: CircleAlert, title: 'Última execução cancelada' }
+            : { tone: 'idle' as const, Icon: Clock, title: 'Ainda não executou' };
+  const tone = SUMMARY_TONES[view.tone];
+  const when = last ? (last.finishedAt ?? last.startedAt ?? last.createdAt) : task.lastRunAt;
+  const duration = formatRunDuration(last?.startedAt, last?.finishedAt);
+  const errorText = status === 'error' ? last?.errorMessage?.trim() : '';
+
   return (
-    <div className="flex items-center justify-between gap-4 rounded-2xl border border-slate-200 px-4 py-3 dark:border-slate-800">
-      <span className="text-sm text-slate-500 dark:text-zinc-400">{label}</span>
-      <span className="max-w-[70%] text-right text-sm font-medium leading-relaxed">{value}</span>
+    <Card className={cn('rounded-3xl', tone.box)}>
+      <CardContent className="grid gap-4 p-5">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="flex min-w-0 items-center gap-3">
+            <div className={cn('grid h-10 w-10 flex-shrink-0 place-items-center rounded-2xl', tone.icon)}>
+              <view.Icon className={cn('h-5 w-5', status === 'running' && !failed && 'animate-spin')} />
+            </div>
+            <div className="min-w-0">
+              <p className={cn('text-base font-semibold leading-tight', tone.title)}>{view.title}</p>
+              <p className="text-xs text-slate-500 dark:text-zinc-400">
+                {when ? `${formatDate(when)} · ${timeAgo(when)}` : 'Nenhuma execução registrada'}
+                {duration ? ` · durou ${duration}` : ''}
+                {last && last.attempt > 1 ? ` · ${last.attempt}ª tentativa (reinício automático)` : ''}
+              </p>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            {last ? (
+              <Button asChild variant="outline" size="sm">
+                <Link to={`/executions/${last.id}`}>Abrir última execução</Link>
+              </Button>
+            ) : null}
+            {canRun ? (
+              confirming ? (
+                <div className="flex flex-wrap items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs dark:border-slate-700 dark:bg-[#0f0f10]">
+                  <span className="text-slate-600 dark:text-zinc-300">Rodar agora com os dados salvos?</span>
+                  <Button size="sm" disabled={running} onClick={onRun}>
+                    {running ? 'Enviando...' : 'Sim, rodar'}
+                  </Button>
+                  <Button size="sm" variant="outline" disabled={running} onClick={onCancelRun}>
+                    Cancelar
+                  </Button>
+                </div>
+              ) : (
+                <Button size="sm" disabled={busy} title={busy ? 'A última execução ainda está na fila ou rodando.' : undefined} onClick={onAskRun}>
+                  <Play className="mr-1.5 h-3.5 w-3.5" />
+                  Rodar agora
+                </Button>
+              )
+            ) : null}
+          </div>
+        </div>
+
+        {errorText ? (
+          <div className="rounded-2xl border border-rose-200 bg-white px-4 py-3 text-sm dark:border-rose-500/30 dark:bg-[#0f0f10]">
+            <p className="mb-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-rose-600 dark:text-rose-400">Motivo do erro</p>
+            <p className="max-h-40 overflow-y-auto whitespace-pre-wrap break-words text-slate-800 dark:text-zinc-100">{errorText}</p>
+          </div>
+        ) : null}
+        {task.lastError ? (
+          <div className="rounded-2xl border border-amber-200 bg-white px-4 py-3 text-sm dark:border-amber-500/30 dark:bg-[#0f0f10]">
+            <p className="mb-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-amber-600 dark:text-amber-400">Problema ao disparar</p>
+            <p className="whitespace-pre-wrap break-words text-slate-800 dark:text-zinc-100">{task.lastError}</p>
+          </div>
+        ) : null}
+
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-3">
+          <SummaryTile label="Próxima execução">
+            {task.isActive ? (
+              <>
+                <span>{formatDate(task.nextRunAt)}</span>
+                <CountdownLabel task={task} />
+              </>
+            ) : (
+              <span>{task.frequency === 'once' ? 'Agendamento finalizado' : 'Pausado'}</span>
+            )}
+          </SummaryTile>
+          <SummaryTile label="Verificação por tempo">
+            <span>{shortChecks(task)}</span>
+          </SummaryTile>
+          <SummaryTile label="Depende de">
+            <span>{describeDependency(task, allTasks)}</span>
+          </SummaryTile>
+          <SummaryTile label="Solicitante" className="sm:col-span-2 xl:col-span-3">
+            <span>{task.user.name} <span className="font-normal text-slate-500 dark:text-zinc-400">({task.user.email})</span></span>
+            {departmentsLabel ? <span className="text-xs font-normal text-slate-500 dark:text-zinc-400">{departmentsLabel}</span> : null}
+          </SummaryTile>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function SummaryTile({ label, className, children }: { label: string; className?: string; children: React.ReactNode }) {
+  return (
+    <div className={cn('grid content-start gap-0.5 rounded-2xl border border-slate-200 bg-white/70 px-4 py-2.5 text-sm font-medium dark:border-slate-800 dark:bg-white/[0.02]', className)}>
+      <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400 dark:text-zinc-500">{label}</span>
+      {children}
     </div>
   );
 }
@@ -1142,16 +1336,6 @@ function clockPlus(time: string, minutes: number): string {
   const rest = ((total % 1440) + 1440) % 1440;
   const label = `${String(Math.floor(rest / 60)).padStart(2, '0')}:${String(rest % 60).padStart(2, '0')}`;
   return day > 0 ? `${label} (+${day} dia)` : label;
-}
-
-function describeChecks(task: ScheduledTask): string {
-  const { verifyT0Minutes: a, verifyT1Minutes: b, verifyT2Minutes: c } = task;
-  if (a == null || b == null || c == null) {
-    return task.maxRuntimeMinutes != null
-      ? `Sem verificação · teto de ${task.maxRuntimeMinutes} min (cancela e avisa, sem reiniciar)`
-      : 'Sem verificação';
-  }
-  return `T0 ${a} min · T1 +${b} · T2 +${c} (cancela e reinicia em ${a + b + c} min)`;
 }
 
 function describeDependency(task: ScheduledTask, all: ScheduledTask[]): string {

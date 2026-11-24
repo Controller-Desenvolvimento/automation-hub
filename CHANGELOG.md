@@ -3,6 +3,21 @@
 Mudanças do Automation Hub por data. Este arquivo é **público**: descreve o que mudou no produto, no banco e na
 configuração, sem dados de infraestrutura. O desenho detalhado de cada funcionalidade está no `CLAUDE.md`.
 
+## 2026-11-24 — Agendamentos: resumo no topo, "Rodar agora" e bolinha vermelha
+
+### Adicionado
+- **Resumo do agendamento no topo** da tela de agendamentos (antes ficava no fim da página): situação da última execução (concluída, com erro,
+  rodando, na fila...), quando foi, quanto durou e se foi a 2ª tentativa; o **motivo do erro** em destaque; próxima execução com contagem,
+  verificação por tempo, dependência e solicitante. O botão "Abrir última execução" foi para o mesmo cartão.
+- **Rodar agora** (`POST /api/scheduled-tasks/:id/run-now`, quem criou o agendamento ou administrador): cria uma execução **manual** (no nome de quem
+  clicou) com os mesmos parâmetros, observação e arquivos-modelo do agendamento, e abre o acompanhamento dela. Pede confirmação, recusa (409) se a
+  última execução ainda está na fila ou rodando e não muda o próximo horário. Por ser manual, não manda e-mail de alerta à Inovação e não entra
+  na verificação por tempo nem no ciclo de quem depende do agendamento.
+- A lista de agendamentos (`GET /api/scheduled-tasks`) traz `lastExecution` (status, motivo do erro, duração e tentativa da última execução).
+
+### Alterado
+- A **bolinha** de cada agendamento na lista fica **vermelha** quando a última execução deu erro (ou o disparo falhou), com o texto "Erro na última execução" ao lado.
+
 ## 2026-11-23 — Saúde dos robôs: margem do topo
 
 ### Corrigido

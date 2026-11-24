@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Injectable,
   Logger,
@@ -186,26 +187,76 @@ export class ScheduledTasksService {
       executionIds.length > 0
         ? await this.prisma.execution.findMany({
             where: { id: { in: executionIds } },
-            select: { id: true, status: true },
+            select: {
+              id: true,
+              status: true,
+              errorMessage: true,
+              progress: true,
+              attempt: true,
+              createdAt: true,
+              startedAt: true,
+              finishedAt: true,
+            },
           })
         : [];
-    const executionStatusById = new Map(
-      executions.map((execution) => [execution.id, execution.status]),
-    );
+    const executionById = new Map(executions.map((execution) => [execution.id, execution]));
 
     return Promise.all(
       visibleTasks.map(async (task) => {
         const templateFiles = await this.listTemplateFileNames(task.id);
+        const last = task.lastExecutionId ? executionById.get(task.lastExecutionId) ?? null : null;
         return {
           ...task,
           templateFiles,
           hasTemplateFiles: templateFiles.length > 0,
-          lastExecutionStatus: task.lastExecutionId
-            ? executionStatusById.get(task.lastExecutionId) ?? null
-            : null,
+          lastExecutionStatus: last?.status ?? null,
+          // Resumo da última execução (tela de agendamentos): motivo do erro, duração e tentativa, sem logs nem arquivos.
+          lastExecution: last,
         };
       }),
     );
+  }
+
+  /**
+   * "Rodar agora": cria uma execução MANUAL (de quem clicou) com os mesmos parâmetros, observação e arquivos-modelo do
+   * agendamento. Não é uma execução agendada de propósito: não manda e-mail de alerta à Inovação, não passa pela verificação
+   * por tempo (T0/T1/T2), não entra no ciclo de quem depende deste agendamento e não muda o próximo horário.
+   */
+  async runNow(user: User, id: string) {
+    const task = await this.prisma.scheduledTask.findUnique({
+      where: { id },
+      include: { robot: true, user: { select: { departments: true } } },
+    });
+    if (!task || !canAccessRobot(user, task.robot)) {
+      throw new NotFoundException('Agendamento não encontrado.');
+    }
+    if (!canManageTask(user, task)) {
+      throw new ForbiddenException('Você não pode rodar este agendamento.');
+    }
+
+    if (task.lastExecutionId) {
+      const last = await this.prisma.execution.findUnique({
+        where: { id: task.lastExecutionId },
+        select: { status: true },
+      });
+      if (last && (last.status === 'queued' || last.status === 'running')) {
+        throw new ConflictException('A última execução deste agendamento ainda está na fila ou rodando.');
+      }
+    }
+
+    const templateFiles = await this.loadTemplateFiles(task.id);
+    const execution = await this.executionsService.createExecution(
+      task.robotId,
+      {
+        userId: user.id,
+        notes: task.notes ?? undefined,
+        priority: 0,
+        parameters: (task.parameters as Record<string, unknown>) ?? {},
+      },
+      templateFiles,
+    );
+    this.logger.log(`[agendamento] "${task.name}" (${task.id}) executado agora por ${user.id}: execução ${execution.id}`);
+    return { executionId: execution.id };
   }
 
   async saveTask(user: User, input: SaveTaskInput, uploadedFiles: UploadedFile[]) {
