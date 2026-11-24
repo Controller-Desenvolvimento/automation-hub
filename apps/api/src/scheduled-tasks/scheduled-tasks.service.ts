@@ -218,9 +218,11 @@ export class ScheduledTasksService {
   }
 
   /**
-   * "Rodar agora": cria uma execução MANUAL (de quem clicou) com os mesmos parâmetros, observação e arquivos-modelo do
-   * agendamento. Não é uma execução agendada de propósito: não manda e-mail de alerta à Inovação, não passa pela verificação
-   * por tempo (T0/T1/T2), não entra no ciclo de quem depende deste agendamento e não muda o próximo horário.
+   * "Rodar agora": dispara o agendamento fora do horário. É uma execução AGENDADA de verdade (`scheduledTaskId`), igual à do
+   * horário: mesmo dono, parâmetros, observação e arquivos-modelo; e-mail de alerta à Inovação se falhar, verificação por
+   * tempo (T0/T1/T2) e reinício por erro, crédito do ganho de tempo e ciclo de quem depende deste agendamento. Diferenças:
+   * não muda o próximo horário (`nextRunAt`) nem desativa um agendamento "uma vez", e não fica retida esperando o agendamento
+   * de que depende (quem pediu "agora" quer agora). Quem clicou fica no log da execução.
    */
   async runNow(user: User, id: string) {
     const task = await this.prisma.scheduledTask.findUnique({
@@ -248,13 +250,20 @@ export class ScheduledTasksService {
     const execution = await this.executionsService.createExecution(
       task.robotId,
       {
-        userId: user.id,
+        userId: task.userId,
         notes: task.notes ?? undefined,
         priority: 0,
         parameters: (task.parameters as Record<string, unknown>) ?? {},
+        scheduledTaskId: task.id,
       },
       templateFiles,
     );
+    await this.executionsService.log(execution.id, 'info', `Iniciada com "Rodar agora" por ${user.name} (${user.email}).`);
+    // O resumo do agendamento passa a mostrar esta execução. `nextRunAt` e `isActive` ficam como estavam.
+    await this.prisma.scheduledTask.update({
+      where: { id: task.id },
+      data: { lastRunAt: new Date(), lastExecutionId: execution.id, lastError: null },
+    });
     this.logger.log(`[agendamento] "${task.name}" (${task.id}) executado agora por ${user.id}: execução ${execution.id}`);
     return { executionId: execution.id };
   }

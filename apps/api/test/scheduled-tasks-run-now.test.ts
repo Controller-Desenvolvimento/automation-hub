@@ -12,6 +12,8 @@ const robot = { id: 'r1', name: 'Gestta', allowedDepartments: [], allowedUserIds
 
 function montar(opts: { task?: any; lastStatus?: string; lastExecution?: any } = {}) {
   const created: any[] = [];
+  const logs: any[] = [];
+  const updates: any[] = [];
   const task =
     opts.task === undefined
       ? {
@@ -23,6 +25,7 @@ function montar(opts: { task?: any; lastStatus?: string; lastExecution?: any } =
     scheduledTask: {
       findUnique: async () => task,
       findMany: async () => (task ? [{ ...task, user: { id: task.userId, name: 'x', email: 'x', departments: [] } }] : []),
+      update: async (args: any) => { updates.push(args); return {}; },
     },
     execution: {
       findUnique: async () => (opts.lastStatus ? { status: opts.lastStatus } : null),
@@ -34,26 +37,43 @@ function montar(opts: { task?: any; lastStatus?: string; lastExecution?: any } =
       created.push({ robotId, payload, files });
       return { id: 'nova-exec' };
     },
+    log: async (id: string, level: string, message: string) => { logs.push({ id, level, message }); },
   };
-  return { svc: new ScheduledTasksService(prisma as any, executions as any), created };
+  return { svc: new ScheduledTasksService(prisma as any, executions as any), created, logs, updates };
 }
 
-test('rodar agora: dono cria uma execução MANUAL (sem scheduledTaskId) com os dados do agendamento', async () => {
+test('rodar agora: cria uma execução AGENDADA (com scheduledTaskId) igual à do horário: dono, parâmetros, observação', async () => {
   const { svc, created } = montar();
   const r = await svc.runNow(owner, 't1');
   assert.deepEqual(r, { executionId: 'nova-exec' });
   assert.equal(created.length, 1);
   assert.equal(created[0].robotId, 'r1');
-  assert.equal(created[0].payload.userId, owner.id);              // aparece nas execuções de quem clicou
+  assert.equal(created[0].payload.userId, owner.id);
   assert.deepEqual(created[0].payload.parameters, { mes: '10' });
   assert.equal(created[0].payload.notes, 'obs');
-  assert.equal(created[0].payload.scheduledTaskId, undefined);    // sem e-mail de alerta, sem T0/T1/T2, fora do ciclo de dependência
+  assert.equal(created[0].payload.scheduledTaskId, 't1');            // conta como execução do agendamento (e-mail de alerta, T0/T1/T2, crédito, ciclo)
+  assert.equal(created[0].payload.waitingOnExecutionId, undefined);  // não fica retida esperando o agendamento de que depende
 });
 
-test('rodar agora: administrador roda o agendamento de outra pessoa, e ele fica no nome do administrador', async () => {
-  const { svc, created } = montar();
+test('rodar agora: administrador roda o agendamento de outra pessoa; a execução fica no nome do dono e o log diz quem clicou', async () => {
+  const { svc, created, logs } = montar();
   await svc.runNow(admin, 't1');
-  assert.equal(created[0].payload.userId, admin.id);
+  assert.equal(created[0].payload.userId, owner.id);
+  assert.equal(logs.length, 1);
+  assert.equal(logs[0].id, 'nova-exec');
+  assert.match(logs[0].message, /Rodar agora.*Admin/);
+});
+
+test('rodar agora: o resumo passa a mostrar a execução, sem mexer no próximo horário nem em "ativo"', async () => {
+  const { svc, updates } = montar();
+  await svc.runNow(owner, 't1');
+  assert.equal(updates.length, 1);
+  assert.equal(updates[0].where.id, 't1');
+  assert.equal(updates[0].data.lastExecutionId, 'nova-exec');
+  assert.ok(updates[0].data.lastRunAt instanceof Date);
+  assert.equal(updates[0].data.lastError, null);
+  assert.equal('nextRunAt' in updates[0].data, false);
+  assert.equal('isActive' in updates[0].data, false);
 });
 
 test('rodar agora: quem não é dono nem administrador leva 403; agendamento inexistente leva 404', async () => {
