@@ -9,10 +9,11 @@ configuração, sem dados de infraestrutura. O desenho detalhado de cada funcion
 - **Resumo do agendamento no topo** da tela de agendamentos (antes ficava no fim da página): situação da última execução (concluída, com erro,
   rodando, na fila...), quando foi, quanto durou e se foi a 2ª tentativa; o **motivo do erro** em destaque; próxima execução com contagem,
   verificação por tempo, dependência e solicitante. O botão "Abrir última execução" foi para o mesmo cartão.
-- **Rodar agora** (`POST /api/scheduled-tasks/:id/run-now`, quem criou o agendamento ou administrador): cria uma execução **manual** (no nome de quem
-  clicou) com os mesmos parâmetros, observação e arquivos-modelo do agendamento, e abre o acompanhamento dela. Pede confirmação, recusa (409) se a
-  última execução ainda está na fila ou rodando e não muda o próximo horário. Por ser manual, não manda e-mail de alerta à Inovação e não entra
-  na verificação por tempo nem no ciclo de quem depende do agendamento.
+- **Rodar agora** (`POST /api/scheduled-tasks/:id/run-now`, quem criou o agendamento ou administrador): dispara o agendamento fora do horário e abre o
+  acompanhamento. **Conta como execução do agendamento**, igual à do horário: mesmo dono, parâmetros, observação e arquivos-modelo; aparece como
+  "agendada" no histórico; e-mail de alerta à Inovação se falhar; verificação por tempo (T0/T1/T2) e reinício por erro; crédito do ganho de tempo; e
+  entra no ciclo de quem depende do agendamento. Pede confirmação, recusa (409) se a última execução ainda está na fila ou rodando, não muda o próximo
+  horário, não desativa um agendamento "uma vez" e não fica retida esperando o agendamento de que depende. Quem clicou fica no log da execução.
 - A lista de agendamentos (`GET /api/scheduled-tasks`) traz `lastExecution` (status, motivo do erro, duração e tentativa da última execução).
 
 ### Alterado

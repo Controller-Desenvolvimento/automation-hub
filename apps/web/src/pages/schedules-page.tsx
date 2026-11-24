@@ -1210,7 +1210,7 @@ function TaskSummary({
             {canRun ? (
               confirming ? (
                 <div className="flex flex-wrap items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs dark:border-slate-700 dark:bg-[#0f0f10]">
-                  <span className="text-slate-600 dark:text-zinc-300">Rodar agora com os dados salvos?</span>
+                  <span className="text-slate-600 dark:text-zinc-300">Rodar agora com os dados salvos? Conta como execução do agendamento.</span>
                   <Button size="sm" disabled={running} onClick={onRun}>
                     {running ? 'Enviando...' : 'Sim, rodar'}
                   </Button>
