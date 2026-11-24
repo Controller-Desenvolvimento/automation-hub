@@ -155,8 +155,6 @@ export function RobotHealthPage() {
 
   return (
     <div className="hc space-y-6">
-      <ChartDefs />
-      <TipLayer />
       <PageHeader
         title={<>Saúde dos <span className="text-sky-600 dark:text-sky-400">robôs</span></>}
         description="Como os robôs do Hub estão se saindo: taxa de sucesso, situação de cada um e o que causa os erros. Só administradores veem esta tela."
@@ -262,6 +260,9 @@ export function RobotHealthPage() {
           )}
         </div>
       )}
+      {/* Fora do fluxo (svg invisível e dica flutuante): no topo, o `space-y-6` dava margem extra ao cabeçalho. */}
+      <ChartDefs />
+      <TipLayer />
     </div>
   );
 }
