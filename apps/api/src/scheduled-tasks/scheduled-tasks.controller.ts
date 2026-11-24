@@ -88,6 +88,12 @@ export class ScheduledTasksController {
     );
   }
 
+  @Post(':id/run-now')
+  async runNow(@Req() request: Request, @Param('id') id: string) {
+    const user = await this.authService.requireUser(request);
+    return this.scheduledTasksService.runNow(user, id);
+  }
+
   @Delete(':id')
   async deleteTask(@Req() request: Request, @Param('id') id: string) {
     const user = await this.authService.requireUser(request);

@@ -233,6 +233,17 @@ export type ScheduledTask = {
   dependsOnTaskId?: string | null;
   lastExecutionId?: string | null;
   lastExecutionStatus?: 'queued' | 'running' | 'success' | 'error' | 'canceled' | null;
+  /** Resumo da última execução (motivo do erro, duração, tentativa). */
+  lastExecution?: {
+    id: string;
+    status: 'queued' | 'running' | 'success' | 'error' | 'canceled';
+    errorMessage?: string | null;
+    progress: number;
+    attempt: number;
+    createdAt: string;
+    startedAt?: string | null;
+    finishedAt?: string | null;
+  } | null;
   createdAt: string;
   updatedAt: string;
   templateFiles?: string[];
